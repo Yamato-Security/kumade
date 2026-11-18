@@ -105,3 +105,44 @@ fn memory_request_has_nonzero_partial_exit() {
     ]);
     assert_eq!(out.status.code(), Some(3));
 }
+
+#[test]
+fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .arg("doctor")
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("\x1b[38;2;0;255;0mVersion:\x1b[0m \x1b[38;2;255;255;255m"));
+    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .arg("doctor")
+        .env("CLICOLOR_FORCE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains('\x1b'));
+    assert!(text.contains("by Yamato Security"));
+    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .arg("doctor")
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!String::from_utf8(output.stdout).unwrap().contains('\x1b'));
+}
+
+#[test]
+fn version_remains_a_single_machine_readable_line() {
+    let output = run(&["--version"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        concat!("kumade ", env!("CARGO_PKG_VERSION"))
+    );
+}

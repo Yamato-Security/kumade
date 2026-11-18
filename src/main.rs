@@ -19,7 +19,7 @@ use kumade::{
     collect::{self, Options},
     discovery,
     model::{Source, SourceDiscovery},
-    paths, platform, verify,
+    paths, platform, ui, verify,
 };
 use std::{
     collections::HashSet,
@@ -171,41 +171,65 @@ fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
 }
 
 fn run() -> Result<u8> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
+            ui::banner();
+            error.print()?;
+            return Ok(0);
+        }
+        Err(error) => error.exit(),
+    };
     let (options, plan_only) = match cli.command {
         Some(Command::Doctor) => {
-            println!(
-                "KUMADE {}\nPlatform: {} / {}\nLive acquisition: {}\nRaw NTFS library: Available\nRAM acquisition: Not implemented\nVSS acquisition: Not implemented\nCloud transport: Not implemented",
-                env!("CARGO_PKG_VERSION"),
-                std::env::consts::OS,
-                std::env::consts::ARCH,
+            ui::banner();
+            ui::field(
+                "Platform",
+                format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH),
+            );
+            ui::field(
+                "Live acquisition",
                 if cfg!(windows) {
-                    "Windows APIs compiled; elevated operation required"
+                    "Available; elevated privileges required"
                 } else {
                     "Use offline --source directories"
-                }
+                },
             );
+            ui::field("Raw NTFS acquisition", "Available");
+            ui::field("RAM acquisition", "Not implemented");
+            ui::field("VSS acquisition", "Not implemented");
+            ui::field("Cloud transport", "Not implemented");
             return Ok(0);
         }
         Some(Command::List { catalog }) => {
+            ui::banner();
             let rules = rules(catalog.as_deref())?;
+            ui::heading(&format!(
+                "{:<30} {:<24} {}",
+                "Artifact", "Category", "Description"
+            ));
             for artifact in rules.catalog.artifacts {
-                println!(
+                ui::status(&format!(
                     "{:<30} {:<24} {}",
                     artifact.id, artifact.category, artifact.name
-                );
+                ));
             }
             return Ok(0);
         }
         Some(Command::Verify { directory }) => {
+            ui::banner();
             let (files, complete) = verify::verify(&directory)?;
-            println!(
-                "Integrity verified: {files} payloads\nAcquisition completeness: {}",
+            ui::field(
+                "Integrity verified",
+                format!("{} payloads", ui::count(files as u64)),
+            );
+            ui::field(
+                "Acquisition completeness",
                 if complete {
                     "Complete within selected prototype scope"
                 } else {
                     "Partial — consult Summary.json and Errors.csv"
-                }
+                },
             );
             return Ok(if complete { 0 } else { 3 });
         }
@@ -213,6 +237,13 @@ fn run() -> Result<u8> {
         Some(Command::Collect(options)) => (options, false),
         None => (cli.options, false),
     };
+    if !options.quiet {
+        ui::banner();
+        ui::field("Start time", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"));
+        ui::field("Timezone", "UTC");
+        println!();
+        ui::status("Discovering artifacts…");
+    }
     ensure!(
         options.threads > 0 && options.threads <= 128,
         "--threads must be between 1 and 128"
@@ -233,18 +264,14 @@ fn run() -> Result<u8> {
             "Source and output directory trees must not overlap"
         );
     }
-    if !options.quiet {
-        if sources
+    if !options.quiet
+        && sources
             .iter()
             .any(|s| s.live && output.starts_with(&s.root))
-        {
-            eprintln!(
-                "Notice: the destination is on a live source volume. Output writes will change that volume; acquisition uses a frozen pre-write plan."
-            );
-        }
-        println!(
-            "KUMADE — Windows Evidence Collection\nYamato Security / {}\nTimezone: UTC\nDiscovering artifacts…",
-            env!("CARGO_PKG_VERSION")
+    {
+        ui::field(
+            "Notice",
+            "The destination is on a live source volume. Output writes will change that volume; acquisition uses a frozen pre-write plan.",
         );
     }
     let mut plan = discovery::build_plan(sources, &rules, &options.artifacts, options.memory)?;
@@ -255,20 +282,17 @@ fn run() -> Result<u8> {
     }
     plan.issues.extend(discovered.issues);
     if !options.quiet {
-        println!(
-            "Sources: {}\nArtifacts: {}\nPlanned files/streams: {}\nKnown bytes: {}\nUnknown sizes: {}\nDiscovery issues: {}",
-            plan.sources.len(),
-            rules.catalog.artifacts.len(),
-            plan.files.len(),
-            collect::human_bytes(plan.known_bytes),
-            plan.unknown_sizes,
-            plan.issues.len()
-        );
+        ui::field("Sources", ui::count(plan.sources.len() as u64));
+        ui::field("Artifacts", ui::count(rules.catalog.artifacts.len() as u64));
+        ui::field("Planned files/streams", ui::count(plan.files.len() as u64));
+        ui::field("Known bytes", collect::human_bytes(plan.known_bytes));
+        ui::field("Unknown sizes", ui::count(plan.unknown_sizes));
+        ui::field("Discovery issues", ui::count(plan.issues.len() as u64));
     }
     if plan_only {
         std::fs::create_dir_all(&output)?;
         collect::write_json_new(&output.join("Plan.json"), &plan)?;
-        println!("Plan saved: {}", output.join("Plan.json").display());
+        ui::field("Plan saved", output.join("Plan.json").display());
         return Ok(
             if plan
                 .issues

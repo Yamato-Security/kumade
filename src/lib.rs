@@ -20,4 +20,5 @@ pub mod model;
 pub mod paths;
 pub mod platform;
 pub mod raw;
+pub mod ui;
 pub mod verify;

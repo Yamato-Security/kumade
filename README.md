@@ -33,6 +33,9 @@ Windows examples below.
   verifier that rejects modified payloads and unsafe manifest paths.
 - Protected fresh run directories, no overwrite of existing payloads, source/output
   separation for offline evidence, and terminal progress.
+- Green Kumade terminal banner and labels, white values, and a green progress
+  bar with elapsed time, file counters, percentage, filename and approximate size.
+  Redirected output is plain text; `NO_COLOR` disables terminal colors.
 
 ## Run locally
 
