@@ -1,15 +1,26 @@
 # Local validation
 
-Validation date: 18 November 2026. Version: `0.1.0-dev`.
+Validation date: 18 November 2026. Version: `0.1.0`.
 
 ## Automated checks
 
 - `cargo fmt --check`: passed.
-- `cargo test --all-targets`: 53 tests passed (49 core, 4 CLI).
+- Local Linux `cargo test --all-targets`: 57 tests passed (49 core, 4 CLI,
+  4 unit tests). Windows excludes three Unix-only symlink tests.
 - Native Linux ARM64 and Windows x64 Clippy checks with `-D warnings`: passed.
 - Release builds: Linux ARM64 and Windows x64 (MinGW cross-build).
 - Windows executable imports were inspected: only Windows system libraries are
   required. This is an import-table check, not a Windows runtime test.
+
+The release workflow builds eight platform packages with Rust 1.100.0 and the
+locked dependency versions. Native CI covers Windows x64, Linux and macOS
+ARM64; Windows ARM64 and macOS x64 packages are cross-built. Windows MSVC
+packages statically link the C runtime; Linux musl packages are static.
+
+Release preparation caught and fixed a musl `renameat2` link failure, added
+macOS descriptor-based source-path validation, and stopped treating zero NTFS
+timestamps as real observations at the Windows epoch. Regression checks cover
+exclusive commits, unset timestamps and real 100 ns timestamp precision.
 
 The tests cover synthetic resident, nonresident and sparse NTFS data, bounded
 copying, source-change handling, matching/pruning, path safety, destination

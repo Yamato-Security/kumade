@@ -40,14 +40,16 @@ full design's more granular exit codes are not implemented yet.
 
 ## Windows qualification
 
-The Windows x64 target is compile-checked and built locally with MinGW. This
-does not establish runtime correctness of privilege, volume, locked-file or
+The Windows x64 target is compile-checked locally with MinGW and tested with
+MSVC in platform CI using offline fixtures. This does not establish runtime
+correctness of privilege, volume, locked-file or
 device-control operations on every Windows build. Synthetic NTFS tests exercise
 the shared read engine without mounting an image or using a driver.
 
 The available Windows VM was not reachable over SSH during this implementation.
 Live locked-file tests, security-policy qualification and memory drivers remain
-separate required validation work. No company machine or cloud service was contacted.
+separate required validation work. No live company system or private company
+evidence is used in platform CI.
 
 ## Remaining milestones
 

@@ -20,7 +20,7 @@ it to `kumade.exe` on Windows or `kumade` elsewhere to use the examples below.
   local GPO/SYSVOL, Defender and standard paging-file locations.
 - Offline collection from Windows volume directories on Linux, macOS and Windows.
 - Windows fixed-volume/mount-point discovery, profile discovery and backup privilege
-  setup. Windows code is cross-compiled; live Windows qualification is pending.
+  setup. Platform CI exercises offline acquisition; live Windows qualification is pending.
 - Read-only raw NTFS fallback for discovered locked files and hidden metadata,
   including resident/nonresident data, named streams and sparse logical content.
 - Parallel acquisition, bounded copy/hash buffers, sparse output where supported,
