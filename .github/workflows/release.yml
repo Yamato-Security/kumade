@@ -2,6 +2,11 @@ name: Release packages
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Commit, branch or tag to build (blank uses the workflow commit)'
+        required: false
+        type: string
 
 # Building never publishes a release or receives a write token. Packages are
 # reviewed before attachment to the release page.
@@ -10,6 +15,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Also applies when building older release tags without an i686 target config.
+  CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
 
 jobs:
   build:
@@ -19,11 +26,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { os: windows-latest, target: i686-pc-windows-msvc, platform: win-x86, native: true }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: win-x64, native: true }
           - { os: windows-latest, target: aarch64-pc-windows-msvc, platform: win-aarch64, native: false }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
         with:
@@ -32,6 +41,7 @@ jobs:
       - name: Check version against release tag
         shell: bash
         run: |
+          git rev-parse HEAD
           version=$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "kumade"))')
           if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match Cargo version $version"

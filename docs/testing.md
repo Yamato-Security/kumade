@@ -12,10 +12,12 @@ Validation date: 18 November 2026. Version: `0.1.0`.
 - Windows executable imports were inspected: only Windows system libraries are
   required. This is an import-table check, not a Windows runtime test.
 
-The release workflow builds Windows x64 and ARM64 packages with Rust 1.100.0
+The release workflow builds Windows x86 (32-bit), x64 and ARM64 packages with Rust 1.100.0
 and the locked dependency versions. Native CI covers Windows x64 plus Linux
 and macOS for development testing. Windows ARM64 is cross-built. Windows MSVC
-packages statically link the C runtime.
+packages statically link the C runtime. Windows x86 tests run on the x64 Windows
+runner through WOW64; this does not qualify live acquisition on a native 32-bit
+Windows installation. Use the x64 package for live collection on x64 Windows.
 
 Release preparation caught and fixed a musl `renameat2` link failure, added
 macOS descriptor-based source-path validation, and stopped treating zero NTFS

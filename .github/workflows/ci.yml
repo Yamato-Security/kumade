@@ -12,6 +12,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  windows-x86:
+    name: Test (Windows x86)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: 1.100.0
+          components: clippy
+          targets: i686-pc-windows-msvc
+      - run: cargo clippy --locked --all-targets --target i686-pc-windows-msvc -- -D warnings
+      # The x64 Windows runner can execute x86 binaries through WOW64.
+      - run: cargo test --locked --all-targets --target i686-pc-windows-msvc
+
   test:
     name: Test (${{ matrix.os }})
     strategy:
