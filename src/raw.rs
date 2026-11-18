@@ -135,32 +135,6 @@ fn filetime(ticks: u64) -> Option<String> {
         .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
 }
 
-#[cfg(test)]
-mod time_tests {
-    use super::filetime;
-
-    #[test]
-    fn unset_ntfs_time_is_not_an_observation_at_the_windows_epoch() {
-        assert_eq!(filetime(0), None);
-    }
-
-    #[test]
-    fn real_ntfs_times_retain_their_100ns_precision() {
-        assert_eq!(
-            filetime(1).as_deref(),
-            Some("1601-01-01T00:00:00.000000100Z")
-        );
-        assert_eq!(
-            filetime(116_444_736_000_000_000).as_deref(),
-            Some("1970-01-01T00:00:00.000000000Z")
-        );
-        assert_eq!(
-            filetime(116_444_736_000_000_001).as_deref(),
-            Some("1970-01-01T00:00:00.000000100Z")
-        );
-    }
-}
-
 impl RawVolume {
     pub fn open(path: &Path) -> Result<Self> {
         let file = crate::platform::open_source(path)
@@ -319,4 +293,30 @@ fn device_geometry(file: &File) -> Result<(u64, usize)> {
     bail!(
         "Raw devices are supported on Windows; use a plain NTFS image file for cross-platform tests"
     )
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::filetime;
+
+    #[test]
+    fn unset_ntfs_time_is_not_an_observation_at_the_windows_epoch() {
+        assert_eq!(filetime(0), None);
+    }
+
+    #[test]
+    fn real_ntfs_times_retain_their_100ns_precision() {
+        assert_eq!(
+            filetime(1).as_deref(),
+            Some("1601-01-01T00:00:00.000000100Z")
+        );
+        assert_eq!(
+            filetime(116_444_736_000_000_000).as_deref(),
+            Some("1970-01-01T00:00:00.000000000Z")
+        );
+        assert_eq!(
+            filetime(116_444_736_000_000_001).as_deref(),
+            Some("1970-01-01T00:00:00.000000100Z")
+        );
+    }
 }
