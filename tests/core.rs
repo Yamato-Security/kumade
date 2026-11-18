@@ -619,3 +619,26 @@ fn remote_profile_paths_are_identified_before_filesystem_access() {
         assert!(!kumade::platform::is_remote_windows_path(path));
     }
 }
+
+#[test]
+fn unavailable_volume_is_a_partial_collection_with_a_durable_issue() {
+    let (temp, source) = fixture();
+    let mut planned = plan(source);
+    planned.issues.push(Issue {
+        source_id: "UnavailableVolume".into(),
+        path: "unavailable-volume".into(),
+        status: "Failed".into(),
+        reason: "Volume could not be opened".into(),
+    });
+    let (root, summary) =
+        collect::collect(&planned, &temp.path().join("results"), &options()).unwrap();
+    assert_eq!(summary.collected, 2);
+    assert_eq!(summary.discovery_errors, 1);
+    assert_eq!(summary.completeness, "Partial");
+    assert!(
+        fs::read_to_string(root.join("DiscoveryIssues.csv"))
+            .unwrap()
+            .contains("UnavailableVolume")
+    );
+    assert_eq!(verify::verify(&root).unwrap(), (2, false));
+}

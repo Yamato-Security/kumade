@@ -31,7 +31,7 @@ pub fn resolve_future(path: &Path) -> Result<PathBuf> {
         missing.push(name.to_owned());
         ancestor = ancestor.parent().context("Path has no existing ancestor")?;
     }
-    let mut result = ancestor.canonicalize()?;
+    let mut result = crate::platform::canonicalize(ancestor)?;
     for name in missing.into_iter().rev() {
         result.push(name);
     }
@@ -133,8 +133,8 @@ pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf> {
     if candidate.symlink_metadata()?.file_type().is_symlink() {
         bail!("Manifest payload is a symbolic link");
     }
-    let canonical = candidate.canonicalize()?;
-    if !canonical.starts_with(root.canonicalize()?) {
+    let canonical = crate::platform::canonicalize(&candidate)?;
+    if !canonical.starts_with(crate::platform::canonicalize(root)?) {
         bail!("Manifest payload escapes the collection");
     }
     Ok(canonical)

@@ -239,9 +239,23 @@ impl RawVolume {
     }
 }
 
+fn image_geometry(metadata: io::Result<std::fs::Metadata>) -> Result<Option<(u64, usize)>> {
+    match metadata {
+        Ok(metadata) if metadata.is_file() => Ok(Some((metadata.len(), 512))),
+        Ok(_) => Ok(None),
+        // Raw volume handles support device IOCTLs but not ordinary file
+        // metadata queries (ERROR_INVALID_PARAMETER on Windows). Continue to
+        // the read-only volume length and sector-size queries in that case.
+        #[cfg(windows)]
+        Err(_) => Ok(None),
+        #[cfg(not(windows))]
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn device_geometry(file: &File) -> Result<(u64, usize)> {
-    if file.metadata()?.is_file() {
-        return Ok((file.metadata()?.len(), 512));
+    if let Some(geometry) = image_geometry(file.metadata())? {
+        return Ok(geometry);
     }
     #[cfg(windows)]
     {
@@ -317,6 +331,15 @@ mod time_tests {
         assert_eq!(
             filetime(116_444_736_000_000_001).as_deref(),
             Some("1970-01-01T00:00:00.000000100Z")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn raw_volume_metadata_error_does_not_prevent_device_geometry_queries() {
+        assert_eq!(
+            super::image_geometry(Err(std::io::Error::from_raw_os_error(87))).unwrap(),
+            None
         );
     }
 }

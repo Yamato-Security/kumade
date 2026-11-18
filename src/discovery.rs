@@ -69,8 +69,7 @@ pub fn same_version(a: &Fingerprint, b: &Fingerprint) -> bool {
 }
 
 pub fn directory_source(root: &Path, id: &str, computer: &str) -> Result<Source> {
-    let root = root
-        .canonicalize()
+    let root = crate::platform::canonicalize(root)
         .with_context(|| format!("Cannot resolve source {}", root.display()))?;
     if !root.is_dir() {
         bail!(

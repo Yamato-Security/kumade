@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Fix Windows live collection aborting when an accessible recovery or EFI
+  volume has no drive letter. Resolve GUID paths consistently for discovery
+  and source-containment checks. Record unavailable volumes as discovery
+  failures while continuing with accessible volumes.
+- Fix raw NTFS acquisition stopping on a Windows volume handle's unsupported
+  file-metadata query; obtain its length and sector size through device IOCTLs.
+
 ## 0.1.0 — Initial Release — 2026-11-18
 
 - Initial Rust implementation under RPL-1.5.
