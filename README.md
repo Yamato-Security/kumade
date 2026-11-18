@@ -6,10 +6,8 @@ Kumade is an independent Rust collector under **RPL-1.5**. It acquires evidence
 for tools such as Juntei and Hayabusa. This repository contains the first
 development implementation, **not a finished KAPE replacement**.
 
-Download **[Kumade v0.1.0](https://github.com/Yamato-Security/kumade/releases/tag/v0.1.0)**
-for Windows, Linux or macOS. Windows supports live collection; Linux and macOS
-support collection from offline Windows volume directories. See the release
-notes for the development limitations and platform validation status.
+Download **[Kumade v0.1.0 for Windows x64 or ARM64](https://github.com/Yamato-Security/kumade/releases/tag/v0.1.0)**.
+See the release notes for the development limitations and platform validation status.
 The archive's executable includes the version and platform in its name; rename
 it to `kumade.exe` on Windows or `kumade` elsewhere to use the examples below.
 
