@@ -1,0 +1,26 @@
+Third-party crates in Kumade
+===========================
+
+Kumade is built with the Rust crates below. Each license text is given once,
+followed by the crates under it. Generated from Cargo.lock by cargo-about.
+Kumade's own license is in LICENSE.
+
+{{#each overview}}
+{{#if (ne id "RPL-1.5")}}
+{{{name}}}: {{count}}
+{{/if}}
+{{/each}}
+{{#each licenses}}
+{{#if (ne id "RPL-1.5")}}
+
+================================================================================
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+{{/if}}
+{{/each}}

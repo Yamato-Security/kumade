@@ -1,11 +1,13 @@
 [package]
 name = "kumade"
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "RPL-1.5"
 authors = ["Yamato Security"]
 description = "Windows forensic evidence collector by Yamato Security"
+repository = "https://github.com/Yamato-Security/kumade"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0"

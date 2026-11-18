@@ -1,0 +1,116 @@
+name: Release packages
+
+on:
+  workflow_dispatch:
+
+# Building never publishes a release or receives a write token. Packages are
+# reviewed before attachment to the release page.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: win-x64, native: true }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, platform: win-aarch64, native: false }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, platform: lin-x64-gnu, native: true }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, platform: lin-x64-musl, native: true }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, platform: lin-aarch64-gnu, native: true }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, platform: lin-aarch64-musl, native: true }
+          - { os: macos-latest, target: aarch64-apple-darwin, platform: mac-aarch64, native: true }
+          - { os: macos-latest, target: x86_64-apple-darwin, platform: mac-x64, native: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: 1.100.0
+          targets: ${{ matrix.target }}
+      - name: Check version against release tag
+        shell: bash
+        run: |
+          version=$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "kumade"))')
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo version $version"
+            exit 1
+          fi
+      - name: Install musl tools
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Run tests on executable targets
+        if: matrix.native
+        run: cargo test --locked --all-targets --target ${{ matrix.target }}
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Check standalone Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          if (-not $dumpbin) { throw 'dumpbin.exe not found' }
+          $imports = & $dumpbin.FullName /nologo /dependents "target/$env:BUILD_TARGET/release/kumade.exe" |
+            ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\.dll$' }
+          if (-not $imports) { throw 'No DLL imports found' }
+          $runtime = $imports | Where-Object { $_ -match '^(vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt-)' }
+          if ($runtime) { throw "Unexpected C runtime DLL dependency: $runtime" }
+          Write-Host "Windows system DLLs: $($imports -join ', ')"
+      - name: Smoke test
+        if: matrix.native
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          extension=''
+          if [[ "$RUNNER_OS" == Windows ]]; then extension='.exe'; fi
+          binary="$GITHUB_WORKSPACE/target/$BUILD_TARGET/release/kumade$extension"
+          "$binary" --version
+          "$binary" doctor
+          "$binary" list
+      - name: Check static Linux binaries
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          file "target/${{ matrix.target }}/release/kumade"
+          file "target/${{ matrix.target }}/release/kumade" | grep -Eq 'static(-pie)? linked|statically linked'
+      - name: Package binary and notices
+        run: python3 scripts/package_release.py --target ${{ matrix.target }} --platform ${{ matrix.platform }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ matrix.platform }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  packages:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum *.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-packages
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
