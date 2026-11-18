@@ -203,9 +203,34 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
                 bail!("Opened source escaped its planned root");
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            // F_GETPATH resolves the opened descriptor, including any parent
+            // symlink swap that occurred after directory enumeration.
+            let mut path = vec![0_u8; libc::PATH_MAX as usize];
+            // SAFETY: F_GETPATH writes at most PATH_MAX bytes to this owned buffer.
+            let code = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, path.as_mut_ptr()) };
+            if code == -1 {
+                bail!(
+                    "Cannot verify final source path: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+            let end = path
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or_else(|| anyhow::anyhow!("Unterminated final source path"))?;
+            path.truncate(end);
+            let actual = std::path::PathBuf::from(std::ffi::OsString::from_vec(path));
+            if !actual.starts_with(root) {
+                bail!("Opened source escaped its planned root");
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = (file.as_raw_fd(), root);
+            bail!("Handle-based source-path validation is unavailable on this platform");
         }
     }
     #[cfg(windows)]

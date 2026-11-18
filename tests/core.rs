@@ -21,8 +21,9 @@ use kumade::{
     raw::{DeviceReader, RawVolume},
     verify,
 };
+#[cfg(unix)]
+use std::collections::HashMap;
 use std::{
-    collections::HashMap,
     fs::{self, File},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -512,8 +513,8 @@ fn raw_acquisition_is_used_for_hidden_metadata_candidates() {
     s.raw_device = Some(ntfs_image());
     let p = discovery::build_plan(vec![s], &rules(), &["windows.ntfs.mft".into()], false).unwrap();
     let (root, summary) = collect::collect(&p, &temp.path().join("results"), &options()).unwrap();
-    assert_eq!(summary.collected, 1);
     let records = read_records(&root);
+    assert_eq!(summary.collected, 1, "{records:#?}");
     assert_eq!(records[0].method, "RawNTFS");
     assert_eq!(verify::verify(&root).unwrap(), (1, true));
 }

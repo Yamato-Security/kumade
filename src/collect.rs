@@ -672,9 +672,11 @@ fn commit_payload(from: &Path, to: &Path) -> Result<()> {
         use std::{ffi::CString, os::unix::ffi::OsStrExt};
         let from = CString::new(from.as_os_str().as_bytes())?;
         let to = CString::new(to.as_os_str().as_bytes())?;
+        // Use the kernel entry point: musl does not export a renameat2 wrapper.
         // SAFETY: both paths are NUL-terminated; AT_FDCWD uses absolute owned paths.
         let code = unsafe {
-            libc::renameat2(
+            libc::syscall(
+                libc::SYS_renameat2,
                 libc::AT_FDCWD,
                 from.as_ptr(),
                 libc::AT_FDCWD,
@@ -708,5 +710,34 @@ fn commit_payload(from: &Path, to: &Path) -> Result<()> {
             .context("Destination must support exclusive hard-link commits on this platform")?;
         fs::remove_file(from)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::commit_payload;
+    use std::fs;
+
+    #[test]
+    fn exclusive_commit_never_overwrites_an_existing_payload() {
+        let t = tempfile::tempdir().unwrap();
+        let from = t.path().join("pending");
+        let to = t.path().join("existing");
+        fs::write(&from, b"new bytes").unwrap();
+        fs::write(&to, b"original evidence").unwrap();
+        assert!(commit_payload(&from, &to).is_err());
+        assert_eq!(fs::read(&from).unwrap(), b"new bytes");
+        assert_eq!(fs::read(&to).unwrap(), b"original evidence");
+    }
+
+    #[test]
+    fn exclusive_commit_preserves_bytes_and_removes_only_the_pending_name() {
+        let t = tempfile::tempdir().unwrap();
+        let from = t.path().join("pending");
+        let to = t.path().join("payload");
+        fs::write(&from, b"captured bytes").unwrap();
+        commit_payload(&from, &to).unwrap();
+        assert!(!from.exists());
+        assert_eq!(fs::read(&to).unwrap(), b"captured bytes");
     }
 }
