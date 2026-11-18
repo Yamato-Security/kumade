@@ -31,6 +31,8 @@ No other proposed commands are exposed as working functionality.
 - `Seal.json` hashes the manifest and all exported metadata. It is not a digital signature.
 - CSV/JSONL source timestamps retain available precision. They are not inferred attack times.
 - No original evidence is repaired, replayed, decrypted or executed.
+- An unset (zero) NTFS timestamp becomes `null` in UTC metadata rather than an
+  invented observation at the Windows epoch; original acquired bytes are retained.
 
 Exit `0` means complete **within the selected prototype scope**, `2` is a fatal
 argument/environment/verification error, and `3` is a partial collection. The

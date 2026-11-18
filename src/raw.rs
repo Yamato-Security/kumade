@@ -123,10 +123,42 @@ pub fn is_missing(error: &anyhow::Error) -> bool {
 }
 
 fn filetime(ticks: u64) -> Option<String> {
+    // NTFS uses zero for an unset timestamp. Do not turn it into a claimed
+    // observation at 1601-01-01; Windows also cannot restore that sentinel
+    // through FileTimes. Original NTFS bytes remain unchanged in acquisition.
+    if ticks == 0 {
+        return None;
+    }
     let unix = i128::from(ticks) - 116_444_736_000_000_000;
     let seconds = i64::try_from(unix.div_euclid(10_000_000)).ok()?;
     chrono::DateTime::from_timestamp(seconds, (unix.rem_euclid(10_000_000) * 100) as u32)
         .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::filetime;
+
+    #[test]
+    fn unset_ntfs_time_is_not_an_observation_at_the_windows_epoch() {
+        assert_eq!(filetime(0), None);
+    }
+
+    #[test]
+    fn real_ntfs_times_retain_their_100ns_precision() {
+        assert_eq!(
+            filetime(1).as_deref(),
+            Some("1601-01-01T00:00:00.000000100Z")
+        );
+        assert_eq!(
+            filetime(116_444_736_000_000_000).as_deref(),
+            Some("1970-01-01T00:00:00.000000000Z")
+        );
+        assert_eq!(
+            filetime(116_444_736_000_000_001).as_deref(),
+            Some("1970-01-01T00:00:00.000000100Z")
+        );
+    }
 }
 
 impl RawVolume {
