@@ -13,12 +13,39 @@
 // and limitations under the RPL.
 
 //! Windows-specific handles stay behind a small, compile-checked boundary.
-use crate::model::Source;
+use crate::model::SourceDiscovery;
+#[cfg(any(windows, test))]
+use crate::model::{Issue, Source};
 use anyhow::{Result, bail};
 use std::{
     fs::{File, OpenOptions},
     path::Path,
 };
+
+/// Resolve existing paths, including Windows volumes without a DOS drive name.
+pub fn canonicalize(path: &Path) -> std::io::Result<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        windows::canonicalize_with(path, |path| std::fs::canonicalize(path))
+    }
+    #[cfg(not(windows))]
+    {
+        path.canonicalize()
+    }
+}
+
+#[cfg(any(windows, test))]
+fn record_source(report: &mut SourceDiscovery, id: String, path: &Path, result: Result<Source>) {
+    match result {
+        Ok(source) => report.sources.push(source),
+        Err(error) => report.issues.push(Issue {
+            source_id: id,
+            path: path.display().to_string(),
+            status: "Failed".into(),
+            reason: format!("Fixed volume could not be prepared: {error:#}"),
+        }),
+    }
+}
 
 pub fn computer_name() -> String {
     std::env::var("COMPUTERNAME")
@@ -235,23 +262,20 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
-        let mut buf = vec![0_u16; 32768];
-        // SAFETY: handle is owned by file; the buffer spans the advertised capacity.
-        let n = unsafe {
-            GetFinalPathNameByHandleW(file.as_raw_handle(), buf.as_mut_ptr(), buf.len() as u32, 0)
-        };
-        if n == 0 || n as usize >= buf.len() {
-            bail!(
-                "Cannot verify final source path: {}",
-                std::io::Error::last_os_error()
-            );
-        }
-        let actual = String::from_utf16(&buf[..n as usize])?;
         let root = root
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Unsupported source-root name"))?;
+        // Compare paths in the same volume namespace. DOS-name lookup fails
+        // for an accessible recovery/EFI volume that has no drive letter.
+        let flags = if root.to_ascii_lowercase().starts_with("\\\\?\\volume{") {
+            windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_GUID
+        } else {
+            windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_DOS
+        };
+        let actual = windows::final_path(file, flags)?;
+        let actual = actual
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Unsupported final source name"))?;
         let root = root.trim_end_matches('\\');
         // Ignore ASCII drive/path casing, but require a full component boundary.
         if actual.len() <= root.len()
@@ -271,14 +295,14 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-pub fn live_sources() -> Result<Vec<Source>> {
+pub fn live_sources() -> Result<SourceDiscovery> {
     bail!(
         "Live acquisition requires Windows. Use --source <WINDOWS-VOLUME-DIRECTORY> for offline collection."
     )
 }
 
 #[cfg(windows)]
-pub fn live_sources() -> Result<Vec<Source>> {
+pub fn live_sources() -> Result<SourceDiscovery> {
     windows::live_sources()
 }
 
@@ -302,6 +326,51 @@ mod windows {
         Storage::FileSystem::*,
         System::{Registry::*, Threading::*, WindowsProgramming::DRIVE_FIXED},
     };
+
+    pub(super) fn final_path(file: &File, flags: u32) -> std::io::Result<std::path::PathBuf> {
+        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+        let mut buffer = vec![0u16; 32768];
+        // SAFETY: file owns a live handle and the buffer has the advertised capacity.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle(),
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                flags,
+            )
+        };
+        if length == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if length as usize >= buffer.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Final path exceeds the Windows path limit",
+            ));
+        }
+        Ok(std::ffi::OsString::from_wide(&buffer[..length as usize]).into())
+    }
+
+    pub(super) fn canonicalize_with(
+        path: &Path,
+        normal: impl FnOnce(&Path) -> std::io::Result<std::path::PathBuf>,
+    ) -> std::io::Result<std::path::PathBuf> {
+        match normal(path) {
+            Ok(path) => Ok(path),
+            Err(error) if error.raw_os_error() == Some(ERROR_PATH_NOT_FOUND as i32) => {
+                use std::os::windows::fs::OpenOptionsExt;
+                // Opening with zero desired access resolves identity without reading payloads.
+                // Follow the explicitly supplied root, just as canonicalize normally does.
+                let file = OpenOptions::new()
+                    .access_mode(0)
+                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                    .open(path)?;
+                final_path(&file, VOLUME_NAME_GUID)
+            }
+            Err(error) => Err(error),
+        }
+    }
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
@@ -478,10 +547,10 @@ mod windows {
         result
     }
 
-    pub fn live_sources() -> Result<Vec<Source>> {
+    pub fn live_sources() -> Result<SourceDiscovery> {
         enable_backup_privilege()?;
         let profiles = profile_paths()?;
-        let mut sources = Vec::new();
+        let mut report = SourceDiscovery::default();
         let mut volume = vec![0u16; 1024];
         // SAFETY: writable buffer with advertised capacity.
         let handle = unsafe { FindFirstVolumeW(volume.as_mut_ptr(), volume.len() as u32) };
@@ -490,7 +559,7 @@ mod windows {
             "Cannot enumerate volumes: {}",
             std::io::Error::last_os_error()
         );
-        let result = (|| {
+        let result: Result<()> = (|| {
             loop {
                 let n = volume
                     .iter()
@@ -499,99 +568,108 @@ mod windows {
                 let guid = String::from_utf16(&volume[..n])?;
                 // SAFETY: volume contains the API-supplied NUL-terminated volume path.
                 if unsafe { GetDriveTypeW(volume.as_ptr()) } == DRIVE_FIXED {
-                    let mut needed = 0;
-                    // SAFETY: null buffer is a documented size query.
-                    unsafe {
-                        GetVolumePathNamesForVolumeNameW(
-                            volume.as_ptr(),
-                            ptr::null_mut(),
-                            0,
-                            &mut needed,
-                        );
-                    }
-                    ensure!(
-                        needed > 0 && needed < 1024 * 1024,
-                        "Cannot size mount points for {guid}"
-                    );
-                    let mut mounts = vec![0u16; needed as usize];
-                    ensure!(
-                        // SAFETY: mount buffer has the queried capacity.
+                    let unavailable_id =
+                        format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12]);
+                    let attempted = (|| -> Result<Source> {
+                        let mut needed = 0;
+                        // SAFETY: null buffer is a documented size query.
                         unsafe {
                             GetVolumePathNamesForVolumeNameW(
                                 volume.as_ptr(),
-                                mounts.as_mut_ptr(),
-                                needed,
-                                &mut needed,
-                            )
-                        } != 0,
-                        "Cannot enumerate volume mount points"
-                    );
-                    let mount = mounts
-                        .split(|&c| c == 0)
-                        .filter(|s| !s.is_empty())
-                        .map(String::from_utf16)
-                        .collect::<std::result::Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .min_by_key(|s| s.len())
-                        .unwrap_or(guid.clone());
-                    let id = if mount.len() == 3 && mount.as_bytes()[1] == b':' {
-                        mount[..1].to_uppercase()
-                    } else {
-                        format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12])
-                    };
-                    let mut source = crate::discovery::directory_source(
-                        Path::new(&mount),
-                        &id,
-                        &computer_name(),
-                    )?;
-                    let mut fsname = vec![0u16; 64];
-                    ensure!(
-                        // SAFETY: optional outputs are null; fsname is a valid writable buffer.
-                        unsafe {
-                            GetVolumeInformationW(
-                                volume.as_ptr(),
                                 ptr::null_mut(),
                                 0,
-                                ptr::null_mut(),
-                                ptr::null_mut(),
-                                ptr::null_mut(),
-                                fsname.as_mut_ptr(),
-                                fsname.len() as u32,
-                            )
-                        } != 0,
-                        "Cannot inspect filesystem type"
-                    );
-                    let end = fsname.iter().position(|&c| c == 0).unwrap_or(fsname.len());
-                    if String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS") {
-                        source.raw_device = Some(guid.trim_end_matches('\\').into());
-                    }
-                    for profile in &profiles {
-                        if !profile.is_absolute()
-                            || is_remote_windows_path(&profile.to_string_lossy())
-                        {
-                            source.excluded_profiles.push(profile.display().to_string());
-                            continue;
+                                &mut needed,
+                            );
                         }
-                        if let Ok(path) = profile.canonicalize()
-                            && path.starts_with(&source.root)
-                        {
-                            source.profile_roots.push(path);
+                        ensure!(
+                            needed > 0 && needed < 1024 * 1024,
+                            "Cannot size mount points for {guid}"
+                        );
+                        let mut mounts = vec![0u16; needed as usize];
+                        ensure!(
+                            // SAFETY: mount buffer has the queried capacity.
+                            unsafe {
+                                GetVolumePathNamesForVolumeNameW(
+                                    volume.as_ptr(),
+                                    mounts.as_mut_ptr(),
+                                    needed,
+                                    &mut needed,
+                                )
+                            } != 0,
+                            "Cannot enumerate volume mount points"
+                        );
+                        let mount = mounts
+                            .split(|&c| c == 0)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from_utf16)
+                            .collect::<std::result::Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .min_by_key(|s| s.len())
+                            .unwrap_or(guid.clone());
+                        let id = if mount.len() == 3 && mount.as_bytes()[1] == b':' {
+                            mount[..1].to_uppercase()
+                        } else {
+                            format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12])
+                        };
+                        let mut source = crate::discovery::directory_source(
+                            Path::new(&mount),
+                            &id,
+                            &computer_name(),
+                        )?;
+                        let mut fsname = vec![0u16; 64];
+                        ensure!(
+                            // SAFETY: optional outputs are null; fsname is a valid writable buffer.
+                            unsafe {
+                                GetVolumeInformationW(
+                                    volume.as_ptr(),
+                                    ptr::null_mut(),
+                                    0,
+                                    ptr::null_mut(),
+                                    ptr::null_mut(),
+                                    ptr::null_mut(),
+                                    fsname.as_mut_ptr(),
+                                    fsname.len() as u32,
+                                )
+                            } != 0,
+                            "Cannot inspect filesystem type"
+                        );
+                        let end = fsname.iter().position(|&c| c == 0).unwrap_or(fsname.len());
+                        if String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS") {
+                            source.raw_device = Some(guid.trim_end_matches('\\').into());
                         }
-                    }
-                    source.profile_roots.sort();
-                    source.profile_roots.dedup();
-                    source.live = true;
-                    sources.push(source);
+                        for profile in &profiles {
+                            if !profile.is_absolute()
+                                || is_remote_windows_path(&profile.to_string_lossy())
+                            {
+                                source.excluded_profiles.push(profile.display().to_string());
+                                continue;
+                            }
+                            if let Ok(path) = crate::platform::canonicalize(profile)
+                                && path.starts_with(&source.root)
+                            {
+                                source.profile_roots.push(path);
+                            }
+                        }
+                        source.profile_roots.sort();
+                        source.profile_roots.dedup();
+                        source.live = true;
+                        Ok(source)
+                    })();
+                    record_source(&mut report, unavailable_id, Path::new(&guid), attempted);
                 }
                 // SAFETY: handle is live and the buffer is writable.
                 if unsafe { FindNextVolumeW(handle, volume.as_mut_ptr(), volume.len() as u32) } == 0
                 {
                     // SAFETY: this call reads the immediately preceding API result.
                     let e = unsafe { GetLastError() };
-                    ensure!(
-                        e == ERROR_NO_MORE_FILES,
-                        "Volume enumeration stopped: Windows error {e}"
-                    );
+                    if e != ERROR_NO_MORE_FILES {
+                        report.issues.push(Issue {
+                            source_id: "VolumeEnumeration".into(),
+                            path: "Local fixed volumes".into(),
+                            status: "Failed".into(),
+                            reason: format!("Volume enumeration stopped: Windows error {e}"),
+                        });
+                    }
                     break;
                 }
             }
@@ -603,9 +681,97 @@ mod windows {
         }
         result?;
         ensure!(
-            !sources.is_empty(),
-            "No accessible fixed volumes were discovered"
+            !report.sources.is_empty(),
+            "No accessible fixed volumes were discovered: {}",
+            report
+                .issues
+                .iter()
+                .map(|i| i.reason.as_str())
+                .collect::<Vec<_>>()
+                .join("; ")
         );
-        Ok(sources)
+        Ok(report)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_volume_does_not_discard_an_accessible_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = crate::discovery::directory_source(temp.path(), "C", "HOST01").unwrap();
+        let mut report = SourceDiscovery::default();
+        record_source(
+            &mut report,
+            "UnavailableVolume".into(),
+            Path::new("unavailable-volume"),
+            Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "fixture denied").into()),
+        );
+        record_source(&mut report, "C".into(), temp.path(), Ok(source));
+        assert_eq!(report.sources.len(), 1);
+        assert_eq!(report.sources[0].id, "C");
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(report.issues[0].status, "Failed");
+        assert!(report.issues[0].reason.contains("fixture denied"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_dos_volume_name_falls_back_to_a_resolved_guid_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let resolved = super::windows::canonicalize_with(temp.path(), |_| {
+            Err(std::io::Error::from_raw_os_error(3))
+        })
+        .unwrap();
+        assert!(
+            resolved
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .starts_with("\\\\?\\volume{")
+        );
+        assert!(resolved.is_dir());
+        assert_eq!(
+            std::fs::canonicalize(&resolved).unwrap(),
+            std::fs::canonicalize(temp.path()).unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn canonicalization_does_not_mask_access_denied() {
+        let result = super::windows::canonicalize_with(Path::new("does-not-exist"), |_| {
+            Err(std::io::Error::from_raw_os_error(5))
+        });
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn source_containment_uses_the_guid_namespace_when_the_root_does() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::*;
+        let temp = tempfile::tempdir().unwrap();
+        let inside = temp.path().join("inside");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(inside.join("input"), b"fixture").unwrap();
+        let root_handle = OpenOptions::new()
+            .access_mode(0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&inside)
+            .unwrap();
+        let other_handle = OpenOptions::new()
+            .access_mode(0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&outside)
+            .unwrap();
+        let guid_root = super::windows::final_path(&root_handle, VOLUME_NAME_GUID).unwrap();
+        let other_root = super::windows::final_path(&other_handle, VOLUME_NAME_GUID).unwrap();
+        let file = open_source(&inside.join("input")).unwrap();
+        validate_open_file(&file, &guid_root).unwrap();
+        assert!(validate_open_file(&file, &other_root).is_err());
     }
 }

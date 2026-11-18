@@ -26,7 +26,7 @@ use std::{
 };
 
 pub fn verify(root: &Path) -> Result<(usize, bool)> {
-    let root = root.canonicalize()?;
+    let root = crate::platform::canonicalize(root)?;
     let seal: serde_json::Value = serde_json::from_reader(
         File::open(paths::safe_join(&root, "Seal.json")?)
             .context("Collection has no completed seal")?,

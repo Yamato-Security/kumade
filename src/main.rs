@@ -18,7 +18,7 @@ use kumade::{
     catalog::{DEFAULT_CATALOG, Rules},
     collect::{self, Options},
     discovery,
-    model::Source,
+    model::{Source, SourceDiscovery},
     paths, platform, verify,
 };
 use std::{
@@ -102,7 +102,7 @@ fn rules(path: Option<&Path>) -> Result<Rules> {
     }
 }
 
-fn sources(options: &CollectionArgs) -> Result<Vec<Source>> {
+fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
     if options.sources.is_empty() {
         ensure!(
             options.computer.is_none(),
@@ -118,7 +118,7 @@ fn sources(options: &CollectionArgs) -> Result<Vec<Source>> {
     let mut sources = Vec::new();
     let mut roots = HashSet::new();
     for (i, input) in options.sources.iter().enumerate() {
-        let canonical = input.canonicalize()?;
+        let canonical = platform::canonicalize(input)?;
         ensure!(
             roots.insert(canonical.clone()),
             "Duplicate source directory"
@@ -140,7 +140,7 @@ fn sources(options: &CollectionArgs) -> Result<Vec<Source>> {
         }
         let mut source = discovery::directory_source(&canonical, &id, computer)?;
         for profile in &options.profile_roots {
-            let profile = profile.canonicalize()?;
+            let profile = platform::canonicalize(profile)?;
             if profile.starts_with(&source.root) {
                 source.profile_roots.push(profile);
             }
@@ -150,7 +150,7 @@ fn sources(options: &CollectionArgs) -> Result<Vec<Source>> {
         sources.push(source);
     }
     for profile in &options.profile_roots {
-        let p = profile.canonicalize()?;
+        let p = platform::canonicalize(profile)?;
         ensure!(
             sources.iter().any(|s| p.starts_with(&s.root)),
             "Profile root is outside selected sources"
@@ -164,7 +164,10 @@ fn sources(options: &CollectionArgs) -> Result<Vec<Source>> {
             );
         }
     }
-    Ok(sources)
+    Ok(SourceDiscovery {
+        sources,
+        issues: Vec::new(),
+    })
 }
 
 fn run() -> Result<u8> {
@@ -215,7 +218,8 @@ fn run() -> Result<u8> {
         "--threads must be between 1 and 128"
     );
     let rules = rules(options.catalog.as_deref())?;
-    let sources = sources(&options)?;
+    let discovered = sources(&options)?;
+    let sources = discovered.sources;
     let output = options.output.clone().unwrap_or_else(|| {
         std::env::current_exe()
             .ok()
@@ -243,7 +247,13 @@ fn run() -> Result<u8> {
             env!("CARGO_PKG_VERSION")
         );
     }
-    let plan = discovery::build_plan(sources, &rules, &options.artifacts, options.memory)?;
+    let mut plan = discovery::build_plan(sources, &rules, &options.artifacts, options.memory)?;
+    if !options.quiet {
+        for issue in &discovered.issues {
+            eprintln!("Source unavailable: {} ({})", issue.path, issue.reason);
+        }
+    }
+    plan.issues.extend(discovered.issues);
     if !options.quiet {
         println!(
             "Sources: {}\nArtifacts: {}\nPlanned files/streams: {}\nKnown bytes: {}\nUnknown sizes: {}\nDiscovery issues: {}",

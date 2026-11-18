@@ -34,6 +34,12 @@ pub struct Source {
     pub excluded_profiles: Vec<String>,
 }
 
+#[derive(Default, Debug)]
+pub struct SourceDiscovery {
+    pub sources: Vec<Source>,
+    pub issues: Vec<Issue>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Fingerprint {
