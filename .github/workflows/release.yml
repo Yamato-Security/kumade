@@ -30,6 +30,14 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc, platform: win-x64, native: true }
           - { os: windows-latest, target: aarch64-pc-windows-msvc, platform: win-aarch64, native: false }
     steps:
+      # Use the current packaging contract even when compiling an older tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Preserve release packager
+        shell: bash
+        run: cp scripts/package_release.py "$RUNNER_TEMP/kumade-package-release.py"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_ref || github.sha }}
@@ -81,12 +89,29 @@ jobs:
           "$binary" --version
           "$binary" doctor
           "$binary" list
-      - name: Package binary and notices
-        run: python3 scripts/package_release.py --target ${{ matrix.target }} --platform ${{ matrix.platform }}
+      - name: Package ZIP and standalone executable
+        shell: bash
+        run: python3 "$RUNNER_TEMP/kumade-package-release.py" --target ${{ matrix.target }} --platform ${{ matrix.platform }}
+      - name: Verify download layout
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, zipfile
+          output = pathlib.Path('dist')
+          archives = list(output.glob('*.zip'))
+          executables = list(output.glob('*.exe'))
+          assert len(archives) == len(executables) == 1
+          executable = executables[0]
+          with zipfile.ZipFile(archives[0]) as archive:
+              assert archive.namelist() == [executable.name], 'ZIP must contain only the executable'
+              assert archive.testzip() is None
+              assert hashlib.sha256(archive.read(executable.name)).digest() == hashlib.sha256(executable.read_bytes()).digest()
+          assert (output / 'LICENSES.txt').is_file()
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package-${{ matrix.platform }}
-          path: dist/*.zip
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
 
@@ -101,7 +126,7 @@ jobs:
           path: dist
       - name: Create checksums
         working-directory: dist
-        run: sha256sum *.zip > SHA256SUMS.txt
+        run: sha256sum *.zip *.exe LICENSES.txt > SHA256SUMS.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-packages

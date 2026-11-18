@@ -1,8 +1,9 @@
 # Dependency license notices
 
 `crates.txt` contains the license texts for runtime Rust dependencies from
-`Cargo.lock`, including platform-specific dependencies. Release archives include
-this file alongside Kumade's `LICENSE` and `COPYRIGHT`.
+`Cargo.lock`, including platform-specific dependencies. Releases provide
+`LICENSES.txt` alongside the executable and executable-only ZIP downloads.
+It combines these dependency notices with Kumade's `LICENSE` and `COPYRIGHT`.
 
 To regenerate with `cargo-about 0.9.3`:
 

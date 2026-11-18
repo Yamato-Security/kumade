@@ -19,6 +19,11 @@ packages statically link the C runtime. Windows x86 tests run on the x64 Windows
 runner through WOW64; this does not qualify live acquisition on a native 32-bit
 Windows installation. Use the x64 package for live collection on x64 Windows.
 
+Each platform publishes a standalone executable and a ZIP holding only that
+executable. License notices are a separate `LICENSES.txt` release asset. The
+packaging check verifies the ZIP's single member and its byte equality with
+the standalone download. Checksums cover both formats and the license notices.
+
 Release preparation caught and fixed a musl `renameat2` link failure, added
 macOS descriptor-based source-path validation, and stopped treating zero NTFS
 timestamps as real observations at the Windows epoch. Regression checks cover

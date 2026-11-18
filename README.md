@@ -12,8 +12,10 @@ development implementation.
 
 Download **[Kumade v0.1.0 for Windows x86 (32-bit), x64 or ARM64](https://github.com/Yamato-Security/kumade/releases/tag/v0.1.0)**.
 See the release notes for the development limitations and platform validation status.
-The archive's executable includes the version and platform in its name; rename
-it to `kumade.exe` on Windows or `kumade` elsewhere to use the examples below.
+Each Windows build is available as a standalone `.exe` and a ZIP containing
+only that `.exe`. Documentation is on this site; license notices accompany the
+downloads as `LICENSES.txt`. Rename the executable to `kumade.exe` to use the
+Windows examples below.
 
 ## Implemented
 

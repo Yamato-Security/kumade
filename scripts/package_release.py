@@ -12,11 +12,12 @@
 # INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
 # PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
 # and limitations under the RPL.
-"""Package an already built, version-checked binary with its license notices."""
+"""Export a standalone executable, an executable-only ZIP, and license notices."""
 
 import argparse
 import json
 import pathlib
+import shutil
 import subprocess
 import zipfile
 
@@ -40,32 +41,47 @@ def main():
     name = f"kumade-{version}-{args.platform}"
     suffix = ".exe" if "windows" in args.target else ""
     binary = pathlib.Path(metadata["target_directory"]) / args.target / "release" / ("kumade" + suffix)
-    files = [
-        (binary, name + suffix, 0o755),
-        (pathlib.Path("README.md"), "README.md", 0o644),
-        (pathlib.Path("LICENSE"), "LICENSE", 0o644),
-        (pathlib.Path("COPYRIGHT"), "COPYRIGHT", 0o644),
-        (pathlib.Path("CHANGELOG.md"), "CHANGELOG.md", 0o644),
-        (pathlib.Path("THIRD_PARTY_NOTICES/crates.txt"), "THIRD_PARTY_NOTICES.txt", 0o644),
-        (pathlib.Path("art/Kumade-Logo.png"), "art/Kumade-Logo.png", 0o644),
+    if not binary.is_file():
+        raise FileNotFoundError(binary)
+    # Notices accompany all downloads as one separate release asset. Keeping
+    # their text normalized also makes the file identical across matrix jobs.
+    sections = [
+        f"Kumade {version} — License Notices\n"
+        "Source: https://github.com/Yamato-Security/kumade\n",
+        pathlib.Path("COPYRIGHT").read_text(encoding="utf-8").strip(),
+        pathlib.Path("LICENSE").read_text(encoding="utf-8").strip(),
+        pathlib.Path("THIRD_PARTY_NOTICES/crates.txt").read_text(encoding="utf-8").strip(),
     ]
-    files.extend((path, path.as_posix(), 0o644) for path in sorted(pathlib.Path("docs").glob("*.md")))
-    for source, _, _ in files:
-        if not source.is_file():
-            raise FileNotFoundError(source)
+    notices = ("\n\n".join(sections) + "\n").encode("utf-8")
     output = pathlib.Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     archive = output / (name + ".zip")
+    executable = output / (name + suffix)
+    for path in [archive, executable]:
+        if path.exists():
+            raise FileExistsError(path)
+    license_file = output / "LICENSES.txt"
+    if license_file.exists():
+        if license_file.read_bytes() != notices:
+            raise FileExistsError("Existing LICENSES.txt contains different notices")
+    else:
+        with license_file.open("xb") as target:
+            target.write(notices)
+    with binary.open("rb") as source, executable.open("xb") as target:
+        shutil.copyfileobj(source, target, length=1024 * 1024)
+    executable.chmod(0o755)
     # Refuse to silently replace an earlier package. Timestamps are normalized
     # and Unix permission bits retained, including when packaging on Windows.
     with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as z:
-        for source, member, mode in files:
-            info = zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0))
-            info.create_system = 3
-            info.external_attr = (0o100000 | mode) << 16
-            info.compress_type = zipfile.ZIP_DEFLATED
-            z.writestr(info, source.read_bytes())
+        info = zipfile.ZipInfo(executable.name, date_time=(1980, 1, 1, 0, 0, 0))
+        info.create_system = 3
+        info.external_attr = 0o100755 << 16
+        info.compress_type = zipfile.ZIP_DEFLATED
+        with executable.open("rb") as source, z.open(info, "w") as target:
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+    print(executable)
     print(archive)
+    print(license_file)
 
 
 if __name__ == "__main__":
