@@ -4,9 +4,9 @@
 
 Kumade is an independent Rust collector under **RPL-1.5**. It acquires evidence
 for tools such as Juntei and Hayabusa. This repository contains the first
-development implementation, **not a finished KAPE replacement**.
+development implementation.
 
-Download **[Kumade v0.1.0 for Windows x64 or ARM64](https://github.com/Yamato-Security/kumade/releases/tag/v0.1.0)**.
+Download **[Kumade v0.1.0 for Windows x86 (32-bit), x64 or ARM64](https://github.com/Yamato-Security/kumade/releases/tag/v0.1.0)**.
 See the release notes for the development limitations and platform validation status.
 The archive's executable includes the version and platform in its name; rename
 it to `kumade.exe` on Windows or `kumade` elsewhere to use the examples below.
@@ -65,8 +65,8 @@ uses hashes, not an authenticated signing identity.
 
 ## Not implemented yet
 
-RAM capture/paired runtime pagefile discovery, VSS acquisition, KAPE import/module
-execution, image-source CLI support, archive packaging, cloud upload, resume,
+RAM capture/paired runtime pagefile discovery, VSS acquisition, external processing,
+image-source CLI support, archive packaging, cloud upload, resume,
 comprehensive ADS discovery and structural artifact validators are pending.
 
 `--memory` currently records an explicit failed RAM task and returns partial

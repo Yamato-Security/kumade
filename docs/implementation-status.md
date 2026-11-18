@@ -61,7 +61,7 @@ evidence is used in platform CI.
 3. Existing VSS collection and optional controlled creation of owned snapshots.
 4. Structural validation using existing Yamato parsers without altering originals.
 5. Disk-backed planning, device-aware concurrency, durable resume/cancellation.
-6. KAPE compatibility, streaming archives and cloud transport.
+6. Portable definition import, streaming archives and cloud transport.
 
 All proposed full-profile definitions should receive positive/versioned fixtures
 and independent comparison before a release claims broad production coverage.

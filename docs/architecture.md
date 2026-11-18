@@ -12,7 +12,7 @@ This document describes the target design. The initial implementation is availab
 
 Kumade should be the collector an analyst can run without knowing dozens of artifact names, selecting a collection definition or remembering that a database needs its transaction logs. The default collects every supported acquisition family across the scoped machine, records what could not be obtained, and produces evidence that existing analysis tools can consume.
 
-The intended improvement over KAPE is **broader verified defaults, better discovery, explicit completeness and a simpler operator experience**. KAPE already supports raw acquisition of locked files, modules, containers and cloud transfer. Reimplementing those features alone does not establish an improvement. [KAPE architecture](https://github.com/EricZimmerman/KapeDocs/blob/6fbfee86e33a04b43b20aa85e3ad506156859709/index.md).
+Kumade aims for **broad verified defaults, reliable discovery, explicit completeness and a simple operator experience**. Coverage and acquisition quality must be demonstrated with repeatable tests.
 
 ### Required outcomes
 
@@ -22,7 +22,7 @@ The intended improvement over KAPE is **broader verified defaults, better discov
 4. Original bytes, provenance, source timestamps, streams, failures and collection-induced changes remain explainable.
 5. Collection, hashing and packaging stream through bounded buffers; large evidence does not imply equally large RAM or duplicate temporary-disk usage.
 6. Work is parallelized according to actual storage devices and resource limits.
-7. KAPE target/module compatibility is a tested migration path, not an excuse to silently ignore unsupported settings.
+7. Definition import and processing interoperability require tested semantics; unsupported settings must be reported explicitly.
 8. A new output adapter can add cloud transport without replacing the acquisition engine.
 
 ### What “collect everything possible” means
@@ -153,14 +153,14 @@ kumade/
     kumade/                 CLI, progress, orchestration, optional processing
     kumade-core/            Plans, identities, manifests, sink interfaces, validation
     kumade-windows/         Windows APIs, volume access, VSS, memory providers
-    kumade-compat/          KAPE definition import and compatibility reporting
+    kumade-compat/          Definition import and compatibility reporting
   artifacts/              Reviewed acquisition definitions and test expectations
   profiles/               full, quick, and explicit organization profiles
   schemas/                Versioned definition/manifest/plan schemas
   tests/
     fixtures/             Synthetic and redistributable public fixtures
     integration/          Elevated Windows VM acquisition tests
-    interoperability/    KAPE/Juntei/Hayabusa comparisons
+    interoperability/    Collector/Juntei/Hayabusa comparisons
   docs/
 ```
 
@@ -402,38 +402,36 @@ Definitions express artifacts, source discovery, file/stream selectors, dependen
 
 Every enabled definition must declare at least one positive fixture, one absent/inapplicable case and its coverage limitations. A catalog update that introduces a new family without acquisition tests is not automatically released as fully supported.
 
-## 12. KAPE compatibility and a truthful parity claim
+## 12. Definition portability and capability qualification
 
-Use KapeFiles as a compatibility corpus and selectively import/adapt its MIT-licensed definitions with attribution. KAPE's executable and each external processor retain their own terms. [KapeFiles license](https://github.com/EricZimmerman/KapeFiles/blob/fee80dafa89d80818084337f70e03ad983772cf1/LICENSE).
+### Acquisition definitions
 
-### Targets
+Implement and test compound references, path/volume mapping, masks, regex semantics, recursion, save-as names, hidden metadata and named streams, variables, include/exclude behavior, size limits and duplicate definition handling. Preserve imported scope restrictions. Unknown fields or unsupported regex features must produce an explicit compatibility result.
 
-Implement and test compound references, path/volume mapping, masks, regex semantics, recursion, save-as names, hidden metadata/ADS targets, variables, include/exclude behavior, size limits and duplicate definition handling. Preserve imported scope restrictions instead of pretending an imported narrow target means Kumade's full profile. Unknown fields or unsupported regex features must produce an explicit compatibility result.
+Rust's standard regex implementation does not support every regex feature offered by other engines. Do not silently reinterpret lookarounds, backreferences or anchoring. Classify a definition as native-equivalent, explicitly translated, requiring a reviewed compatibility engine, or unsupported. Imported semantics require differential fixtures, not merely valid YAML. Review the licensing of any imported definition and retain its required attribution.
 
-Rust's standard regex implementation does not support every .NET regex feature. Do not silently reinterpret lookarounds/backreferences or anchoring. Classify a definition as native-equivalent, explicitly translated, requiring a reviewed compatibility engine, or unsupported. Imported target semantics require differential fixtures, not merely valid YAML. [KAPE target specification](https://github.com/EricZimmerman/KapeDocs/blob/6fbfee86e33a04b43b20aa85e3ad506156859709/Pages/2.1-Targets.md).
+### External processing
 
-### Modules
+Run only explicitly selected, approved processors through an execution broker. Implement variables, working directories, compound workflows, file masks, output categories, format selection, timeouts and return-code handling. Prevent cycles and bound expansion. Use absolute executable paths and argument arrays; script-based processors require a separate, explicit interpreter policy.
 
-Run only explicitly selected, approved processors through an execution broker. Implement module variables, working directories, compound modules, file masks, output categories, format selection, timeouts and return-code handling. Prevent cycles and bound expansion. Use absolute executable paths and argument arrays; batch/PowerShell modules require a separate, explicit interpreter policy. Avoid invoking a shell for ordinary executable modules.
+Processing interoperability depends on the external processor and its dependencies being available and authorized. It does not mean Kumade implements that parser. Record processor version/hash, arguments, exit code, stderr, output validation and acquisition dependencies.
 
-Module compatibility means the orchestration behaves correctly **when the external processor and its dependencies are available and authorized**. It does not mean Kumade implements that parser. Record processor version/hash, command template, exit code, stderr, output validation and acquisition dependencies. [KAPE module specification](https://github.com/EricZimmerman/KapeDocs/blob/6fbfee86e33a04b43b20aa85e3ad506156859709/Pages/2.2-Modules.md).
+### Capability acceptance table
 
-### Parity acceptance table
-
-| KAPE capability | Kumade implementation goal | Release gate |
+| Capability | Kumade implementation goal | Release gate |
 |---|---|---|
-| Targets/compound targets | Native catalog plus compatibility importer | Every in-scope public definition classified; no silently ignored semantics |
-| Locked/deferred file copy | Native/backup/raw providers | Locked fixture byte equality and correct source metadata |
+| Acquisition definitions | Native catalog plus reviewed import adapters | Every in-scope definition classified; no silently ignored semantics |
+| Locked-file copy | Native/backup/raw providers | Locked fixture byte equality and correct source metadata |
 | VSS | Existing-snapshot acquisition; optional new snapshots | Snapshot-origin and recovery tests |
 | Dedup/hash exclusions | Overlap dedup and explicit content/hash policies | Preserve every logical source reference and exclusion reason |
-| Modules | Approved external processor broker | Differential orchestration and error propagation tests |
-| Batch/unattended operation | Structured profiles, plans, exit codes | No hidden prompts or destructive default cleanup |
+| External processing | Approved external processor broker | Differential orchestration and error propagation tests |
+| Unattended operation | Structured profiles, plans, exit codes | No hidden prompts or destructive default cleanup |
 | Containers | Directory and streaming ZIP64 first; VHDX later | Interoperability and large-file/long-name validation |
 | Cloud upload | Sealed-object S3/Azure adapters | End-to-end checksum, resume and access-control tests |
-| Receiving/SFTP functionality | Optional separate receiving service or integration with an approved existing service | Explicitly deferred; never start a listening server during collection |
+| Receiving service | Optional separate service or approved integration | Explicitly deferred; never start a listener during collection |
 | GUI convenience | Simple launch experience first; optional plan GUI later | Equivalent scope and clear partial-result display |
 
-“Does everything KAPE does” is a long-term acceptance statement across this table. The first release must describe its supported subset rather than claim complete parity.
+Each release must describe its implemented and qualified subset of these goals.
 
 ## 13. Output contract and provenance
 
@@ -646,11 +644,11 @@ Use a writer process that holds deny-read handles, changes files during acquisit
 
 Test destination full, unplugged USB, SMB disconnect, process kill, cancellation, restart, snapshot disappearance, driver-load failure and malformed helper output. Source bytes and pre-existing snapshots must remain unchanged by acquisition operations except documented unavoidable live-system activity.
 
-### C. KAPE and other collector comparisons
+### C. Independent collector comparisons
 
 Pin the compared executable, definitions, helper versions and scope. Prefer immutable fixture images for byte/metadata comparisons. Live sequential runs are not byte-identical ground truth because the source changes; use equivalent restored VM snapshots and explain remaining timing differences.
 
-Compare logical source identities, families, original/derived bytes, failed/absent classifications, source timestamp fidelity and recovered-companion availability. Additional duplicate files do not count as better coverage. Every difference needs an explanation. Classify all reviewed active KapeFiles definitions before a broad parity release.
+Compare logical source identities, families, original/derived bytes, failed/absent classifications, source timestamp fidelity and recovered-companion availability. Additional duplicate files do not count as better coverage. Every difference needs an explanation. Classify all reviewed in-scope definitions before claiming broad coverage.
 
 ### D. Six-host CTF regression set
 
@@ -673,11 +671,11 @@ Initial engineering target: ordinary acquisition memory remains bounded independ
 | 0 — Contracts | Source/sink/task model, catalog schema, fixtures, license/dependency review | Scope and completeness semantics reviewed; no acquisition promises from stubs |
 | 1 — Core collector | Native file access, raw NTFS baseline, all-volume/profile discovery, family collection, manifests, local output, progress | Locked/normal fixtures match; bounded memory; truthful failures; initial CTF compatibility |
 | 2 — Memory and consistency | Qualified memory provider, multi-pagefile pairing, existing VSS, optional snapshot creation, database-family validation | Current Windows security-policy tests; partial-memory tests; no loss of old snapshots |
-| 3 — Broad parity | Expanded catalog, KAPE target importer, explicit module broker, streaming ZIP64, richer validators | Definition classification and differential comparisons; long-path/large-store tests |
+| 3 — Broad parity | Expanded catalog, definition importer, explicit processing broker, streaming ZIP64, richer validators | Definition classification and differential comparisons; long-path/large-store tests |
 | 4 — Transport/images | S3 first, then Azure/other backends; qualified image readers and optional VHDX output | Retry/checksum/low-spool tests; image-source read-only tests; output-container interoperability |
 | 5 — Operational maturity | Optional GUI/receiving integration, enterprise packaging, long-term artifact/version coverage | Independent review, documented support matrix, repeatable performance and recovery tests |
 
-Basic collectors can be prototyped quickly; trustworthy KAPE-scale coverage, modern raw filesystem edge cases and current Windows memory acquisition are the substantial work. Do not equate a working file-copy demo with release readiness. A schedule should be estimated after the phase-0 fixture and compatibility inventory, with Windows internals and DFIR validation treated as dedicated work.
+Basic collectors can be prototyped quickly; trustworthy broad artifact coverage, modern raw filesystem edge cases and current Windows memory acquisition are the substantial work. Do not equate a working file-copy demo with release readiness. A schedule should be estimated after the phase-0 fixture and compatibility inventory, with Windows internals and DFIR validation treated as dedicated work.
 
 ## 24. Decisions adopted by this proposal
 
