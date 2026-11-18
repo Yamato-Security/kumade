@@ -1,0 +1,701 @@
+// Copyright (c) 2026 Shirofune Security Co., Ltd.
+// SPDX-License-Identifier: RPL-1.5
+
+use crate::{
+    discovery::{fingerprint, same_version},
+    model::*,
+    paths, platform,
+    raw::RawVolume,
+};
+use anyhow::{Context, Result, bail, ensure};
+use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
+    io::{self, BufReader, BufWriter, Read, Seek, Write},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+
+const BUFFER: usize = 1024 * 1024;
+pub struct Options {
+    pub threads: usize,
+    pub reserve_bytes: u64,
+    pub quiet: bool,
+}
+
+pub fn hash_file(path: &Path) -> Result<(u64, String)> {
+    let mut file = BufReader::with_capacity(BUFFER, File::open(path)?);
+    let mut hash = Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = vec![0u8; BUFFER];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+        bytes = bytes
+            .checked_add(n as u64)
+            .context("Payload size overflow")?;
+    }
+    Ok((bytes, hex(&hash.finalize())))
+}
+
+pub fn write_json_new(path: &Path, value: &impl serde::Serialize) -> Result<()> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, value)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    Ok(())
+}
+
+struct Transfer<'a> {
+    file: File,
+    root: &'a Path,
+    reserve: u64,
+    hash: Sha256,
+    bytes: u64,
+    checked_at: u64,
+    sparse: bool,
+}
+impl Write for Transfer<'_> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if self.bytes == 0 || self.bytes - self.checked_at >= 16 * 1024 * 1024 {
+            let available = fs2::available_space(self.root)?;
+            if available < self.reserve.saturating_add(data.len() as u64) {
+                return Err(io::Error::other("Destination free-space reserve reached"));
+            }
+            self.checked_at = self.bytes;
+        }
+        let n = if self.sparse && data.len() >= 4096 && data.iter().all(|&b| b == 0) {
+            self.file.seek_relative(data.len() as i64)?;
+            data.len()
+        } else {
+            self.file.write(data)?
+        };
+        self.hash.update(&data[..n]);
+        self.bytes = self
+            .bytes
+            .checked_add(n as u64)
+            .ok_or_else(|| io::Error::other("Byte count overflow"))?;
+        Ok(n)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        if self.sparse {
+            self.file.set_len(self.bytes)?;
+        }
+        self.file.flush()
+    }
+}
+
+pub fn acquire_one(
+    root: &Path,
+    source: &Source,
+    item: &PlannedFile,
+    reserve: u64,
+    raw_cache: &mut HashMap<PathBuf, RawVolume>,
+) -> Record {
+    let mut record = Record {
+        schema_version: SCHEMA_VERSION,
+        observation_id: item.id.clone(),
+        computer: source.computer.clone(),
+        source_id: source.id.clone(),
+        source_path: item.source_path.display().to_string(),
+        stream_name: item.stream.clone(),
+        artifact_ids: item.artifacts.join(";"),
+        relative_output_path: None,
+        method: "NativeRead".into(),
+        status: "Failed".into(),
+        reason: String::new(),
+        started_utc: utc_now(),
+        finished_utc: String::new(),
+        logical_size: item.before.as_ref().map(|m| m.size),
+        bytes_read: 0,
+        sha256: None,
+        verified: false,
+        changed_during_read: false,
+        created_utc: None,
+        modified_utc: None,
+        accessed_utc: None,
+        source_file_id: None,
+    };
+    let outcome = (|| -> Result<()> {
+        let relative =
+            paths::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?;
+        let output = root.join(&relative);
+        fs::create_dir_all(output.parent().context("Missing payload parent")?)?;
+        let mut partial = output.clone();
+        let original = output
+            .file_name()
+            .context("Missing payload name")?
+            .to_str()
+            .context("Unsupported output name")?;
+        partial.set_file_name(format!("{original}.{}.partial", item.id));
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)?;
+        record.relative_output_path = Some(paths::relative_text(partial.strip_prefix(root)?)?);
+        let sparse = platform::enable_sparse_output(&file);
+        let mut transfer = Transfer {
+            file,
+            root,
+            reserve,
+            hash: Sha256::new(),
+            bytes: 0,
+            checked_at: 0,
+            sparse,
+        };
+        let native_path = if let Some(stream) = &item.stream {
+            PathBuf::from(format!("{}:{stream}", item.source_path.display()))
+        } else {
+            item.source_path.clone()
+        };
+        let copied = (|| -> Result<(Fingerprint, Fingerprint)> {
+            match platform::open_source(&native_path) {
+                Ok(mut input) => {
+                    platform::validate_open_file(&input, &source.root)?;
+                    let before = fingerprint(&input.metadata()?);
+                    let limit = before.size.checked_add(1).context("Source size overflow")?;
+                    io::copy(&mut Read::by_ref(&mut input).take(limit), &mut transfer)?;
+                    let after = fingerprint(&input.metadata()?);
+                    ensure!(
+                        transfer.bytes == before.size,
+                        "Source changed size or ended early during acquisition"
+                    );
+                    Ok((before, after))
+                }
+                Err(native_error) => {
+                    let Some(device) = &source.raw_device else {
+                        return Err(native_error)
+                            .context("Native read failed; source has no raw NTFS provider");
+                    };
+                    record.method = "RawNTFS".into();
+                    if !raw_cache.contains_key(device) {
+                        raw_cache.insert(device.clone(), RawVolume::open(device)?);
+                    }
+                    let result = raw_cache
+                        .get_mut(device)
+                        .context("Raw provider missing")?
+                        .copy_file(&item.relative_path, item.stream.as_deref(), &mut transfer)?;
+                    ensure!(
+                        result.bytes == transfer.bytes,
+                        "Raw reader/writer byte count mismatch"
+                    );
+                    Ok((result.before, result.after))
+                }
+            }
+        })();
+        record.bytes_read = transfer.bytes;
+        transfer.flush()?;
+        transfer.file.sync_all()?;
+        record.sha256 = Some(hex(&transfer.hash.finalize()));
+        drop(transfer.file);
+        match copied {
+            Ok((before, after)) => {
+                record.logical_size = Some(before.size);
+                record.created_utc = before.created_ns.clone();
+                record.modified_utc = before.modified_ns.clone();
+                record.accessed_utc = before.accessed_ns.clone();
+                record.source_file_id = before.identity.clone();
+                record.changed_during_read = !same_version(&before, &after)
+                    || item
+                        .before
+                        .as_ref()
+                        .is_some_and(|p| !same_version(p, &before));
+                if output.exists() {
+                    bail!("Payload destination collision: {}", output.display());
+                }
+                commit_payload(&partial, &output)?;
+                record.relative_output_path = Some(paths::relative_text(&relative)?);
+                let (verified_bytes, verified_hash) = hash_file(&output)?;
+                ensure!(
+                    Some(&verified_hash) == record.sha256.as_ref()
+                        && verified_bytes == record.bytes_read,
+                    "Stored payload failed hash verification"
+                );
+                record.verified = true;
+                if record.changed_during_read {
+                    record.status = "Partial".into();
+                    record.reason="Source metadata changed since planning or during read; captured bytes are retained".into();
+                } else {
+                    record.status = "Acquired".into();
+                }
+                if let (Some(atime), Some(mtime)) = (before.accessed_ns, before.modified_ns)
+                    && let (Ok(a), Ok(m)) = (
+                        chrono::DateTime::parse_from_rfc3339(&atime),
+                        chrono::DateTime::parse_from_rfc3339(&mtime),
+                    )
+                {
+                    let times = fs::FileTimes::new()
+                        .set_accessed(a.into())
+                        .set_modified(m.into());
+                    let restored = OpenOptions::new()
+                        .write(true)
+                        .open(&output)
+                        .and_then(|f| f.set_times(times));
+                    if let Err(e) = restored {
+                        record.status = "Partial".into();
+                        record.reason.push_str(&format!(
+                            " Destination timestamps could not be restored: {e}"
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            Err(error) => {
+                record.relative_output_path =
+                    Some(paths::relative_text(partial.strip_prefix(root)?)?);
+                if item.before.is_none() && crate::raw::is_missing(&error) && record.bytes_read == 0
+                {
+                    record.status = "NotPresent".into();
+                    record.reason = format!("{error:#}");
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    })();
+    if let Err(error) = outcome {
+        record.status = "Failed".into();
+        record.reason = format!("{error:#}");
+        if let Some(path) = &record.relative_output_path
+            && let Ok((bytes, digest)) = hash_file(&root.join(path))
+        {
+            record.bytes_read = bytes;
+            record.sha256 = Some(digest);
+        }
+    }
+    record.finished_utc = utc_now();
+    record
+}
+
+struct Journal {
+    json: BufWriter<File>,
+    csv: csv::Writer<File>,
+    errors: csv::Writer<File>,
+}
+impl Journal {
+    fn append(&mut self, r: &Record) -> Result<()> {
+        serde_json::to_writer(&mut self.json, r)?;
+        self.json.write_all(b"\n")?;
+        self.json.flush()?;
+        self.csv.serialize(r)?;
+        self.csv.flush()?;
+        if r.status == "Failed" || r.status == "Partial" {
+            self.errors.serialize(r)?;
+            self.errors.flush()?;
+        }
+        // The append is durable before this task is considered journaled.
+        self.json.get_ref().sync_data()?;
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<()> {
+        self.json.flush()?;
+        self.csv.flush()?;
+        self.errors.flush()?;
+        self.json.get_ref().sync_all()?;
+        Ok(())
+    }
+}
+
+pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf, Summary)> {
+    let mut source_ids = std::collections::HashSet::new();
+    for s in &plan.sources {
+        ensure!(
+            !s.id.is_empty() && source_ids.insert(&s.id),
+            "Duplicate or empty planned source ID"
+        );
+    }
+    let mut file_ids = std::collections::HashSet::new();
+    for f in &plan.files {
+        ensure!(
+            source_ids.contains(&f.source_id),
+            "Planned task refers to an unknown source"
+        );
+        ensure!(file_ids.insert(&f.id), "Duplicate planned observation ID");
+        paths::relative_text(&f.relative_path)?;
+    }
+    ensure!(
+        options.threads > 0 && options.threads <= 128,
+        "Threads must be in 1..=128"
+    );
+    let parent = paths::resolve_future(parent)?;
+    for source in &plan.sources {
+        // An ancestor destination is also rejected: later recursive tools could mix evidence.
+        ensure!(
+            source.live || (!parent.starts_with(&source.root) && !source.root.starts_with(&parent)),
+            "Output and source trees must not overlap"
+        );
+    }
+    fs::create_dir_all(&parent)?;
+    let available = fs2::available_space(&parent)?;
+    ensure!(
+        available
+            >= plan
+                .known_bytes
+                .checked_add(options.reserve_bytes)
+                .context("Space estimate overflow")?,
+        "Insufficient destination space: {} required bytes plus {} reserved, {} available",
+        plan.known_bytes,
+        options.reserve_bytes,
+        available
+    );
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let computer = plan
+        .sources
+        .first()
+        .map(|s| s.computer.as_str())
+        .unwrap_or("UnknownComputer");
+    let root = parent.join(format!(
+        "{}_{}_{}",
+        paths::encode_component(computer),
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        &run_id[..8]
+    ));
+    fs::create_dir(&root)?;
+    let destination_acl = platform::protect_output_root(&root)?;
+    if destination_acl == "FilesystemHasNoPersistentACLs" && !options.quiet {
+        eprintln!(
+            "Notice: destination filesystem cannot enforce per-file access controls; secure the storage separately."
+        );
+    }
+    write_json_new(&root.join("Plan.json"), plan)?;
+    write_json_new(
+        &root.join("Run.json"),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live&&parent.starts_with(&s.root)),"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+    )?;
+    let new_file = |name: &str| -> Result<File> {
+        Ok(OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(root.join(name))?)
+    };
+    let mut discovery = csv::Writer::from_writer(new_file("DiscoveryIssues.csv")?);
+    for i in &plan.issues {
+        discovery.serialize(i)?;
+    }
+    discovery.flush()?;
+    let journal = Arc::new(Mutex::new(Journal {
+        json: BufWriter::new(new_file("Manifest.jsonl")?),
+        csv: csv::Writer::from_writer(new_file("Manifest.csv")?),
+        errors: csv::Writer::from_writer(new_file("Errors.csv")?),
+    }));
+    let records = Arc::new(Mutex::new(Vec::new()));
+    let journal_errors = Arc::new(Mutex::new(Vec::new()));
+    let progress = if options.quiet {
+        ProgressBar::hidden()
+    } else {
+        ProgressBar::new(plan.files.len() as u64)
+    };
+    progress.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {pos}/{len} {wide_bar:.cyan/blue} {percent}%\n{wide_msg}",
+        )
+        .context("Invalid progress template")?,
+    );
+    let started = utc_now();
+    let timer = Instant::now();
+    let sources: HashMap<_, _> = plan.sources.iter().map(|s| (s.id.clone(), s)).collect();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(options.threads)
+        .build()?;
+    pool.install(|| {
+        plan.files
+            .par_iter()
+            .for_each_init(HashMap::new, |raw_cache, item| {
+                let source = sources[&item.source_id];
+                progress.set_message(format!(
+                    "{} ({})",
+                    clip_label(&item.relative_path.display().to_string(), 120),
+                    item.before
+                        .as_ref()
+                        .map(|m| human_bytes(m.size))
+                        .unwrap_or_else(|| "size unknown".into())
+                ));
+                let record = acquire_one(&root, source, item, options.reserve_bytes, raw_cache);
+                match journal.lock() {
+                    Ok(mut j) => {
+                        if let Err(e) = j.append(&record)
+                            && let Ok(mut v) = journal_errors.lock()
+                        {
+                            v.push(e.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        if let Ok(mut v) = journal_errors.lock() {
+                            v.push(e.to_string());
+                        }
+                    }
+                }
+                if let Ok(mut v) = records.lock() {
+                    v.push(record);
+                }
+                progress.inc(1);
+            })
+    });
+    progress.finish_and_clear();
+    journal
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Manifest journal mutex poisoned"))?
+        .finish()?;
+    let failures = journal_errors
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Journal error state poisoned"))?;
+    ensure!(
+        failures.is_empty(),
+        "Cannot seal collection because manifest writing failed: {}",
+        failures.join("; ")
+    );
+    let mut records = records
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
+    if plan.memory_requested {
+        let record=Record{schema_version:1,observation_id:uuid::Uuid::new_v4().to_string(),computer:computer.into(),source_id:"Memory".into(),source_path:"Physical RAM".into(),stream_name:None,artifact_ids:"windows.memory".into(),relative_output_path:None,method:"MemoryProvider".into(),status:"Failed".into(),reason:"RAM acquisition is not implemented in this prototype; no memory image has been acquired".into(),started_utc:started.clone(),finished_utc:utc_now(),logical_size:None,bytes_read:0,sha256:None,verified:false,changed_during_read:false,created_utc:None,modified_utc:None,accessed_utc:None,source_file_id:None};
+        journal
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
+            .append(&record)?;
+        records.push(record);
+    }
+    let mut summary = Summary {
+        schema_version: 1,
+        run_id,
+        version: env!("CARGO_PKG_VERSION").into(),
+        started_utc: started,
+        finished_utc: utc_now(),
+        completeness: "CompleteWithinSelectedPrototypeScope".into(),
+        collected: 0,
+        partial: 0,
+        failed: 0,
+        discovery_errors: plan
+            .issues
+            .iter()
+            .filter(|i| i.status == "Failed" || i.status == "Unsupported")
+            .count() as u64,
+        bytes_acquired: 0,
+        catalog_sha256: plan.catalog_sha256.clone(),
+    };
+    for record in records.iter() {
+        match record.status.as_str() {
+            "Acquired" => summary.collected += 1,
+            "Partial" => summary.partial += 1,
+            "Failed" => summary.failed += 1,
+            _ => {}
+        }
+        summary.bytes_acquired = summary
+            .bytes_acquired
+            .checked_add(record.bytes_read)
+            .context("Summary size overflow")?;
+    }
+    if summary.failed > 0 || summary.partial > 0 || summary.discovery_errors > 0 {
+        summary.completeness = "Partial".into();
+    }
+    ensure!(
+        records.len() == plan.files.len() + usize::from(plan.memory_requested),
+        "Not every planned task produced a result"
+    );
+    let mut coverage = csv::Writer::from_writer(new_file("Coverage.csv")?);
+    for planned in &plan.coverage {
+        let mut family = FamilyCoverage {
+            source_id: planned.source_id.clone(),
+            artifact_id: planned.artifact_id.clone(),
+            planned: planned.discovered,
+            acquired: 0,
+            partial: 0,
+            failed: 0,
+            not_present: 0,
+            status: planned.status.clone(),
+            reason: planned.reason.clone(),
+        };
+        for record in records.iter().filter(|r| {
+            r.source_id == planned.source_id
+                && r.artifact_ids
+                    .split(';')
+                    .any(|id| id == planned.artifact_id)
+        }) {
+            match record.status.as_str() {
+                "Acquired" => family.acquired += 1,
+                "Partial" => family.partial += 1,
+                "Failed" => family.failed += 1,
+                "NotPresent" => family.not_present += 1,
+                _ => {}
+            }
+        }
+        if family.status != "Excluded" {
+            let discovery_failed = plan.issues.iter().any(|i| {
+                i.source_id == planned.source_id
+                    && (i.status == "Failed" || i.status == "Unsupported")
+            });
+            if family.failed > 0 || family.partial > 0 || discovery_failed {
+                family.status = "Partial".into();
+                family.reason="Acquisition or discovery was incomplete; consult the manifest and discovery issues".into();
+            } else if family.acquired > 0 {
+                family.status = "Acquired".into();
+                family.reason="All discovered members were copied and hash-verified; format/atomic consistency is not established".into();
+            } else if family.not_present > 0 {
+                family.status = "NotPresent".into();
+                family.reason = "Raw candidates were not present".into();
+            }
+        }
+        coverage.serialize(family)?;
+    }
+    if plan.memory_requested {
+        coverage.serialize(FamilyCoverage {
+            source_id: "Memory".into(),
+            artifact_id: "windows.memory".into(),
+            planned: 1,
+            acquired: 0,
+            partial: 0,
+            failed: 1,
+            not_present: 0,
+            status: "Failed".into(),
+            reason: "RAM acquisition is not implemented in this prototype".into(),
+        })?;
+    }
+    coverage.flush()?;
+    journal
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
+        .finish()?;
+    write_json_new(&root.join("Summary.json"), &summary)?;
+    let (_, manifest_hash) = hash_file(&root.join("Manifest.jsonl"))?;
+    let mut metadata = std::collections::BTreeMap::new();
+    for name in [
+        "Plan.json",
+        "Run.json",
+        "Manifest.jsonl",
+        "Manifest.csv",
+        "Coverage.csv",
+        "DiscoveryIssues.csv",
+        "Errors.csv",
+        "Summary.json",
+    ] {
+        metadata.insert(name, hash_file(&root.join(name))?.1);
+    }
+    write_json_new(
+        &root.join("Seal.json"),
+        &serde_json::json!({"SchemaVersion":1,"RunId":summary.run_id,"ManifestSHA256":manifest_hash,"MetadataSHA256":metadata,"SealedUTC":utc_now(),"Signature":"NotConfigured"}),
+    )?;
+    if !options.quiet {
+        let mut file_count = 0u64;
+        let mut output_bytes = 0u64;
+        for entry in walkdir::WalkDir::new(&root).follow_links(false) {
+            let entry = entry?;
+            if entry.file_type().is_file() {
+                file_count += 1;
+                output_bytes = output_bytes
+                    .checked_add(entry.metadata()?.len())
+                    .context("Output size overflow")?;
+            }
+        }
+        println!(
+            "Collected: {}\nPartial: {}\nFailed: {}\nDiscovery errors: {}\nResults saved: {}/ ( {} files / {} )\nCompleteness: {}\nElapsed: {:.3}s",
+            summary.collected,
+            summary.partial,
+            summary.failed,
+            summary.discovery_errors,
+            root.display(),
+            file_count,
+            human_bytes(output_bytes),
+            summary.completeness,
+            timer.elapsed().as_secs_f64()
+        );
+    }
+    Ok((root, summary))
+}
+
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+pub fn clip_label(text: &str, width: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    let clean: String = text
+        .chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect();
+    let truncated = clean.width() > width;
+    let limit = if truncated {
+        width.saturating_sub(1)
+    } else {
+        width
+    };
+    let mut result = String::new();
+    let mut used = 0;
+    for c in clean.chars() {
+        let cells = c.width().unwrap_or(0);
+        if used + cells > limit {
+            break;
+        }
+        result.push(c);
+        used += cells;
+    }
+    if truncated && width > 0 {
+        result.push('…');
+    }
+    result
+}
+
+fn commit_payload(from: &Path, to: &Path) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        // SAFETY: both paths are NUL-terminated; AT_FDCWD uses absolute owned paths.
+        let code = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                libc::AT_FDCWD,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if code != 0 {
+            return Err(io::Error::last_os_error()).context("Cannot exclusively commit payload");
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let a: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+        let b: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: both paths are valid NUL-terminated strings; MoveFileW does not overwrite.
+        ensure!(
+            // SAFETY: both buffers are owned NUL-terminated absolute paths.
+            unsafe { windows_sys::Win32::Storage::FileSystem::MoveFileW(a.as_ptr(), b.as_ptr()) }
+                != 0,
+            "Cannot exclusively commit payload: {}",
+            io::Error::last_os_error()
+        );
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        fs::hard_link(from, to)
+            .context("Destination must support exclusive hard-link commits on this platform")?;
+        fs::remove_file(from)?;
+        Ok(())
+    }
+}

@@ -1,0 +1,10 @@
+/target/
+/.env
+**/.env
+.env.*
+!.env.example
+*.pdb
+/Kumade-Results/
+/validation/
+*.raw
+*.dmp

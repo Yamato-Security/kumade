@@ -1,0 +1,575 @@
+// Copyright (c) 2026 Shirofune Security Co., Ltd.
+// SPDX-License-Identifier: RPL-1.5
+
+//! Windows-specific handles stay behind a small, compile-checked boundary.
+use crate::model::Source;
+use anyhow::{Result, bail};
+use std::{
+    fs::{File, OpenOptions},
+    path::Path,
+};
+
+pub fn computer_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "UnknownComputer".into())
+}
+
+pub fn is_remote_windows_path(text: &str) -> bool {
+    let value = text.replace('/', "\\").to_ascii_uppercase();
+    value.starts_with("\\\\?\\UNC\\")
+        || value.starts_with("\\??\\UNC\\")
+        || (value.starts_with("\\\\") && !value.starts_with("\\\\?\\"))
+}
+
+/// Protect a newly created evidence root, without modifying any source ACL.
+pub fn protect_output_root(root: &Path) -> Result<&'static str> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+        Ok("OwnerOnly")
+    }
+    #[cfg(windows)]
+    {
+        use std::{os::windows::ffi::OsStrExt, ptr};
+        use windows_sys::Win32::{
+            Foundation::LocalFree,
+            Security::{Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW, *},
+            Storage::FileSystem::{GetVolumeInformationW, GetVolumePathNameW},
+        };
+        let path: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut volume = vec![0u16; 32768];
+        let mut flags = 0;
+        // SAFETY: path is NUL-terminated and volume is a sized writable buffer.
+        if unsafe { GetVolumePathNameW(path.as_ptr(), volume.as_mut_ptr(), volume.len() as u32) }
+            == 0
+        {
+            bail!(
+                "Cannot inspect destination volume: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        // SAFETY: volume is an API-supplied terminated path; optional outputs are null.
+        if unsafe {
+            GetVolumeInformationW(
+                volume.as_ptr(),
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut flags,
+                ptr::null_mut(),
+                0,
+            )
+        } == 0
+        {
+            bail!("Cannot inspect destination ACL capability");
+        }
+        if flags & 0x8 == 0 {
+            return Ok("FilesystemHasNoPersistentACLs");
+        }
+        // OW is Owner Rights. Children inherit only owner, Administrators and SYSTEM access.
+        let sddl: Vec<u16> = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let mut descriptor = ptr::null_mut();
+        // SAFETY: descriptor is initialized by the conversion API; SDDL is terminated.
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            bail!("Cannot build evidence-directory ACL");
+        }
+        // SAFETY: descriptor is live and the path names the new owned output directory.
+        let result = unsafe {
+            SetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                descriptor,
+            )
+        };
+        let error = std::io::Error::last_os_error();
+        // SAFETY: the SDDL API allocated this buffer with LocalAlloc; it is no longer used.
+        unsafe {
+            LocalFree(descriptor);
+        }
+        if result == 0 {
+            return Err(error.into());
+        }
+        Ok("OwnerAdministratorsSystem")
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = root;
+        bail!("Output permission hardening is unsupported on this platform")
+    }
+}
+
+pub fn enable_sparse_output(file: &File) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = file;
+        true
+    }
+    #[cfg(windows)]
+    {
+        use std::{os::windows::io::AsRawHandle, ptr};
+        use windows_sys::Win32::System::{IO::DeviceIoControl, Ioctl::FSCTL_SET_SPARSE};
+        let mut bytes = 0;
+        // SAFETY: the file is an owned writable output; this FSCTL requires no input.
+        unsafe {
+            DeviceIoControl(
+                file.as_raw_handle(),
+                FSCTL_SET_SPARSE,
+                ptr::null(),
+                0,
+                ptr::null_mut(),
+                0,
+                &mut bytes,
+                ptr::null_mut(),
+            ) != 0
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = file;
+        false
+    }
+}
+
+pub fn open_source(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::*;
+        options
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    Ok(options.open(path)?)
+}
+
+pub fn is_reparse_directory(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        path.symlink_metadata()
+            .is_ok_and(|m| m.file_attributes() & 0x400 != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Check the object actually opened, rather than trusting its earlier pathname.
+pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
+    if !file.metadata()?.is_file() {
+        bail!("Source is not a regular file");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        #[cfg(target_os = "linux")]
+        {
+            let actual = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+            if !actual.starts_with(root) {
+                bail!("Opened source escaped its planned root");
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (file.as_raw_fd(), root);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+        let mut buf = vec![0_u16; 32768];
+        // SAFETY: handle is owned by file; the buffer spans the advertised capacity.
+        let n = unsafe {
+            GetFinalPathNameByHandleW(file.as_raw_handle(), buf.as_mut_ptr(), buf.len() as u32, 0)
+        };
+        if n == 0 || n as usize >= buf.len() {
+            bail!(
+                "Cannot verify final source path: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        let actual = String::from_utf16(&buf[..n as usize])?;
+        let root = root
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Unsupported source-root name"))?;
+        let root = root.trim_end_matches('\\');
+        // Ignore ASCII drive/path casing, but require a full component boundary.
+        if actual.len() <= root.len()
+            || !actual
+                .get(..root.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(root))
+            || actual.as_bytes().get(root.len()) != Some(&b'\\')
+        {
+            bail!("Opened source escaped its planned root");
+        }
+        use std::os::windows::fs::MetadataExt;
+        if file.metadata()?.file_attributes() & 0x400 != 0 {
+            bail!("Reparse-point payload is not acquired through native reads");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn live_sources() -> Result<Vec<Source>> {
+    bail!(
+        "Live acquisition requires Windows. Use --source <WINDOWS-VOLUME-DIRECTORY> for offline collection."
+    )
+}
+
+#[cfg(windows)]
+pub fn live_sources() -> Result<Vec<Source>> {
+    windows::live_sources()
+}
+
+#[cfg(not(windows))]
+pub fn enable_backup_privilege() -> Result<()> {
+    bail!("Windows privileges are not available")
+}
+#[cfg(windows)]
+pub fn enable_backup_privilege() -> Result<()> {
+    windows::enable_backup_privilege()
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use anyhow::{Context, ensure};
+    use std::{mem::size_of, ptr};
+    use windows_sys::Win32::{
+        Foundation::*,
+        Security::*,
+        Storage::FileSystem::*,
+        System::{Registry::*, Threading::*, WindowsProgramming::DRIVE_FIXED},
+    };
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(Some(0)).collect()
+    }
+
+    pub fn enable_backup_privilege() -> Result<()> {
+        // SAFETY: the token output is initialized only by OpenProcessToken.
+        let mut token = ptr::null_mut();
+        ensure!(
+            // SAFETY: the current process handle is valid and token is writable.
+            unsafe {
+                OpenProcessToken(
+                    GetCurrentProcess(),
+                    TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                    &mut token,
+                )
+            } != 0,
+            "OpenProcessToken: {}",
+            std::io::Error::last_os_error()
+        );
+        let result = (|| {
+            // SAFETY: TOKEN_ELEVATION has an all-zero valid representation.
+            let mut elevation: TOKEN_ELEVATION = unsafe { std::mem::zeroed() };
+            let mut returned = 0;
+            ensure!(
+                // SAFETY: valid token and correctly sized writable output.
+                unsafe {
+                    GetTokenInformation(
+                        token,
+                        TokenElevation,
+                        &mut elevation as *mut _ as *mut _,
+                        size_of::<TOKEN_ELEVATION>() as u32,
+                        &mut returned,
+                    )
+                } != 0,
+                "Cannot inspect elevation"
+            );
+            ensure!(
+                elevation.TokenIsElevated != 0,
+                "Full live collection needs an elevated local administrator; run as administrator or select an offline --source"
+            );
+            let mut luid = LUID {
+                LowPart: 0,
+                HighPart: 0,
+            };
+            ensure!(
+                // SAFETY: the name is NUL-terminated; luid is writable.
+                unsafe {
+                    LookupPrivilegeValueW(
+                        ptr::null(),
+                        wide("SeBackupPrivilege").as_ptr(),
+                        &mut luid,
+                    )
+                } != 0,
+                "Cannot resolve backup privilege"
+            );
+            let state = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: SE_PRIVILEGE_ENABLED,
+                }],
+            };
+            // SAFETY: token and the single privilege entry are valid; no previous state requested.
+            unsafe {
+                SetLastError(0);
+            }
+            ensure!(
+                // SAFETY: state layout matches TOKEN_PRIVILEGES for one entry.
+                unsafe {
+                    AdjustTokenPrivileges(token, 0, &state, 0, ptr::null_mut(), ptr::null_mut())
+                } != 0,
+                "Cannot enable backup privilege"
+            );
+            ensure!(
+                // SAFETY: GetLastError reads the thread's error value.
+                unsafe { GetLastError() } != ERROR_NOT_ALL_ASSIGNED,
+                "Token does not hold SeBackupPrivilege"
+            );
+            Ok(())
+        })();
+        // SAFETY: this function exclusively owns the token handle.
+        unsafe {
+            CloseHandle(token);
+        }
+        result
+    }
+
+    fn profile_paths() -> Result<Vec<std::path::PathBuf>> {
+        let mut key = ptr::null_mut();
+        let path = wide("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList");
+        // SAFETY: static root, valid path and output key.
+        let code =
+            unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.as_ptr(), 0, KEY_READ, &mut key) };
+        ensure!(
+            code == 0,
+            "Cannot enumerate ProfileList: Windows error {code}"
+        );
+        let result = (|| {
+            let mut paths = Vec::new();
+            for index in 0.. {
+                let mut name = vec![0u16; 512];
+                let mut length = name.len() as u32;
+                // SAFETY: registry key is open and the buffer capacity matches length.
+                let code = unsafe {
+                    RegEnumKeyExW(
+                        key,
+                        index,
+                        name.as_mut_ptr(),
+                        &mut length,
+                        ptr::null(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    )
+                };
+                if code == ERROR_NO_MORE_ITEMS {
+                    break;
+                }
+                ensure!(
+                    code == 0,
+                    "ProfileList enumeration failed: Windows error {code}"
+                );
+                name.truncate(length as usize);
+                name.push(0);
+                let mut bytes = 0;
+                // SAFETY: size query with null data; the strings are NUL-terminated.
+                let code = unsafe {
+                    RegGetValueW(
+                        key,
+                        name.as_ptr(),
+                        wide("ProfileImagePath").as_ptr(),
+                        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        &mut bytes,
+                    )
+                };
+                if code == ERROR_FILE_NOT_FOUND {
+                    continue;
+                }
+                ensure!(
+                    code == 0 && bytes < 1024 * 1024,
+                    "Cannot size ProfileImagePath: Windows error {code}"
+                );
+                let mut data = vec![0u16; (bytes as usize).div_ceil(2)];
+                // SAFETY: capacity matches the queried byte count; API expands REG_EXPAND_SZ.
+                let code = unsafe {
+                    RegGetValueW(
+                        key,
+                        name.as_ptr(),
+                        wide("ProfileImagePath").as_ptr(),
+                        RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                        ptr::null_mut(),
+                        data.as_mut_ptr() as *mut _,
+                        &mut bytes,
+                    )
+                };
+                ensure!(
+                    code == 0,
+                    "Cannot read ProfileImagePath: Windows error {code}"
+                );
+                let length = data.iter().position(|&c| c == 0).unwrap_or(data.len());
+                paths.push(std::path::PathBuf::from(String::from_utf16(
+                    &data[..length],
+                )?));
+            }
+            Ok(paths)
+        })();
+        // SAFETY: this function owns the open registry key.
+        unsafe {
+            RegCloseKey(key);
+        }
+        result
+    }
+
+    pub fn live_sources() -> Result<Vec<Source>> {
+        enable_backup_privilege()?;
+        let profiles = profile_paths()?;
+        let mut sources = Vec::new();
+        let mut volume = vec![0u16; 1024];
+        // SAFETY: writable buffer with advertised capacity.
+        let handle = unsafe { FindFirstVolumeW(volume.as_mut_ptr(), volume.len() as u32) };
+        ensure!(
+            handle != INVALID_HANDLE_VALUE,
+            "Cannot enumerate volumes: {}",
+            std::io::Error::last_os_error()
+        );
+        let result = (|| {
+            loop {
+                let n = volume
+                    .iter()
+                    .position(|&c| c == 0)
+                    .context("Invalid volume name")?;
+                let guid = String::from_utf16(&volume[..n])?;
+                // SAFETY: volume contains the API-supplied NUL-terminated volume path.
+                if unsafe { GetDriveTypeW(volume.as_ptr()) } == DRIVE_FIXED {
+                    let mut needed = 0;
+                    // SAFETY: null buffer is a documented size query.
+                    unsafe {
+                        GetVolumePathNamesForVolumeNameW(
+                            volume.as_ptr(),
+                            ptr::null_mut(),
+                            0,
+                            &mut needed,
+                        );
+                    }
+                    ensure!(
+                        needed > 0 && needed < 1024 * 1024,
+                        "Cannot size mount points for {guid}"
+                    );
+                    let mut mounts = vec![0u16; needed as usize];
+                    ensure!(
+                        // SAFETY: mount buffer has the queried capacity.
+                        unsafe {
+                            GetVolumePathNamesForVolumeNameW(
+                                volume.as_ptr(),
+                                mounts.as_mut_ptr(),
+                                needed,
+                                &mut needed,
+                            )
+                        } != 0,
+                        "Cannot enumerate volume mount points"
+                    );
+                    let mount = mounts
+                        .split(|&c| c == 0)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from_utf16)
+                        .collect::<std::result::Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .min_by_key(|s| s.len())
+                        .unwrap_or(guid.clone());
+                    let id = if mount.len() == 3 && mount.as_bytes()[1] == b':' {
+                        mount[..1].to_uppercase()
+                    } else {
+                        format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12])
+                    };
+                    let mut source = crate::discovery::directory_source(
+                        Path::new(&mount),
+                        &id,
+                        &computer_name(),
+                    )?;
+                    let mut fsname = vec![0u16; 64];
+                    ensure!(
+                        // SAFETY: optional outputs are null; fsname is a valid writable buffer.
+                        unsafe {
+                            GetVolumeInformationW(
+                                volume.as_ptr(),
+                                ptr::null_mut(),
+                                0,
+                                ptr::null_mut(),
+                                ptr::null_mut(),
+                                ptr::null_mut(),
+                                fsname.as_mut_ptr(),
+                                fsname.len() as u32,
+                            )
+                        } != 0,
+                        "Cannot inspect filesystem type"
+                    );
+                    let end = fsname.iter().position(|&c| c == 0).unwrap_or(fsname.len());
+                    if String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS") {
+                        source.raw_device = Some(guid.trim_end_matches('\\').into());
+                    }
+                    for profile in &profiles {
+                        if !profile.is_absolute()
+                            || is_remote_windows_path(&profile.to_string_lossy())
+                        {
+                            source.excluded_profiles.push(profile.display().to_string());
+                            continue;
+                        }
+                        if let Ok(path) = profile.canonicalize()
+                            && path.starts_with(&source.root)
+                        {
+                            source.profile_roots.push(path);
+                        }
+                    }
+                    source.profile_roots.sort();
+                    source.profile_roots.dedup();
+                    source.live = true;
+                    sources.push(source);
+                }
+                // SAFETY: handle is live and the buffer is writable.
+                if unsafe { FindNextVolumeW(handle, volume.as_mut_ptr(), volume.len() as u32) } == 0
+                {
+                    // SAFETY: this call reads the immediately preceding API result.
+                    let e = unsafe { GetLastError() };
+                    ensure!(
+                        e == ERROR_NO_MORE_FILES,
+                        "Volume enumeration stopped: Windows error {e}"
+                    );
+                    break;
+                }
+            }
+            Ok(())
+        })();
+        // SAFETY: handle is exclusively owned by this enumeration.
+        unsafe {
+            FindVolumeClose(handle);
+        }
+        result?;
+        ensure!(
+            !sources.is_empty(),
+            "No accessible fixed volumes were discovered"
+        );
+        Ok(sources)
+    }
+}
