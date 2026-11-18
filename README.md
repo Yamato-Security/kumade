@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="art/Kumade-Logo.png" alt="Kumade — Windows Triage Collector" width="480">
+</p>
+
 # Kumade（熊手）
 
 **Windows evidence collection by Yamato Security.**

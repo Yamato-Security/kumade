@@ -47,6 +47,7 @@ def main():
         (pathlib.Path("COPYRIGHT"), "COPYRIGHT", 0o644),
         (pathlib.Path("CHANGELOG.md"), "CHANGELOG.md", 0o644),
         (pathlib.Path("THIRD_PARTY_NOTICES/crates.txt"), "THIRD_PARTY_NOTICES.txt", 0o644),
+        (pathlib.Path("art/Kumade-Logo.png"), "art/Kumade-Logo.png", 0o644),
     ]
     files.extend((path, path.as_posix(), 0o644) for path in sorted(pathlib.Path("docs").glob("*.md")))
     for source, _, _ in files:
