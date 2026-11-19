@@ -700,6 +700,17 @@ mod tests {
             );
             assert!(!s.query.to_ascii_lowercase().contains("win32_product"));
             let script = script(&s);
+            let lower = script.to_ascii_lowercase();
+            for reserved in ["home", "pid", "host", "profile", "pshome", "codex_home"] {
+                for (at, _) in lower.match_indices(&format!("${reserved}")) {
+                    let rest = lower[at + reserved.len() + 1..].trim_start();
+                    assert!(
+                        !rest.starts_with('='),
+                        "{} assigns reserved ${reserved}",
+                        s.name
+                    );
+                }
+            }
             let decoded = STANDARD.decode(encoded_script(&script)).unwrap();
             let units: Vec<_> = decoded
                 .as_chunks::<2>()

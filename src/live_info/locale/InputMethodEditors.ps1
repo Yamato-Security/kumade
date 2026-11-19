@@ -6,8 +6,8 @@ foreach($root in @('Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\CTF\TIP','Re
         $languageRoot=$root+'\'+$tip.PSChildName+'\LanguageProfile'
         if(!(Test-Path -LiteralPath $languageRoot)){continue}
         foreach($language in Get-ChildItem -LiteralPath $languageRoot){
-            foreach($profile in Get-ChildItem -LiteralPath ('Registry::'+$language.Name)){
-                [ordered]@{Scope='MachineRegistration';RegistryPath=$profile.Name;RegistryView=if($root -match 'WOW6432Node'){'32Bit'}else{'Native'};TipId=$tip.PSChildName;LanguageId=$language.PSChildName;ProfileId=$profile.PSChildName;Description=(LocaleValue $profile 'Description');Enabled=(LocaleValue $profile 'Enable');IconFile=(LocaleValue $profile 'IconFile');IconIndex=(LocaleValue $profile 'IconIndex')}
+            foreach($localeProfile in Get-ChildItem -LiteralPath ('Registry::'+$language.Name)){
+                [ordered]@{Scope='MachineRegistration';RegistryPath=$localeProfile.Name;RegistryView=if($root -match 'WOW6432Node'){'32Bit'}else{'Native'};TipId=$tip.PSChildName;LanguageId=$language.PSChildName;ProfileId=$localeProfile.PSChildName;Description=(LocaleValue $localeProfile 'Description');Enabled=(LocaleValue $localeProfile 'Enable');IconFile=(LocaleValue $localeProfile 'IconFile');IconIndex=(LocaleValue $localeProfile 'IconIndex')}
             }
         }
     }

@@ -7,10 +7,10 @@ function Loaded-LocaleHives {
         $_.PSChildName -eq '.DEFAULT' -or $_.PSChildName -match '^S-1-\d+(?:-\d+)+$'
     } | ForEach-Object {
         $name=$_.PSChildName
-        $profile=$null
-        $profileKey='Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\'+$name
-        if(Test-Path -LiteralPath $profileKey){$profile=(Get-Item -LiteralPath $profileKey).GetValue('ProfileImagePath',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}
-        [pscustomobject]@{HiveName=$name;UserSid=if($name -eq '.DEFAULT'){$null}else{$name};ProfilePath=$profile;Scope=if($name -eq '.DEFAULT'){'SystemDefaultHive'}else{'LoadedUserHive'};Root=('Registry::'+$_.Name)}
+        $localeProfile=$null
+        $localeProfileKey='Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\'+$name
+        if(Test-Path -LiteralPath $localeProfileKey){$localeProfile=(Get-Item -LiteralPath $localeProfileKey).GetValue('ProfileImagePath',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}
+        [pscustomobject]@{HiveName=$name;UserSid=if($name -eq '.DEFAULT'){$null}else{$name};ProfilePath=$localeProfile;Scope=if($name -eq '.DEFAULT'){'SystemDefaultHive'}else{'LoadedUserHive'};Root=('Registry::'+$_.Name)}
     }
 }
 function Optional-LocaleKey([string]$path) {
