@@ -32,7 +32,7 @@ walkdir = "2.5"
 # Native EWF1 encoding/verification of the staged NTFS disk.
 # Cargo.lock pins the reviewed revisions; neither needs an installed runtime.
 # Switch to main after the EWF1 continuation-marker fix is merged.
-ewf-image = { package = "ys-e01-parser", git = "https://github.com/Yamato-Security/ys-e01-parser", branch = "fix/ewf1-segment-chain", features = ["writer", "parallel"] }
+ewf-image = { package = "ys-e01-parser", git = "https://github.com/Yamato-Security/ys-e01-parser", branch = "main", features = ["writer", "parallel"] }
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]

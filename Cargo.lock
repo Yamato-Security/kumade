@@ -1435,7 +1435,7 @@ dependencies = [
 [[package]]
 name = "ys-e01-parser"
 version = "1.0.0"
-source = "git+https://github.com/Yamato-Security/ys-e01-parser?branch=fix%2Fewf1-segment-chain#fa6ee645e34f0e13b16240edebce2065625da1d9"
+source = "git+https://github.com/Yamato-Security/ys-e01-parser?branch=main#59fc3fb692418bedbde907a47684dca62f679d70"
 dependencies = [
  "aes",
  "bzip2",
