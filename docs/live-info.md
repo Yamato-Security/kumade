@@ -13,6 +13,9 @@ Kumade captures live Windows system state **before copying artifact files**, usi
 .\kumade.exe live-info -o E:\Evidence\HOST01-Json -t json
 .\kumade.exe live-info -o E:\Evidence\HOST01-Jsonl -t jsonl -T 2 --timeout 90
 
+# List provider names without querying the machine
+.\kumade.exe live-info --list
+
 # A restricted inventory; repeat --dataset to select providers
 .\kumade.exe live-info -o E:\Evidence\Network --dataset TcpConnections --dataset Processes
 
@@ -54,7 +57,7 @@ Provider-specific timestamps ending in `Utc` are converted to UTC. Some source f
 - `TimedOut` / `OutputLimit`: a deadline or bounded output was exceeded without usable rows.
 - `Partial`: valid preceding rows were retained but the provider subsequently failed, exceeded a limit or did not finish. The message records the cause.
 
-Each provider has a 32 MiB stdout limit, a 64 KiB stderr limit and a 100,000-row limit. Partial JSON lines are never accepted as observations. Worker counts bound simultaneous process and output-buffer usage; each PowerShell process also has its own memory overhead. Destination reserves are checked before each provider writes. Container output also checks physical host reserves. Inventory is bounded but is not a zero-impact snapshot.
+Each provider has a 32 MiB stdout limit, a 64 KiB stderr limit and a 100,000-row limit. Partial JSON lines are never accepted as observations. Provider processes run in owned Windows jobs; completion or timeout closes the job and terminates remaining helpers before output readers are joined. Worker counts bound simultaneous process and output-buffer usage; each PowerShell process also has its own memory overhead. Destination reserves are checked before each provider writes. Container output also checks physical host reserves. Inventory is bounded but is not a zero-impact snapshot.
 
 Optional unsupported features remain visible in the manifest without forcing partial status when the applicable providers complete. Missing required host/OS/process/IP providers, all providers unsupported, failed queries and partial results make inventory incomplete. This contributes to `LiveInfoFailedProviders` in `Summary.json` and acquisition exit code 3. The inventory-only command also returns 3 when incomplete.
 

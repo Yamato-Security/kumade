@@ -116,7 +116,7 @@ fn live_socket_has_endpoint_and_process_context_and_formats_are_readable() {
         data.iter().any(|r| r["LocalPort"] == port
             && r["OwningProcess"] == std::process::id()
             && r["ExecutablePath"].as_str().is_some_and(|s| !s.is_empty())),
-        "test socket absent: {data:?}"
+        "test socket absent from the collected endpoint/process context"
     );
     for format in [Format::Csv, Format::Json] {
         let temp = tempfile::tempdir().unwrap();
@@ -149,4 +149,41 @@ fn live_socket_has_endpoint_and_process_context_and_formats_are_readable() {
             _ => unreachable!(),
         }
     }
+}
+
+#[test]
+fn live_inventory_is_inside_a_normal_collection_seal() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    fs::write(source.join("Windows/Prefetch/ONE.pf"), b"fixture").unwrap();
+    let mut volume = kumade::discovery::directory_source(&source, "C", "TEST").unwrap();
+    volume.live = true;
+    let catalog = kumade::catalog::Rules::load(kumade::catalog::DEFAULT_CATALOG).unwrap();
+    let plan =
+        kumade::discovery::build_plan(vec![volume], &catalog, &["windows.prefetch".into()], false)
+            .unwrap();
+    let options = kumade::collect::Options {
+        threads: 1,
+        reserve_bytes: 0,
+        quiet: true,
+        verbose: false,
+        ntfs_metadata: false,
+        host_reserve: None,
+        live_info: Some(Options {
+            selected: vec!["HostInfo".into()],
+            reserve_bytes: 0,
+            quiet: true,
+            ..Default::default()
+        }),
+    };
+    let (root, summary) =
+        kumade::collect::collect(&plan, &temp.path().join("results"), &options).unwrap();
+    assert_eq!(summary.live_info_failed_providers, 0);
+    let (_, complete) = kumade::verify::verify(&root).unwrap();
+    assert!(complete);
+    let seal: Value = serde_json::from_slice(&fs::read(root.join("Seal.json")).unwrap()).unwrap();
+    assert!(seal["MetadataSHA256"]["LiveInfo/HostInfo.csv"].is_string());
+    fs::write(root.join("LiveInfo/HostInfo.csv"), b"modified").unwrap();
+    assert!(kumade::verify::verify(&root).is_err());
 }

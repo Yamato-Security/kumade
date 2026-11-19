@@ -122,8 +122,11 @@ struct CollectionArgs {
 #[derive(Args)]
 struct LiveInfoArgs {
     /// New output directory (existing directories are refused)
-    #[arg(short, long, value_name = "DIR")]
-    output: PathBuf,
+    #[arg(short, long, value_name = "DIR", required_unless_present = "list")]
+    output: Option<PathBuf>,
+    /// List the embedded inventory data sets without querying the system
+    #[arg(long)]
+    list: bool,
     /// Output format
     #[arg(short = 't', long = "format", value_enum, default_value = "csv")]
     format: kumade::live_info::Format,
@@ -246,8 +249,20 @@ fn run() -> Result<u8> {
     };
     let (options, plan_only) = match cli.command {
         Some(Command::LiveInfo(args)) => {
+            if args.list {
+                ui::banner();
+                for dataset in kumade::live_info::datasets() {
+                    ui::status(&format!(
+                        "{:<28} {} fields",
+                        dataset.name,
+                        dataset.fields.len()
+                    ));
+                }
+                return Ok(0);
+            }
             ensure!(cfg!(windows), "Live response inventory requires Windows");
-            let output = paths::resolve_future(&args.output)?;
+            let output =
+                paths::resolve_future(args.output.as_deref().context("Missing output directory")?)?;
             if let Some(parent) = output.parent() {
                 std::fs::create_dir_all(parent)?;
             }

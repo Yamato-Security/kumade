@@ -167,13 +167,82 @@ fn drain(reader: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
     reader.take(limit as u64 + 1).read_to_end(&mut b)?;
     Ok(b)
 }
+// A query may load a Windows provider that starts helper processes. Kill the
+// whole owned process tree before joining pipe readers, even on normal exit.
+#[cfg(windows)]
+struct QueryJob(windows_sys::Win32::Foundation::HANDLE);
+#[cfg(windows)]
+impl QueryJob {
+    fn new() -> Result<Self> {
+        use windows_sys::Win32::System::JobObjects::*;
+        // SAFETY: null security/name pointers request an unnamed owned job.
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        ensure!(
+            !handle.is_null(),
+            "Cannot create a provider process job: {}",
+            std::io::Error::last_os_error()
+        );
+        let job = Self(handle);
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: live owned job and a correctly sized, initialized limits structure.
+        ensure!(
+            // SAFETY: live owned job and a correctly sized initialized limits structure.
+            unsafe {
+                SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                )
+            } != 0,
+            "Cannot set provider job limits: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(job)
+    }
+    fn assign(&self, child: &std::process::Child) -> Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        // SAFETY: the job and child handles remain live for this call.
+        ensure!(
+            // SAFETY: the job and child handles remain live for this call.
+            unsafe {
+                windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
+                    self.0,
+                    child.as_raw_handle(),
+                )
+            } != 0,
+            "Cannot isolate the provider process: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(())
+    }
+}
+#[cfg(windows)]
+impl Drop for QueryJob {
+    fn drop(&mut self) {
+        // SAFETY: this object uniquely owns the job handle; closing kills remaining members.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
 fn execute(mut command: Command, timeout: Duration) -> Result<Capture> {
+    #[cfg(windows)]
+    let mut job = Some(QueryJob::new()?);
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .context("Cannot start the built-in PowerShell provider")?;
+    #[cfg(windows)]
+    if let Err(error) = job.as_ref().expect("owned job").assign(&child) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
     let out = child.stdout.take().context("Missing stdout pipe")?;
     let err = child.stderr.take().context("Missing stderr pipe")?;
     // Draining concurrently prevents either pipe from blocking the provider. Closing a
@@ -189,6 +258,8 @@ fn execute(mut command: Command, timeout: Duration) -> Result<Capture> {
             Err(e) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                #[cfg(windows)]
+                drop(job.take());
                 let _ = stdout.join();
                 let _ = stderr.join();
                 return Err(e.into());
@@ -201,6 +272,8 @@ fn execute(mut command: Command, timeout: Duration) -> Result<Capture> {
         }
         std::thread::sleep(Duration::from_millis(25));
     };
+    #[cfg(windows)]
+    drop(job.take());
     let stdout = stdout
         .join()
         .map_err(|_| anyhow::anyhow!("Provider stdout reader panicked"))??;
@@ -686,6 +759,46 @@ mod tests {
         let row = json!({"Kind":"Row","Data":{"Computer":"HOST","CollectedUtc":"2026-11-20T01:02:03Z","Provider":s.name,"IPAddress":["::1","127.0.0.1"]}});
         let (rows, _, _) = parse(&s, capture(row));
         assert_eq!(rows[0]["IpAddress"], json!(["::1", "127.0.0.1"]));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn deadline_terminates_provider_descendants() {
+        let mut command = Command::new(powershell().unwrap());
+        let script = r#"$c=Start-Process -FilePath ($PSHOME+'\powershell.exe') -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' -PassThru; [Console]::WriteLine($c.Id); Start-Sleep -Seconds 30"#;
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &encoded_script(script),
+        ]);
+        let capture = execute(command, Duration::from_secs(5)).unwrap();
+        assert_eq!(capture.stop, Some("TimedOut"));
+        let id: u32 = String::from_utf8(capture.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .expect("helper PID");
+        use windows_sys::Win32::{Foundation::*, System::Threading::*};
+        // SAFETY: querying/waiting on a process ID returned by the test's own provider.
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                id,
+            )
+        };
+        if !handle.is_null() {
+            // SAFETY: live process handle with SYNCHRONIZE access.
+            let result = unsafe { WaitForSingleObject(handle, 5000) };
+            // SAFETY: the test uniquely owns this process handle.
+            unsafe {
+                CloseHandle(handle);
+            }
+            assert_eq!(
+                result, WAIT_OBJECT_0,
+                "provider child survived the deadline"
+            );
+        }
     }
     #[cfg(unix)]
     #[test]
