@@ -98,7 +98,9 @@ fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
             );
         }
         assert!(!stdout.contains(" / 24"));
-        assert!(!stdout.contains('\r'));
+        // Windows checkout can embed CRLF in the logo. Reject progress-bar
+        // carriage returns, while allowing ordinary Windows line endings.
+        assert!(!stdout.replace("\r\n", "\n").contains('\r'));
         assert!(!stdout.contains('\x1b'));
     }
     for root in fs::read_dir(output).unwrap() {
