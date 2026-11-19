@@ -28,6 +28,10 @@ use std::{
 
 pub fn verify(root: &Path) -> Result<(usize, bool)> {
     let root = crate::platform::canonicalize(root)?;
+    if !root.join("Seal.json").exists() && root.join("LiveInfo/Seal.json").is_file() {
+        let (datasets, failed) = crate::live_info::verify(&root)?;
+        return Ok((datasets, failed == 0));
+    }
     let seal: serde_json::Value = serde_json::from_reader(
         File::open(paths::safe_join(&root, "Seal.json")?)
             .context("Collection has no completed seal")?,
@@ -62,6 +66,42 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         );
     }
     let run: serde_json::Value = serde_json::from_reader(File::open(root.join("Run.json"))?)?;
+    if run["LiveInfoEnabled"] == true {
+        for name in [
+            "LiveInfo/Manifest.json",
+            "LiveInfo/Manifest.csv",
+            "LiveInfo/Seal.json",
+        ] {
+            ensure!(
+                digests.contains_key(name),
+                "Missing sealed live-info inventory"
+            );
+        }
+        let (_, failed) = crate::live_info::verify(&root)?;
+        let manifest: serde_json::Value =
+            serde_json::from_reader(File::open(root.join("LiveInfo/Manifest.json"))?)?;
+        for row in manifest["Entries"]
+            .as_array()
+            .context("Invalid live-info manifest")?
+        {
+            let name = row["OutputFile"]
+                .as_str()
+                .context("Missing live-info output filename")?;
+            ensure!(
+                digests.contains_key(name),
+                "Live-info file omitted from the collection seal"
+            );
+        }
+        let summary: Summary = serde_json::from_reader(File::open(root.join("Summary.json"))?)?;
+        ensure!(
+            failed == summary.live_info_failed_providers,
+            "Live-info failure count differs"
+        );
+        ensure!(
+            failed == 0 || summary.completeness == "Partial",
+            "Failed live inventory must be partial"
+        );
+    }
     let native_streams = run["NativeNTFSStreams"].as_bool().unwrap_or(false);
     if native_streams {
         #[cfg(windows)]
