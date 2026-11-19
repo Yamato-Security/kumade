@@ -249,6 +249,28 @@ fn vhdx_options_reject_ambiguous_destinations_and_invalid_capacity() {
     }
 }
 
+#[test]
+fn e01_options_reject_conflicts_and_invalid_capacity() {
+    for args in [
+        vec!["--e01", "case.E01", "-o", "out"],
+        vec!["--e01", "case.E01", "--vhdx", "case.vhdx"],
+        vec!["--e01-size-gib", "1"],
+        vec!["--e01", "case.E01", "--e01-size-gib", "0"],
+        vec!["--e01", "case.E01", "--e01-size-gib", "65537"],
+        vec!["plan", "--e01", "case.E01"],
+    ] {
+        assert_eq!(run(&args).status.code(), Some(2), "{args:?}");
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn e01_collection_requires_windows() {
+    let result = run(&["--e01", "case.E01"]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("E01 collection requires Windows"));
+}
+
 #[cfg(not(windows))]
 #[test]
 fn vhdx_is_explicitly_unsupported_on_other_platforms() {

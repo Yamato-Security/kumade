@@ -36,6 +36,8 @@ Windows examples below.
   separation for offline evidence, and terminal progress.
 - Optional [NTFS VHDX output](docs/vhdx-output.md) with direct acquisition into
   a dynamic image, native alternate streams and explicit NTFS metadata preservation.
+- Optional [compressed E01 output](docs/e01-output.md), with the same NTFS
+  preservation, split EWF1 segments, automatic hash verification and a receipt.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
@@ -44,6 +46,8 @@ Windows examples below.
   displaying a progress bar. Running without arguments displays help.
 
 ## Run locally
+
+Building from source requires Rust 1.99 or later.
 
 ```bash
 cargo build --release
@@ -63,6 +67,9 @@ On Windows, run an elevated PowerShell session for live collection:
 
 # Or save the entire acquisition in one new NTFS VHDX:
 .\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
+
+# Or package the NTFS collection into compressed E01 segments:
+.\kumade.exe --e01 E:\Evidence\HOST01.e01
 
 # List each copied file instead of displaying progress:
 .\kumade.exe --vhdx E:\Evidence\HOST01-verbose.vhdx -v

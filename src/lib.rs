@@ -16,6 +16,7 @@
 pub mod catalog;
 pub mod collect;
 pub mod discovery;
+pub mod e01;
 pub mod metadata;
 pub mod model;
 pub mod paths;

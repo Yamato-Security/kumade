@@ -115,13 +115,34 @@ pub fn collect(
 ) -> Result<Summary> {
     #[cfg(windows)]
     {
-        windows::collect(plan, image, explicit_gib, options)
+        windows::collect(plan, image, explicit_gib, options, None)
     }
     #[cfg(not(windows))]
     {
         let _ = (plan, image, explicit_gib, options);
         anyhow::bail!("VHDX creation requires Windows; use directory output on this platform")
     }
+}
+
+/// Create the temporary NTFS disk for E01 packaging, without reporting it as the final output.
+#[cfg(windows)]
+pub(crate) fn collect_staged(
+    plan: &Plan,
+    image: &Path,
+    explicit_gib: Option<u64>,
+    options: &Options,
+    maximum_capacity: u64,
+) -> Result<Summary> {
+    windows::collect(plan, image, explicit_gib, options, Some(maximum_capacity))
+}
+
+/// Reopen only an owned, finalized staging VHDX as a read-only virtual disk.
+#[cfg(windows)]
+pub(crate) fn read_staged_disk<T>(
+    path: &Path,
+    consume: impl FnOnce(&mut dyn std::io::Read, u64) -> Result<T>,
+) -> Result<T> {
+    windows::read_staged_disk(path, consume)
 }
 
 #[cfg(windows)]
@@ -206,6 +227,94 @@ mod windows {
             std::io::Error::from_raw_os_error(code as i32)
         );
         Ok(())
+    }
+
+    pub(super) fn read_staged_disk<T>(
+        path: &Path,
+        consume: impl FnOnce(&mut dyn std::io::Read, u64) -> Result<T>,
+    ) -> Result<T> {
+        let storage = VIRTUAL_STORAGE_TYPE {
+            DeviceId: VIRTUAL_STORAGE_TYPE_DEVICE_VHDX,
+            VendorId: VIRTUAL_STORAGE_TYPE_VENDOR_MICROSOFT,
+        };
+        let parameters = OPEN_VIRTUAL_DISK_PARAMETERS {
+            Version: OPEN_VIRTUAL_DISK_VERSION_1,
+            Anonymous: OPEN_VIRTUAL_DISK_PARAMETERS_0 {
+                Version1: OPEN_VIRTUAL_DISK_PARAMETERS_0_0 {
+                    RWDepth: OPEN_VIRTUAL_DISK_RW_DEPTH_DEFAULT,
+                },
+            },
+        };
+        let mut handle = ptr::null_mut();
+        // SAFETY: terminated owned staging path, matching versioned parameters and output.
+        win(
+            // SAFETY: terminated staging path, versioned parameters, valid handle output.
+            unsafe {
+                OpenVirtualDisk(
+                    &storage,
+                    wide(path).as_ptr(),
+                    VIRTUAL_DISK_ACCESS_READ,
+                    OPEN_VIRTUAL_DISK_FLAG_NONE,
+                    &parameters,
+                    &mut handle,
+                )
+            },
+            "OpenVirtualDisk (read-only staging)",
+        )?;
+        // An empty volume path deliberately avoids writable-volume cleanup in Drop.
+        let mut image = Image {
+            handle,
+            attached: false,
+            volume: PathBuf::new(),
+            path: path.to_owned(),
+        };
+        let attach = ATTACH_VIRTUAL_DISK_PARAMETERS {
+            Version: ATTACH_VIRTUAL_DISK_VERSION_1,
+            ..Default::default()
+        };
+        // SAFETY: read-only attachment of this owned staging image, without a drive letter.
+        win(
+            // SAFETY: owned staging handle; read-only attachment without a drive letter.
+            unsafe {
+                AttachVirtualDisk(
+                    handle,
+                    ptr::null_mut(),
+                    ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER,
+                    0,
+                    &attach,
+                    ptr::null(),
+                )
+            },
+            "AttachVirtualDisk (read-only staging)",
+        )?;
+        image.attached = true;
+        let mut buffer = vec![0u16; 512];
+        let mut bytes = (buffer.len() * 2) as u32;
+        // SAFETY: owned virtual-disk handle and a correctly sized UTF-16 output buffer.
+        win(
+            // SAFETY: live owned handle and correctly sized UTF-16 output buffer.
+            unsafe { GetVirtualDiskPhysicalPath(handle, &mut bytes, buffer.as_mut_ptr()) },
+            "GetVirtualDiskPhysicalPath (staging)",
+        )?;
+        let end = buffer
+            .iter()
+            .position(|&c| c == 0)
+            .context("Unterminated staging device path")?;
+        let physical = String::from_utf16(&buffer[..end])?;
+        physical_disk_number(&physical)?;
+        let file = platform::open_source(Path::new(&physical))?;
+        let (length, sector) = crate::raw::device_geometry(&file)?;
+        let mut reader = crate::raw::DeviceReader::new(file, length, sector)?;
+        let result = consume(&mut reader, length)?;
+        drop(reader);
+        // SAFETY: only the staging attachment owned above is released.
+        win(
+            // SAFETY: only the read-only staging attachment owned by this guard is released.
+            unsafe { DetachVirtualDisk(handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0) },
+            "DetachVirtualDisk (staging)",
+        )?;
+        image.attached = false;
+        Ok(result)
     }
     fn powershell() -> Result<PathBuf> {
         let windows = std::env::var_os("SystemRoot").context("SystemRoot is unavailable")?;
@@ -466,6 +575,7 @@ mod windows {
         path: &Path,
         explicit_gib: Option<u64>,
         options: &Options,
+        staging_limit: Option<u64>,
     ) -> Result<Summary> {
         metadata::enable_privileges()?;
         // Raw-only NTFS candidates have no planning-time size; read them from
@@ -477,6 +587,10 @@ mod windows {
             .context("Known evidence size overflow")?;
         let reserve = metadata_reserve(plan.files.len(), options.threads);
         let bytes = capacity(known, unknown, explicit_gib, reserve)?;
+        ensure!(
+            staging_limit.is_none_or(|limit| bytes <= limit),
+            "NTFS capacity exceeds the E01 segment-set limit; narrow the collection scope"
+        );
         let path = paths::resolve_future(path)?;
         validate_new_image_path(&path)?;
         let parent = path.parent().context("VHDX output has no parent")?;
@@ -528,7 +642,7 @@ mod windows {
         image
             .finish()
             .with_context(|| format!("VHDX finalization failed: {}", path.display()))?;
-        if !options.quiet {
+        if !options.quiet && staging_limit.is_none() {
             ui::field(
                 "Results saved",
                 format!(

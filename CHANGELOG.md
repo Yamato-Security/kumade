@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add `--e01 FILE` to package a collection in compressed EWF1 physical segments,
+  with the VHDX backend's NTFS metadata and native ADS preservation. Reopen the
+  staging disk read-only, encode with bounded segment scratch, verify the full
+  media and publish a receipt last. Retain staging on failure and refuse existing
+  segment sets. Add `--e01-size-gib` for automatic/explicit NTFS capacity.
+  Source builds now require Rust 1.99 or later for the native EWF library.
+
 - Default acquisition workers to the available logical CPU count (at most 128), show help
   when no arguments are supplied, and add `-v, --verbose` to list each source
   file/stream being copied instead of displaying a progress bar.

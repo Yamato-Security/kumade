@@ -32,6 +32,11 @@ is recorded in the manifest. `--quiet` and `--verbose` are mutually exclusive.
 
 No other proposed commands are exposed as working functionality.
 
+`collect --e01 FILE` packages the same NTFS acquisition in compressed EWF1
+segments. Conversion uses an owned temporary VHDX, read-only disk streaming,
+full media-hash verification and a receipt. See [E01 output](e01-output.md) for
+segment handling, temporary-space requirements and recovery limits.
+
 ## Integrity and failure behavior
 
 - Every planned file/stream gets a result row, including failed and absent raw candidates.

@@ -371,7 +371,7 @@ fn image_geometry(metadata: io::Result<std::fs::Metadata>) -> Result<Option<(u64
     }
 }
 
-fn device_geometry(file: &File) -> Result<(u64, usize)> {
+pub(crate) fn device_geometry(file: &File) -> Result<(u64, usize)> {
     if let Some(geometry) = image_geometry(file.metadata())? {
         return Ok(geometry);
     }
