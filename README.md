@@ -83,7 +83,7 @@ uses hashes, not an authenticated signing identity.
 ## Not implemented yet
 
 RAM capture/paired runtime pagefile discovery, VSS acquisition, external processing,
-image-source CLI support, archive packaging, cloud upload, resume,
+image-source CLI support, ZIP archive packaging, cloud upload, resume,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.
 

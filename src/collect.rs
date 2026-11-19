@@ -501,7 +501,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     write_json_new(&root.join("Plan.json"), plan)?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live&&parent.starts_with(&s.root)),"NativeNTFSStreams":options.ntfs_metadata,"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     let new_file = |name: &str| -> Result<File> {
         Ok(OpenOptions::new()

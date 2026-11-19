@@ -720,3 +720,24 @@ fn raw_storage_attributes_are_available_before_payload_writes() {
     );
     assert!(rejected.is_empty());
 }
+
+#[test]
+fn container_host_writes_remain_part_of_live_source_provenance() {
+    let (temp, mut source) = fixture();
+    source.live = true;
+    let host = source.root.clone();
+    let mut opts = options();
+    opts.host_reserve = Some(collect::HostReserve {
+        path: host.clone(),
+        bytes: 0,
+    });
+    let (root, _) =
+        collect::collect(&plan(source), &temp.path().join("container-volume"), &opts).unwrap();
+    let run: serde_json::Value =
+        serde_json::from_reader(File::open(root.join("Run.json")).unwrap()).unwrap();
+    assert_eq!(run["DestinationOnLiveSource"], true);
+    assert_eq!(
+        run["PhysicalHostDestination"],
+        host.to_string_lossy().as_ref()
+    );
+}

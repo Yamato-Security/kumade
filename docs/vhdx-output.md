@@ -25,6 +25,8 @@ mounting software is required.
 The source plan is frozen before attachment, so the new volume cannot become a
 source during that acquisition. The image's host volume may still be a live
 source: creating the image changes that volume, as any local collection does.
+`Run.json` records `PhysicalHostDestination` and accounts for that path in
+`DestinationOnLiveSource`, alongside the inner evidence destination.
 
 Automatic virtual capacity includes known file sizes, NTFS/metadata headroom and
 space for unknown-size streams. `--vhdx-size-gib` overrides it (1–65536 GiB) and
