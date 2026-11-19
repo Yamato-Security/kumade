@@ -741,3 +741,66 @@ fn container_host_writes_remain_part_of_live_source_provenance() {
         host.to_string_lossy().as_ref()
     );
 }
+
+#[test]
+fn raw_stat_reports_basic_information_and_sizes_without_reading_data() {
+    let mut volume = RawVolume::open(&ntfs_image()).unwrap();
+    let mft = volume.stat(Path::new("$MFT"), None).unwrap();
+    assert_eq!(mft.identity, "ntfs:0:1");
+    assert_eq!(mft.attributes & 0x16, 0x06, "{:#x}", mft.attributes);
+    // The synthetic fixture stores zero (unset) times on $MFT itself.
+    assert!(!mft.directory, "{mft:?}");
+    assert!(mft.size > 0 && mft.allocated >= mft.size);
+    let sparse = volume.stat(Path::new("sparse-file"), None).unwrap();
+    assert_ne!(sparse.attributes & 0x200, 0, "{:#x}", sparse.attributes);
+    assert!(
+        sparse.created != 0 && sparse.modified != 0 && sparse.changed != 0 && sparse.accessed != 0,
+        "{sparse:?}"
+    );
+    assert!(
+        sparse.allocated < sparse.size,
+        "{} {}",
+        sparse.allocated,
+        sparse.size
+    );
+    let root = volume.stat(Path::new(""), None).unwrap();
+    assert!(root.directory && root.attributes & 0x10 != 0 && root.size == 0);
+    let sds = volume.stat(Path::new("$Secure"), Some("$SDS")).unwrap();
+    assert!(sds.size > 0 && sds.identity.starts_with("ntfs:9:"));
+    assert!(kumade::raw::is_missing(
+        &volume.stat(Path::new("absent"), None).unwrap_err()
+    ));
+    assert!(kumade::raw::is_missing(
+        &volume
+            .stat(Path::new("$Secure"), Some("$Absent"))
+            .unwrap_err()
+    ));
+}
+
+#[test]
+fn raw_candidate_sizes_come_from_the_raw_provider_before_the_container_exists() {
+    let (_temp, mut s) = fixture();
+    s.raw_device = Some(ntfs_image());
+    let p = discovery::build_plan(
+        vec![s],
+        &rules(),
+        &["windows.ntfs.mft".into(), "windows.ntfs.usn".into()],
+        false,
+    )
+    .unwrap();
+    assert!(p.unknown_sizes >= 3, "{}", p.unknown_sizes);
+    let (known, unknown) = kumade::metadata::raw_candidate_sizes(&p);
+    let mft = RawVolume::open(&ntfs_image())
+        .unwrap()
+        .stat(Path::new("$MFT"), None)
+        .unwrap();
+    assert!(known >= mft.size, "{known} {}", mft.size);
+    // Legitimately absent objects count as zero bytes, not as unknown sizes.
+    assert_eq!(unknown, 0);
+    let mut without = p.clone();
+    without.sources[0].raw_device = None;
+    assert_eq!(
+        kumade::metadata::raw_candidate_sizes(&without).1,
+        p.unknown_sizes
+    );
+}

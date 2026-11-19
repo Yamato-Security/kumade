@@ -91,20 +91,20 @@ impl Write for Transfer<'_> {
             if available < self.reserve.saturating_add(data.len() as u64) {
                 return Err(io::Error::other("Destination free-space reserve reached"));
             }
-            self.checked_at = self.bytes;
-        }
-        if let Some(host) = self.host_reserve {
-            // Dynamic image allocation needs host space as well as NTFS space.
-            // Leave extra headroom for in-flight workers and VHDX block metadata.
-            let available = fs2::available_space(&host.path)?;
-            if available
-                < host
-                    .bytes
-                    .saturating_add(64 * 1024 * 1024)
-                    .saturating_add(data.len() as u64)
-            {
-                return Err(io::Error::other("Physical host free-space reserve reached"));
+            if let Some(host) = self.host_reserve {
+                // Dynamic image allocation needs host space as well as NTFS space.
+                // Leave extra headroom for in-flight workers and VHDX block metadata.
+                let available = fs2::available_space(&host.path)?;
+                if available
+                    < host
+                        .bytes
+                        .saturating_add(64 * 1024 * 1024)
+                        .saturating_add(data.len() as u64)
+                {
+                    return Err(io::Error::other("Physical host free-space reserve reached"));
+                }
             }
+            self.checked_at = self.bytes;
         }
         let n = if self.sparse && data.len() >= 4096 && data.iter().all(|&b| b == 0) {
             self.file.seek_relative(data.len() as i64)?;

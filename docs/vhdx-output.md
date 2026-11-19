@@ -28,17 +28,25 @@ source: creating the image changes that volume, as any local collection does.
 `Run.json` records `PhysicalHostDestination` and accounts for that path in
 `DestinationOnLiveSource`, alongside the inner evidence destination.
 
-Automatic virtual capacity includes known file sizes, NTFS/metadata headroom and
-space for unknown-size streams. `--vhdx-size-gib` overrides it (1–65536 GiB) and
-must fit the known evidence estimate. Virtual capacity is a ceiling, not an
-up-front allocation. Unknown sizes can exceed an estimate; choose a larger
-capacity when collecting large paging files or other unknown-size artifacts.
+Automatic virtual capacity includes known file sizes, the sizes of raw-only NTFS
+metafiles read from the raw provider before the image exists (allocated size for
+sparse streams such as `$UsnJrnl:$J`), NTFS/metadata headroom, the container
+reserve described below, and 1 GiB for every stream whose size is still unknown.
+`--vhdx-size-gib` overrides it (1–65536 GiB) and must fit the known evidence
+estimate plus the reserve. Virtual capacity is a ceiling, not an up-front
+allocation. Unknown sizes can exceed an estimate; choose a larger capacity when
+collecting large paging files or other unknown-size artifacts.
 
-`--reserve-mib` applies to physical host free space. Writes also check remaining
-space inside NTFS. If either fills, failures are recorded and retained; Kumade
-does not silently omit payloads. Failed setup or interrupted acquisition can
-leave a partial image for inspection. A normal completed run flushes, locks,
-dismounts and detaches the destination before reporting the image as saved.
+`--reserve-mib` applies to physical host free space. Inside the image Kumade keeps
+a **container reserve** of 64 MiB plus 8 KiB per planned file and 16 MiB per
+worker thread for the manifests, inventories and the seal. A payload that would
+consume it stops with `Destination free-space reserve reached`; its partial bytes
+are retained and recorded as failed, and the remaining payloads fail the same way
+instead of filling the volume. If the host fills, failures are recorded and
+retained too; Kumade does not silently omit payloads. Failed setup or interrupted
+acquisition can leave a partial image for inspection. A normal completed run
+flushes, locks, dismounts and detaches the destination before reporting the image
+as saved.
 
 ## Data and metadata
 
@@ -60,6 +68,13 @@ attempts to restore:
 - Named `$DATA` streams discovered on selected files, including their exact bytes.
   They are native NTFS alternate streams on the copied host file. Stream-only
   artifacts use an empty host file whose unnamed data is not claimed as acquired.
+- NTFS system files acquired through the raw provider (`$MFT`, `$LogFile`,
+  `$Boot`, `$Bitmap`, `$Secure`, `$Extend\$UsnJrnl` and the `$Extend` directory)
+  are not exposed to Windows file APIs. Their basic times, attributes and file
+  reference are read from the raw `$STANDARD_INFORMATION` (`CaptureStatus` =
+  `RawBasic`); no security descriptor or extended attributes exist for them in
+  the inventory, and their named streams come from the catalog rather than from
+  stream enumeration.
 
 Payload bytes are hash-verified before restrictive source permissions are
 restored. Security is restored through Windows backup streams, preserving
@@ -73,15 +88,29 @@ attributes are read back. A capture/restore discrepancy makes the acquisition
 - `NTFS-Metadata.jsonl`
 - `NTFS-Metadata.csv`
 
+Two Windows behaviors are recorded in the `Notes` column instead, because the
+source bytes are kept in the inventory and user mode cannot reproduce them:
+extended attributes in the `$Kernel.` namespace (for example
+`$KERNEL.CFDONOTCONVERT` on registry hives), which `NtSetEaFile` accepts from
+user mode without storing, and a DACL without the auto-inherited flag (a freshly
+formatted data volume's root, for instance), which Windows stores as protected
+and in canonical ACE order when it is written inside the container's
+auto-inheriting tree. Owner, group, SACL and every ACE are still compared and
+must match.
+
 These inventories include source identity/path, relative output path, file or
 directory type, raw FILETIME values, source attributes, source file identity,
 self-relative security-descriptor bytes (hex), SDDL, extended-attribute bytes
-(hex), capture time/status, restoration status and diagnostics. Both inventories
-are covered by `Seal.json`. CSV and JSONL retain the same metadata values.
+(hex), capture time/status, restoration status, diagnostics and notes. Both
+inventories are covered by `Seal.json`. CSV and JSONL retain the same metadata
+values.
 
 Native source ACLs can restrict browsing the copied files. Elevated backup access
 can be required when inspecting or verifying them; Kumade does not replace these
-ACLs with broad analyst access.
+ACLs with broad analyst access. Restored attributes include Hidden and System, so
+the `Evidence\Live\<SourceId>` copy of a volume root is not listed by Explorer or
+by `dir` without `/a`; use `Get-ChildItem -Force` or show protected operating
+system files.
 
 ## Verification
 

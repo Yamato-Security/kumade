@@ -6,7 +6,11 @@
   with automatic/explicit virtual capacity and physical host-space checks.
   Preserve file/directory basic timestamps, owner/group, ACLs, attributes,
   extended attributes and native named streams; seal metadata inventories and
-  report incomplete preservation as partial. See the VHDX guide for limits.
+  report incomplete preservation as partial. Raw-only NTFS metafiles take their
+  basic information and sizes from the raw provider, a container reserve keeps
+  room for the manifests and seal, and kernel-namespace extended attributes and
+  protected-DACL normalization are noted instead of counted as errors. See the
+  VHDX guide for limits.
 
 - Add a green Kumade terminal banner, green output labels with white values,
   and a Hayabusa/Juntei-style progress bar with a green spinner, file counters,

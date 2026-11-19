@@ -12,7 +12,7 @@
 // PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
 // and limitations under the RPL.
 
-use super::{Snapshot, unhex};
+use super::{Snapshot, encode_ea, normalize_ea, sddl_equivalent, split_kernel_ea, unhex};
 use crate::model::*;
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -344,38 +344,11 @@ fn ea(file: &File) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-type EaEntries = Vec<(Vec<u8>, u8, Vec<u8>)>;
-
-fn normalize_ea(bytes: &[u8]) -> Result<EaEntries> {
-    let mut result = Vec::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        ensure!(bytes.len() - at >= 8, "Truncated extended attribute");
-        let next = u32::from_le_bytes(bytes[at..at + 4].try_into()?) as usize;
-        let flags = bytes[at + 4];
-        let name_len = bytes[at + 5] as usize;
-        let value_len = u16::from_le_bytes(bytes[at + 6..at + 8].try_into()?) as usize;
-        let end = at + 8 + name_len + 1 + value_len;
-        ensure!(
-            end <= bytes.len() && bytes[at + 8 + name_len] == 0,
-            "Invalid extended attribute lengths"
-        );
-        result.push((
-            bytes[at + 8..at + 8 + name_len].to_vec(),
-            flags,
-            bytes[at + 8 + name_len + 1..end].to_vec(),
-        ));
-        if next == 0 {
-            break;
-        }
-        ensure!(
-            next >= end - at && next.is_multiple_of(4) && next <= bytes.len() - at,
-            "Invalid extended attribute chain"
-        );
-        at += next;
+fn note(snapshot: &mut Snapshot, text: &str) {
+    if !snapshot.notes.is_empty() {
+        snapshot.notes.push_str("; ");
     }
-    result.sort();
-    Ok(result)
+    snapshot.notes.push_str(text);
 }
 
 pub fn file_identity(file: &File) -> Result<String> {
@@ -422,9 +395,12 @@ pub fn capture(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
     Ok(())
 }
 
-pub fn restore(path: &Path, snapshot: &Snapshot) -> Result<()> {
+pub fn restore(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
     let file = open_metadata(path, true)?;
     let original = snapshot.attributes.context("Missing original attributes")?;
+    let captured_ea = snapshot.extended_attributes_hex.clone();
+    let captured_security = snapshot.security_descriptor_hex.clone();
+    let captured_sddl = snapshot.sddl.clone().unwrap_or_default();
     let mut errors = Vec::new();
     // Restore compression/sparse state separately; physical allocation and file
     // IDs necessarily belong to the newly created destination filesystem.
@@ -462,17 +438,27 @@ pub fn restore(path: &Path, snapshot: &Snapshot) -> Result<()> {
     if original & FILE_ATTRIBUTE_ENCRYPTED != 0 {
         errors.push("Original EFS encryption cannot be reproduced with the source key".into());
     }
-    if let Some(data) = &snapshot.extended_attributes_hex {
+    if snapshot.capture_status == "RawBasic" {
+        // NTFS system files: Windows exposes neither their security nor their
+        // extended attributes, so only times and attributes can be reproduced.
+        ensure!(errors.is_empty(), "{}", errors.join("; "));
+        return Ok(());
+    }
+    if let Some(data) = &captured_ea {
         let data = unhex(data)?;
-        if !data.is_empty() {
+        // Kernel-namespace entries are accepted by NtSetEaFile from user mode but
+        // never stored; keep them out of the write and the readback comparison.
+        let (user, kernel) = split_kernel_ea(normalize_ea(&data)?);
+        if !user.is_empty() {
+            let chain = encode_ea(&user);
             let mut status = IO_STATUS_BLOCK::default();
-            // SAFETY: captured and validated complete EA chain, live synchronous destination and status output.
+            // SAFETY: freshly encoded, validated EA chain, live synchronous destination and status output.
             let code = unsafe {
                 NtSetEaFile(
                     file.as_raw_handle(),
                     &mut status,
-                    data.as_ptr().cast(),
-                    data.len() as u32,
+                    chain.as_ptr().cast(),
+                    chain.len() as u32,
                 )
             };
             if code < 0 {
@@ -481,26 +467,38 @@ pub fn restore(path: &Path, snapshot: &Snapshot) -> Result<()> {
         }
         match ea(&file) {
             Ok(current) => {
-                if normalize_ea(&current)? != normalize_ea(&data)? {
+                if normalize_ea(&current)? != user {
                     errors.push("Extended attribute readback differs".into());
                 }
             }
             Err(e) => errors.push(e.to_string()),
         }
+        if !kernel.is_empty() {
+            note(
+                snapshot,
+                &format!(
+                    "Kernel-namespace extended attributes are kept in the inventory only; Windows ignores them from user mode: {}",
+                    kernel.join(", ")
+                ),
+            );
+        }
     } else {
         errors.push("Extended attributes were not captured".into());
     }
-    if let Some(data) = &snapshot.security_descriptor_hex {
+    if let Some(data) = &captured_security {
         let data = unhex(data)?;
         if let Err(error) = restore_security(&file, &data) {
             errors.push(format!("Owner/group/DACL/SACL restoration: {error:#}"));
         } else {
             match descriptor(&file).and_then(|sd| sddl(&sd)) {
-                Ok(actual) => {
-                    if snapshot.sddl.as_deref() != Some(actual.as_str()) {
-                        errors.push(format!("Security descriptor readback differs: {actual}"));
+                Ok(actual) => match sddl_equivalent(&captured_sddl, &actual) {
+                    Some(text) => {
+                        if !text.is_empty() {
+                            note(snapshot, &text);
+                        }
                     }
-                }
+                    None => errors.push(format!("Security descriptor readback differs: {actual}")),
+                },
                 Err(e) => errors.push(e.to_string()),
             }
         }
@@ -597,7 +595,10 @@ pub fn augment_streams(plan: &mut Plan) -> Result<()> {
         .collect();
     let mut additions = Vec::new();
     for file in &plan.files {
-        if file.stream.is_some() {
+        // Raw-only candidates (no planning-time metadata) are NTFS system files
+        // that Windows refuses to open by name; their named streams come from
+        // the catalog, so enumeration would only report a spurious failure.
+        if file.stream.is_some() || file.before.is_none() {
             continue;
         }
         let path = wide(&file.source_path);
@@ -695,24 +696,4 @@ pub fn augment_streams(plan: &mut Plan) -> Result<()> {
     }
     plan.files.extend(additions);
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn extended_attribute_chain_validates_lengths_offsets_and_values() {
-        let ea = [0, 0, 0, 0, 0, 1, 2, 0, b'A', 0, b'x', b'y'];
-        assert_eq!(
-            normalize_ea(&ea).unwrap(),
-            vec![(vec![b'A'], 0, vec![b'x', b'y'])]
-        );
-        for bad in [
-            &ea[..7],
-            &ea[..11],
-            &[4, 0, 0, 0, 0, 1, 2, 0, b'A', 0, b'x', b'y'][..],
-        ] {
-            assert!(normalize_ea(bad).is_err());
-        }
-    }
 }

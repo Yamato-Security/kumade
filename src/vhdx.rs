@@ -25,10 +25,19 @@ const MIB: u64 = 1024 * 1024;
 const MAX: u64 = 64 * 1024 * GIB;
 pub const INITIALIZE_SCRIPT: &str = include_str!("../scripts/initialize_vhdx.ps1");
 
-pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>) -> Result<u64> {
+/// Space kept free inside the container for the manifests, inventories and the
+/// seal: a fixed floor, room for every planned file's rows, and the per-writer
+/// slack of the throttled free-space check. A payload that would consume it is
+/// stopped and recorded as failed instead of filling the volume.
+pub fn metadata_reserve(files: usize, threads: usize) -> u64 {
+    64 * MIB + files as u64 * 8 * 1024 + threads.max(1) as u64 * 16 * MIB
+}
+
+pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>, reserve: u64) -> Result<u64> {
     let minimum = known
         .checked_add(known / 4)
         .and_then(|v| v.checked_add(512 * MIB))
+        .and_then(|v| v.checked_add(reserve))
         .context("VHDX capacity estimate overflow")?
         .max(GIB);
     let capacity = if let Some(gib) = explicit_gib {
@@ -51,7 +60,9 @@ pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>) -> Result<u
     );
     ensure!(
         capacity >= minimum,
-        "VHDX capacity is smaller than the known evidence plus NTFS/metadata headroom"
+        "VHDX capacity {} is smaller than the {} needed for the known evidence, NTFS/metadata headroom and the container reserve",
+        crate::collect::human_bytes(capacity),
+        crate::collect::human_bytes(minimum)
     );
     Ok(capacity)
 }
@@ -425,13 +436,20 @@ mod windows {
         options: &Options,
     ) -> Result<Summary> {
         metadata::enable_privileges()?;
-        let bytes = capacity(plan.known_bytes, plan.unknown_sizes, explicit_gib)?;
+        // Raw-only NTFS candidates have no planning-time size; read them from
+        // the raw provider before the container is sized.
+        let (raw_known, unknown) = metadata::raw_candidate_sizes(plan);
+        let known = plan
+            .known_bytes
+            .checked_add(raw_known)
+            .context("Known evidence size overflow")?;
+        let reserve = metadata_reserve(plan.files.len(), options.threads);
+        let bytes = capacity(known, unknown, explicit_gib, reserve)?;
         let path = paths::resolve_future(path)?;
         validate_new_image_path(&path)?;
         let parent = path.parent().context("VHDX output has no parent")?;
         fs::create_dir_all(parent)?;
-        let required = plan
-            .known_bytes
+        let required = known
             .checked_add(512 * MIB)
             .and_then(|v| v.checked_add(options.reserve_bytes))
             .context("Host free-space estimate overflow")?;
@@ -442,12 +460,16 @@ mod windows {
         if !options.quiet {
             ui::field("VHDX container", path.display());
             ui::field("Virtual capacity", collect::human_bytes(bytes));
+            ui::field("Container reserve", collect::human_bytes(reserve));
+            if raw_known > 0 {
+                ui::field("Raw NTFS sizes", collect::human_bytes(raw_known));
+            }
             ui::status("Creating and formatting the new NTFS evidence container…");
         }
         let image = Image::create(&path, bytes)?;
         let inner = Options {
             threads: options.threads,
-            reserve_bytes: 0,
+            reserve_bytes: reserve,
             quiet: options.quiet,
             ntfs_metadata: true,
             host_reserve: Some(HostReserve {
@@ -488,14 +510,28 @@ mod tests {
     use super::*;
     #[test]
     fn capacity_is_bounded_and_counts_unknown_stream_headroom() {
-        assert_eq!(capacity(0, 0, None).unwrap(), GIB);
-        assert_eq!(capacity(0, 2, None).unwrap(), 3 * GIB);
-        assert!(capacity(0, 0, Some(0)).is_err());
-        assert!(capacity(0, 0, Some(65537)).is_err());
-        assert!(capacity(2 * GIB, 0, Some(1)).is_err());
-        assert!(capacity(u64::MAX, 0, None).is_err());
-        assert!(capacity(0, u64::MAX, None).is_err());
-        assert!(capacity(0, 0, Some(u64::MAX)).is_err());
+        assert_eq!(capacity(0, 0, None, 0).unwrap(), GIB);
+        assert_eq!(capacity(0, 2, None, 0).unwrap(), 3 * GIB);
+        assert!(capacity(0, 0, Some(0), 0).is_err());
+        assert!(capacity(0, 0, Some(65537), 0).is_err());
+        assert!(capacity(2 * GIB, 0, Some(1), 0).is_err());
+        assert!(capacity(u64::MAX, 0, None, 0).is_err());
+        assert!(capacity(0, u64::MAX, None, 0).is_err());
+        assert!(capacity(0, 0, Some(u64::MAX), 0).is_err());
+    }
+    #[test]
+    fn container_reserve_is_part_of_the_minimum_capacity() {
+        assert_eq!(metadata_reserve(0, 1), 80 * MIB);
+        assert_eq!(metadata_reserve(0, 0), 80 * MIB);
+        assert_eq!(
+            metadata_reserve(100_000, 8),
+            64 * MIB + 100_000 * 8 * 1024 + 128 * MIB
+        );
+        // 512 MiB headroom + 3 GiB reserve rounds up to a 4 GiB container.
+        assert_eq!(capacity(0, 0, None, 3 * GIB).unwrap(), 4 * GIB);
+        assert!(capacity(0, 0, Some(1), 600 * MIB).is_err());
+        assert_eq!(capacity(0, 0, Some(2), 600 * MIB).unwrap(), 2 * GIB);
+        assert!(capacity(0, 0, None, u64::MAX).is_err());
     }
     #[test]
     fn device_and_volume_identity_validation_rejects_unrelated_paths() {
