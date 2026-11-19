@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Add `--e01 FILE` to package a collection in compressed EWF1 physical segments,
+  with the VHDX backend's NTFS metadata and native ADS preservation. Reopen the
+  staging disk read-only, encode with bounded segment scratch, verify the full
+  media and publish a receipt last. Retain staging on failure and refuse existing
+  segment sets. Add `--e01-size-gib` for automatic/explicit NTFS capacity.
+  Source builds now require Rust 1.99 or later for the native EWF library.
+- Read the metadata of a file Windows refuses to open, such as the in-use
+  `pagefile.sys`, from the raw `$STANDARD_INFORMATION` as for NTFS system
+  files, so a default live `--vhdx` or `--e01` run no longer ends partial with a
+  metadata error for the paging file. Only metadata-open failures use this fallback;
+  failures while reading identity, security or extended attributes retain captured
+  fields and remain visible as metadata errors.
+- Size evidence containers to hold their largest stream at its logical size: a
+  sparse copy keeps a USN journal's `$J` at that size, and The Sleuth Kit rejects
+  an NTFS run longer than the volume. An E01 run refused before staging leaves
+  no empty staging directory behind.
+
 - Default acquisition workers to the available logical CPU count (at most 128), show help
   when no arguments are supplied, and add `-v, --verbose` to list each source
   file/stream being copied instead of displaying a progress bar.

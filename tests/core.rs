@@ -790,18 +790,25 @@ fn raw_candidate_sizes_come_from_the_raw_provider_before_the_container_exists() 
     )
     .unwrap();
     assert!(p.unknown_sizes >= 3, "{}", p.unknown_sizes);
-    let (known, unknown) = kumade::metadata::raw_candidate_sizes(&p);
+    let kumade::metadata::RawSizes {
+        known,
+        unknown,
+        largest_stream,
+    } = kumade::metadata::raw_candidate_sizes(&p);
     let mft = RawVolume::open(&ntfs_image())
         .unwrap()
         .stat(Path::new("$MFT"), None)
         .unwrap();
     assert!(known >= mft.size, "{known} {}", mft.size);
+    // The container must hold the largest stream at its logical size.
+    assert!(largest_stream >= mft.size, "{largest_stream} {}", mft.size);
+    assert!(largest_stream <= known, "{largest_stream} {known}");
     // Legitimately absent objects count as zero bytes, not as unknown sizes.
     assert_eq!(unknown, 0);
     let mut without = p.clone();
     without.sources[0].raw_device = None;
     assert_eq!(
-        kumade::metadata::raw_candidate_sizes(&without).1,
+        kumade::metadata::raw_candidate_sizes(&without).unknown,
         p.unknown_sizes
     );
 }

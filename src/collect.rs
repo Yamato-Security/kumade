@@ -840,7 +840,7 @@ pub fn clip_label(text: &str, width: usize) -> String {
     result
 }
 
-fn commit_payload(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn commit_payload(from: &Path, to: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         use std::{ffi::CString, os::unix::ffi::OsStrExt};

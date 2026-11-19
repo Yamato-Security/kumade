@@ -392,7 +392,7 @@ pub fn file_identity(file: &File) -> Result<String> {
 }
 
 pub fn capture(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
-    let file = open_metadata(path, false)?;
+    let file = open_metadata(path, false).context(super::MetadataOpenFailed)?;
     let info = basic(&file)?;
     snapshot.creation_filetime = Some(info.CreationTime);
     snapshot.access_filetime = Some(info.LastAccessTime);

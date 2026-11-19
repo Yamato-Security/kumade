@@ -17,7 +17,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use kumade::{
     catalog::{DEFAULT_CATALOG, Rules},
     collect::{self, Options},
-    discovery,
+    discovery, e01,
     model::{Source, SourceDiscovery},
     paths, platform, ui, verify, vhdx,
 };
@@ -73,6 +73,12 @@ struct CollectionArgs {
     /// Virtual capacity in GiB (default: automatic, dynamically allocated)
     #[arg(long, value_name = "GIB", requires = "vhdx", value_parser = clap::value_parser!(u64).range(1..=65536))]
     vhdx_size_gib: Option<u64>,
+    /// Save evidence in a compressed E01 segment set (Windows, administrator)
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["output", "vhdx"])]
+    e01: Option<PathBuf>,
+    /// NTFS capacity in GiB before E01 compression (default: automatic)
+    #[arg(long, value_name = "GIB", requires = "e01", value_parser = clap::value_parser!(u64).range(1..=65536))]
+    e01_size_gib: Option<u64>,
     /// Computer name for offline evidence
     #[arg(long)]
     computer: Option<String>,
@@ -232,6 +238,14 @@ fn run() -> Result<u8> {
                     "Requires Windows"
                 },
             );
+            ui::field(
+                "E01 output",
+                if cfg!(windows) {
+                    "Available; NTFS staging, native compression and hash verification"
+                } else {
+                    "Collection requires Windows"
+                },
+            );
             return Ok(0);
         }
         Some(Command::List { catalog }) => {
@@ -271,12 +285,16 @@ fn run() -> Result<u8> {
         None => (cli.options, false),
     };
     ensure!(
-        !plan_only || options.vhdx.is_none(),
+        !plan_only || (options.vhdx.is_none() && options.e01.is_none()),
         "plan does not create containers; use -o DIR for a plan"
     );
     ensure!(
         options.vhdx.is_none() || cfg!(windows),
         "VHDX creation requires Windows"
+    );
+    ensure!(
+        options.e01.is_none() || cfg!(windows),
+        "E01 collection requires Windows"
     );
     if !options.quiet {
         ui::banner();
@@ -295,6 +313,7 @@ fn run() -> Result<u8> {
     let output = options
         .vhdx
         .clone()
+        .or_else(|| options.e01.clone())
         .or_else(|| options.output.clone())
         .unwrap_or_else(|| {
             std::env::current_exe()
@@ -327,7 +346,7 @@ fn run() -> Result<u8> {
     }
     plan.issues.extend(discovered.issues);
     #[cfg(windows)]
-    if options.vhdx.is_some() {
+    if options.vhdx.is_some() || options.e01.is_some() {
         kumade::metadata::enable_privileges()?;
         kumade::metadata::augment_streams(&mut plan)?;
     }
@@ -368,7 +387,9 @@ fn run() -> Result<u8> {
         ntfs_metadata: false,
         host_reserve: None,
     };
-    let summary = if options.vhdx.is_some() {
+    let summary = if options.e01.is_some() {
+        e01::collect(&plan, &output, options.e01_size_gib, &collect_options)?
+    } else if options.vhdx.is_some() {
         vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)?
     } else {
         collect::collect(&plan, &output, &collect_options)?.1

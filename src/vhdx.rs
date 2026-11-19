@@ -34,12 +34,29 @@ pub fn metadata_reserve(files: usize, threads: usize) -> u64 {
     64 * MIB + files as u64 * 8 * 1024 + workers as u64 * 16 * MIB
 }
 
-pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>, reserve: u64) -> Result<u64> {
+/// The virtual capacity: the explicit size, or the known evidence with headroom,
+/// the container reserve and 1 GiB per unknown-size item. Either way it is at
+/// least `largest_stream` plus headroom: a sparse stream keeps its logical size
+/// (a USN journal's `$J` is often larger than the evidence), and The Sleuth Kit
+/// rejects an NTFS run longer than the volume, so a smaller container would
+/// hold a journal that Autopsy cannot read.
+pub fn capacity(
+    known: u64,
+    unknown: u64,
+    explicit_gib: Option<u64>,
+    reserve: u64,
+    largest_stream: u64,
+) -> Result<u64> {
     let minimum = known
         .checked_add(known / 4)
         .and_then(|v| v.checked_add(512 * MIB))
         .and_then(|v| v.checked_add(reserve))
         .context("VHDX capacity estimate overflow")?
+        .max(
+            largest_stream
+                .checked_add(512 * MIB)
+                .context("VHDX capacity estimate overflow")?,
+        )
         .max(GIB);
     let capacity = if let Some(gib) = explicit_gib {
         gib.checked_mul(GIB).context("VHDX capacity overflow")?
@@ -61,7 +78,7 @@ pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>, reserve: u6
     );
     ensure!(
         capacity >= minimum,
-        "VHDX capacity {} is smaller than the {} needed for the known evidence, NTFS/metadata headroom and the container reserve",
+        "VHDX capacity {} is smaller than the {} needed for the known evidence, its largest sparse stream, NTFS/metadata headroom and the container reserve",
         crate::collect::human_bytes(capacity),
         crate::collect::human_bytes(minimum)
     );
@@ -115,13 +132,34 @@ pub fn collect(
 ) -> Result<Summary> {
     #[cfg(windows)]
     {
-        windows::collect(plan, image, explicit_gib, options)
+        windows::collect(plan, image, explicit_gib, options, None)
     }
     #[cfg(not(windows))]
     {
         let _ = (plan, image, explicit_gib, options);
         anyhow::bail!("VHDX creation requires Windows; use directory output on this platform")
     }
+}
+
+/// Create the temporary NTFS disk for E01 packaging, without reporting it as the final output.
+#[cfg(windows)]
+pub(crate) fn collect_staged(
+    plan: &Plan,
+    image: &Path,
+    explicit_gib: Option<u64>,
+    options: &Options,
+    maximum_capacity: u64,
+) -> Result<Summary> {
+    windows::collect(plan, image, explicit_gib, options, Some(maximum_capacity))
+}
+
+/// Reopen only an owned, finalized staging VHDX as a read-only virtual disk.
+#[cfg(windows)]
+pub(crate) fn read_staged_disk<T>(
+    path: &Path,
+    consume: impl FnOnce(&mut dyn std::io::Read, u64) -> Result<T>,
+) -> Result<T> {
+    windows::read_staged_disk(path, consume)
 }
 
 #[cfg(windows)]
@@ -206,6 +244,94 @@ mod windows {
             std::io::Error::from_raw_os_error(code as i32)
         );
         Ok(())
+    }
+
+    pub(super) fn read_staged_disk<T>(
+        path: &Path,
+        consume: impl FnOnce(&mut dyn std::io::Read, u64) -> Result<T>,
+    ) -> Result<T> {
+        let storage = VIRTUAL_STORAGE_TYPE {
+            DeviceId: VIRTUAL_STORAGE_TYPE_DEVICE_VHDX,
+            VendorId: VIRTUAL_STORAGE_TYPE_VENDOR_MICROSOFT,
+        };
+        let parameters = OPEN_VIRTUAL_DISK_PARAMETERS {
+            Version: OPEN_VIRTUAL_DISK_VERSION_1,
+            Anonymous: OPEN_VIRTUAL_DISK_PARAMETERS_0 {
+                Version1: OPEN_VIRTUAL_DISK_PARAMETERS_0_0 {
+                    RWDepth: OPEN_VIRTUAL_DISK_RW_DEPTH_DEFAULT,
+                },
+            },
+        };
+        let mut handle = ptr::null_mut();
+        // SAFETY: terminated owned staging path, matching versioned parameters and output.
+        win(
+            // SAFETY: terminated staging path, versioned parameters, valid handle output.
+            unsafe {
+                OpenVirtualDisk(
+                    &storage,
+                    wide(path).as_ptr(),
+                    VIRTUAL_DISK_ACCESS_READ,
+                    OPEN_VIRTUAL_DISK_FLAG_NONE,
+                    &parameters,
+                    &mut handle,
+                )
+            },
+            "OpenVirtualDisk (read-only staging)",
+        )?;
+        // An empty volume path deliberately avoids writable-volume cleanup in Drop.
+        let mut image = Image {
+            handle,
+            attached: false,
+            volume: PathBuf::new(),
+            path: path.to_owned(),
+        };
+        let attach = ATTACH_VIRTUAL_DISK_PARAMETERS {
+            Version: ATTACH_VIRTUAL_DISK_VERSION_1,
+            ..Default::default()
+        };
+        // SAFETY: read-only attachment of this owned staging image, without a drive letter.
+        win(
+            // SAFETY: owned staging handle; read-only attachment without a drive letter.
+            unsafe {
+                AttachVirtualDisk(
+                    handle,
+                    ptr::null_mut(),
+                    ATTACH_VIRTUAL_DISK_FLAG_READ_ONLY | ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER,
+                    0,
+                    &attach,
+                    ptr::null(),
+                )
+            },
+            "AttachVirtualDisk (read-only staging)",
+        )?;
+        image.attached = true;
+        let mut buffer = vec![0u16; 512];
+        let mut bytes = (buffer.len() * 2) as u32;
+        // SAFETY: owned virtual-disk handle and a correctly sized UTF-16 output buffer.
+        win(
+            // SAFETY: live owned handle and correctly sized UTF-16 output buffer.
+            unsafe { GetVirtualDiskPhysicalPath(handle, &mut bytes, buffer.as_mut_ptr()) },
+            "GetVirtualDiskPhysicalPath (staging)",
+        )?;
+        let end = buffer
+            .iter()
+            .position(|&c| c == 0)
+            .context("Unterminated staging device path")?;
+        let physical = String::from_utf16(&buffer[..end])?;
+        physical_disk_number(&physical)?;
+        let file = platform::open_source(Path::new(&physical))?;
+        let (length, sector) = crate::raw::device_geometry(&file)?;
+        let mut reader = crate::raw::DeviceReader::new(file, length, sector)?;
+        let result = consume(&mut reader, length)?;
+        drop(reader);
+        // SAFETY: only the staging attachment owned above is released.
+        win(
+            // SAFETY: only the read-only staging attachment owned by this guard is released.
+            unsafe { DetachVirtualDisk(handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0) },
+            "DetachVirtualDisk (staging)",
+        )?;
+        image.attached = false;
+        Ok(result)
     }
     fn powershell() -> Result<PathBuf> {
         let windows = std::env::var_os("SystemRoot").context("SystemRoot is unavailable")?;
@@ -466,17 +592,29 @@ mod windows {
         path: &Path,
         explicit_gib: Option<u64>,
         options: &Options,
+        staging_limit: Option<u64>,
     ) -> Result<Summary> {
         metadata::enable_privileges()?;
         // Raw-only NTFS candidates have no planning-time size; read them from
         // the raw provider before the container is sized.
-        let (raw_known, unknown) = metadata::raw_candidate_sizes(plan);
+        let sizes = metadata::raw_candidate_sizes(plan);
+        let raw_known = sizes.known;
         let known = plan
             .known_bytes
             .checked_add(raw_known)
             .context("Known evidence size overflow")?;
         let reserve = metadata_reserve(plan.files.len(), options.threads);
-        let bytes = capacity(known, unknown, explicit_gib, reserve)?;
+        let bytes = capacity(
+            known,
+            sizes.unknown,
+            explicit_gib,
+            reserve,
+            sizes.largest_stream,
+        )?;
+        ensure!(
+            staging_limit.is_none_or(|limit| bytes <= limit),
+            "NTFS capacity exceeds the E01 segment-set limit; narrow the collection scope"
+        );
         let path = paths::resolve_future(path)?;
         validate_new_image_path(&path)?;
         let parent = path.parent().context("VHDX output has no parent")?;
@@ -528,7 +666,7 @@ mod windows {
         image
             .finish()
             .with_context(|| format!("VHDX finalization failed: {}", path.display()))?;
-        if !options.quiet {
+        if !options.quiet && staging_limit.is_none() {
             ui::field(
                 "Results saved",
                 format!(
@@ -547,14 +685,25 @@ mod tests {
     use super::*;
     #[test]
     fn capacity_is_bounded_and_counts_unknown_stream_headroom() {
-        assert_eq!(capacity(0, 0, None, 0).unwrap(), GIB);
-        assert_eq!(capacity(0, 2, None, 0).unwrap(), 3 * GIB);
-        assert!(capacity(0, 0, Some(0), 0).is_err());
-        assert!(capacity(0, 0, Some(65537), 0).is_err());
-        assert!(capacity(2 * GIB, 0, Some(1), 0).is_err());
-        assert!(capacity(u64::MAX, 0, None, 0).is_err());
-        assert!(capacity(0, u64::MAX, None, 0).is_err());
-        assert!(capacity(0, 0, Some(u64::MAX), 0).is_err());
+        assert_eq!(capacity(0, 0, None, 0, 0).unwrap(), GIB);
+        assert_eq!(capacity(0, 2, None, 0, 0).unwrap(), 3 * GIB);
+        assert!(capacity(0, 0, Some(0), 0, 0).is_err());
+        assert!(capacity(0, 0, Some(65537), 0, 0).is_err());
+        assert!(capacity(2 * GIB, 0, Some(1), 0, 0).is_err());
+        assert!(capacity(u64::MAX, 0, None, 0, 0).is_err());
+        assert!(capacity(0, u64::MAX, None, 0, 0).is_err());
+        assert!(capacity(0, 0, Some(u64::MAX), 0, 0).is_err());
+    }
+    #[test]
+    fn capacity_holds_the_largest_sparse_stream_at_its_logical_size() {
+        // A 3.3 GiB sparse USN journal in a 1 GiB collection: the container must
+        // hold its logical size, or The Sleuth Kit cannot read the journal.
+        let journal = 3 * GIB + 300 * MIB;
+        assert_eq!(capacity(0, 0, None, 0, journal).unwrap(), 4 * GIB);
+        assert_eq!(capacity(0, 0, None, 0, 512 * MIB).unwrap(), GIB);
+        assert!(capacity(0, 0, Some(3), 0, journal).is_err());
+        assert_eq!(capacity(0, 0, Some(4), 0, journal).unwrap(), 4 * GIB);
+        assert!(capacity(0, 0, None, 0, u64::MAX).is_err());
     }
     #[test]
     fn container_reserve_is_part_of_the_minimum_capacity() {
@@ -565,10 +714,10 @@ mod tests {
             64 * MIB + 100_000 * 8 * 1024 + 128 * MIB
         );
         // 512 MiB headroom + 3 GiB reserve rounds up to a 4 GiB container.
-        assert_eq!(capacity(0, 0, None, 3 * GIB).unwrap(), 4 * GIB);
-        assert!(capacity(0, 0, Some(1), 600 * MIB).is_err());
-        assert_eq!(capacity(0, 0, Some(2), 600 * MIB).unwrap(), 2 * GIB);
-        assert!(capacity(0, 0, None, u64::MAX).is_err());
+        assert_eq!(capacity(0, 0, None, 3 * GIB, 0).unwrap(), 4 * GIB);
+        assert!(capacity(0, 0, Some(1), 600 * MIB, 0).is_err());
+        assert_eq!(capacity(0, 0, Some(2), 600 * MIB, 0).unwrap(), 2 * GIB);
+        assert!(capacity(0, 0, None, u64::MAX, 0).is_err());
         // High CPU counts must not reserve slack for workers with no tasks.
         assert_eq!(metadata_reserve(2, 256), 96 * MIB + 2 * 8 * 1024);
     }
