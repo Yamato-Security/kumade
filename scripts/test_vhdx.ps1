@@ -85,6 +85,39 @@ public static class KumadeNativeTest {
 }
 '@
 foreach ($privilege in 'SeBackupPrivilege','SeRestorePrivilege','SeSecurityPrivilege','SeManageVolumePrivilege') { [KumadeNativeTest]::Enable($privilege) }
+
+function Get-SourceKey([string]$Path) {
+    if ($Path.StartsWith('\\?\')) { $Path = $Path.Substring(4) }
+    return $Path.TrimEnd([char]92)
+}
+function Invoke-Collector([string[]]$Arguments, [string]$Log) {
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $Binary
+    # These arguments are Windows paths or fixed options; no double quote is
+    # legal in their filenames. A quoted trailing slash would need escaping.
+    $quoted = foreach ($argument in $Arguments) {
+        if ($argument.Contains('"') -or $argument.EndsWith('\')) { throw 'Unexpected test argument quoting' }
+        '"' + $argument + '"'
+    }
+    $info.Arguments = $quoted -join ' '
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
+    $info.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    $null = $process.Start()
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $text = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+    [IO.File]::WriteAllText((Join-Path $WorkDirectory $Log),$text,(New-Object Text.UTF8Encoding($false)))
+    $code = $process.ExitCode
+    $process.Dispose()
+    return $code
+}
 $source = Join-Path $WorkDirectory 'source'
 $prefetch = Join-Path $source 'Windows\Prefetch'
 $null = New-Item -ItemType Directory -Path $prefetch -Force
@@ -115,9 +148,8 @@ $hashes = @{}
 foreach ($path in @($file,$other,($file+':Zone.Identifier'),($file+':extra.evidence'))) { $hashes[$path]=[KumadeNativeTest]::Hash($path) }
 $image = Join-Path $WorkDirectory "Evidence 'quoted'.vhdx"
 $arguments = @('collect','-d',$source,'--computer','SYNTHETIC','--artifact','windows.prefetch','--vhdx',$image,'--vhdx-size-gib','1','--reserve-mib','0','-T','2')
-& $Binary @arguments *> (Join-Path $WorkDirectory 'collect.txt')
-$code = $LASTEXITCODE
-if ($code -ne 0) { throw ('Collection failed ('+$code+'): '+(Get-Content -Raw -LiteralPath (Join-Path $WorkDirectory 'collect.txt'))) }
+$code = Invoke-Collector $arguments 'collect.txt' 
+if ($code -ne 0) { throw ('Collection failed ('+$code+'): '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'collect.txt'))) }
 if ((Get-DiskImage -ImagePath $image).Attached) { throw 'Image remained attached after collection' }
 $mounted = $false
 try {
@@ -128,8 +160,8 @@ try {
     $runs = @(Get-ChildItem -LiteralPath $volumes[0].UniqueId -Directory | Where-Object Name -like 'SYNTHETIC_*')
     if ($runs.Count -ne 1) { throw 'Expected one acquisition run' }
     $run = $runs[0].FullName
-    & $Binary verify $run *> (Join-Path $WorkDirectory 'verify.txt')
-    if ($LASTEXITCODE -ne 0) { throw ('Integrity verification failed: '+(Get-Content -Raw -LiteralPath (Join-Path $WorkDirectory 'verify.txt'))) }
+    $verifyCode = Invoke-Collector @('verify',$run) 'verify.txt'
+    if ($verifyCode -ne 0) { throw ('Integrity verification failed: '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'verify.txt'))) }
     $summary = Get-Content -Raw -LiteralPath (Join-Path $run 'Summary.json') | ConvertFrom-Json
     if ($summary.MetadataErrors -ne 0 -or $summary.Collected -ne 4) { throw 'Unexpected acquisition/metadata counts' }
     $reports = @(Get-Content -LiteralPath (Join-Path $run 'NTFS-Metadata.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
@@ -138,8 +170,7 @@ try {
     foreach ($row in $reports) {
         if ($row.CaptureStatus -ne 'Captured' -or $row.RestoreStatus -ne 'Restored') { throw ('Metadata restoration incomplete: '+($row | ConvertTo-Json -Compress)) }
         $destination = Join-Path $run $row.RelativeOutputPath
-        $sourceKey = $row.SourcePath -replace '^\\\\\?\\',''
-        $sourceKey = $sourceKey.TrimEnd('\')
+        $sourceKey = Get-SourceKey $row.SourcePath
         $expected = $before[$sourceKey]
         if (-not $expected) { throw ('Unexpected source metadata: '+$row.SourcePath) }
         $actual = [KumadeNativeTest]::Read($destination)
@@ -157,15 +188,15 @@ try {
     if ((Get-Acl -LiteralPath $target -Audit).Sddl -ne $security) { throw 'Owner/group/DACL/SACL changed' }
     if ([KumadeNativeTest]::EA($target) -ne $ea) { throw 'Extended attributes changed' }
     foreach ($row in @(Import-Csv -LiteralPath (Join-Path $run 'Manifest.csv'))) {
-        $sourcePath = $row.SourcePath -replace '^\\\\\?\\','' 
+        $sourcePath = Get-SourceKey $row.SourcePath
         if ($row.StreamName) { $sourcePath += ':'+$row.StreamName }
         $payload = Join-Path $run $row.RelativeOutputPath
         if ([KumadeNativeTest]::Hash($payload) -ne $hashes[$sourcePath]) { throw 'Independent payload/ADS hash mismatch' }
     }
     # A second run must leave this existing image untouched.
     $imageHash = (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash
-    & $Binary @arguments *> (Join-Path $WorkDirectory 'no-overwrite.txt')
-    if ($LASTEXITCODE -ne 2 -or (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne $imageHash) { throw 'Existing VHDX was changed' }
+    $noOverwriteCode = Invoke-Collector $arguments 'no-overwrite.txt'
+    if ($noOverwriteCode -ne 2 -or (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne $imageHash) { throw 'Existing VHDX was changed' }
     $result = [pscustomobject]@{Payloads=$summary.Collected;MetadataRecords=$reports.Count;NTFSTimestamps100ns='passed';OwnerGroupDaclSacl='passed';ExtendedAttributes='passed';NamedStreams='passed';IndependentHashes='passed';NoOverwrite='passed';ReadOnlyVerification='passed';Image=$image}
     $result | ConvertTo-Json | Tee-Object -FilePath (Join-Path $WorkDirectory 'result.json')
 } finally {

@@ -35,7 +35,10 @@ use windows_sys::Win32::{
     System::{
         IO::{DeviceIoControl, IO_STATUS_BLOCK},
         Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE},
-        SystemServices::ACCESS_SYSTEM_SECURITY,
+        SystemServices::{
+            ACCESS_FILTER_SECURITY_INFORMATION, ACCESS_SYSTEM_SECURITY,
+            PROCESS_TRUST_LABEL_SECURITY_INFORMATION,
+        },
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
 };
@@ -44,7 +47,11 @@ const SECURITY: u32 = OWNER_SECURITY_INFORMATION
     | GROUP_SECURITY_INFORMATION
     | DACL_SECURITY_INFORMATION
     | SACL_SECURITY_INFORMATION
-    | LABEL_SECURITY_INFORMATION;
+    | LABEL_SECURITY_INFORMATION
+    | ATTRIBUTE_SECURITY_INFORMATION
+    | SCOPE_SECURITY_INFORMATION
+    | PROCESS_TRUST_LABEL_SECURITY_INFORMATION
+    | ACCESS_FILTER_SECURITY_INFORMATION;
 
 pub fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
@@ -164,7 +171,7 @@ fn descriptor(file: &File) -> Result<Vec<u8>> {
         GetSecurityInfo(
             file.as_raw_handle(),
             SE_FILE_OBJECT,
-            BACKUP_SECURITY_INFORMATION,
+            SECURITY,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),

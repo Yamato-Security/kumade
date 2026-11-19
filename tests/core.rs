@@ -644,3 +644,46 @@ fn unavailable_volume_is_a_partial_collection_with_a_durable_issue() {
     );
     assert_eq!(verify::verify(&root).unwrap(), (2, false));
 }
+
+#[test]
+fn physical_host_reserve_failures_are_retained_and_sealed() {
+    let (temp, source) = fixture();
+    let plan = plan(source);
+    let mut opts = options();
+    opts.host_reserve = Some(collect::HostReserve {
+        path: temp.path().to_owned(),
+        bytes: u64::MAX,
+    });
+    let (root, summary) = collect::collect(&plan, &temp.path().join("output"), &opts).unwrap();
+    assert_eq!(summary.completeness, "Partial");
+    assert!(summary.failed > 0);
+    assert!(
+        read_records(&root)
+            .iter()
+            .any(|r| r.reason.contains("Physical host free-space reserve"))
+    );
+    assert!(!verify::verify(&root).unwrap().1);
+}
+
+#[test]
+fn verifier_checks_additional_sealed_metadata_inventories() {
+    let (temp, source) = fixture();
+    let (root, _) =
+        collect::collect(&plan(source), &temp.path().join("output"), &options()).unwrap();
+    let inventory = root.join("NTFS-Metadata.jsonl");
+    fs::write(&inventory, "{}\n").unwrap();
+    let seal_path = root.join("Seal.json");
+    let mut seal: serde_json::Value =
+        serde_json::from_reader(File::open(&seal_path).unwrap()).unwrap();
+    seal["MetadataSHA256"]["NTFS-Metadata.jsonl"] =
+        serde_json::Value::String(collect::hash_file(&inventory).unwrap().1);
+    fs::write(&seal_path, serde_json::to_vec(&seal).unwrap()).unwrap();
+    assert!(verify::verify(&root).is_ok());
+    fs::write(&inventory, "{\"tampered\":true}\n").unwrap();
+    assert!(
+        verify::verify(&root)
+            .unwrap_err()
+            .to_string()
+            .contains("Sealed metadata differs")
+    );
+}

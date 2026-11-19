@@ -60,7 +60,11 @@ attempts to restore:
   artifacts use an empty host file whose unnamed data is not claimed as acquired.
 
 Payload bytes are hash-verified before restrictive source permissions are
-restored. Restored basic timestamps, attributes, security descriptors and extended
+restored. Security is restored through Windows backup streams, preserving
+inheritance/auditing control flags that ordinary ACL-setting APIs normalize.
+Directory properties are restored top-down, and basic times are restored in a
+final pass, deepest first. Metadata is applied only when its captured file
+generation matches the acquired file. Restored basic timestamps, attributes, security descriptors and extended
 attributes are read back. A capture/restore discrepancy makes the acquisition
 **partial**, appears in `MetadataErrors` in `Summary.json`, and is recorded in:
 

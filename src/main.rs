@@ -205,6 +205,14 @@ fn run() -> Result<u8> {
             ui::field("RAM acquisition", "Not implemented");
             ui::field("VSS acquisition", "Not implemented");
             ui::field("Cloud transport", "Not implemented");
+            ui::field(
+                "VHDX output",
+                if cfg!(windows) {
+                    "Available; elevated Windows and Storage cmdlets required"
+                } else {
+                    "Requires Windows"
+                },
+            );
             return Ok(0);
         }
         Some(Command::List { catalog }) => {
