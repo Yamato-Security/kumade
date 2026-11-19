@@ -44,9 +44,13 @@ consume it stops with `Destination free-space reserve reached`; its partial byte
 are retained and recorded as failed, and the remaining payloads fail the same way
 instead of filling the volume. If the host fills, failures are recorded and
 retained too; Kumade does not silently omit payloads. Failed setup or interrupted
-acquisition can leave a partial image for inspection. A normal completed run
-flushes, locks, dismounts and detaches the destination before reporting the image
-as saved.
+acquisition can leave a partial image for inspection; the volume is flushed and
+dismounted before the disk is detached, so that retained image is consistent. A
+normal completed run flushes, locks, dismounts and detaches the destination
+before reporting the image as saved. If the lock is refused, for example because
+an on-access scanner still holds a handle inside the new volume, the volume is
+dismounted anyway after a notice: every evidence file is already closed and
+flushed, and a complete, sealed result is not discarded over the lock.
 
 ## Data and metadata
 

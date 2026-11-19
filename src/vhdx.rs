@@ -155,6 +155,31 @@ mod windows {
     }
     impl Drop for Image {
         fn drop(&mut self) {
+            // On an error path the volume is still mounted. Flush and dismount it
+            // (best effort) so the retained partial image holds consistent NTFS
+            // structures before the disk disappears; a plain detach would leave
+            // cached writes behind.
+            if self.attached
+                && !self.volume.as_os_str().is_empty()
+                && let Ok(volume) = self.volume_handle()
+            {
+                let mut returned = 0;
+                // SAFETY: owned volume handle of the destination created by this
+                // guard; flush and dismount take no buffers.
+                unsafe {
+                    FlushFileBuffers(volume.as_raw_handle());
+                    DeviceIoControl(
+                        volume.as_raw_handle(),
+                        FSCTL_DISMOUNT_VOLUME,
+                        ptr::null(),
+                        0,
+                        ptr::null_mut(),
+                        0,
+                        &mut returned,
+                        ptr::null_mut(),
+                    );
+                }
+            }
             // SAFETY: this RAII guard owns only the handle it created. Attachment
             // has no permanent lifetime, so closing also releases it on errors.
             unsafe {
@@ -397,14 +422,20 @@ mod windows {
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
+            if !locked {
+                // Another process (typically an on-access scanner) still holds a
+                // handle inside the new volume. Every evidence file is closed and
+                // the volume is flushed, so a forced dismount loses nothing of
+                // ours; failing the whole acquisition here would discard a
+                // complete, sealed result.
+                eprintln!(
+                    "Notice: the evidence volume could not be locked ({}); dismounting it anyway because all evidence files are closed and flushed",
+                    std::io::Error::last_os_error()
+                );
+            }
+            // SAFETY: destination volume was flushed (and locked when possible); this dismount never targets a source.
             ensure!(
-                locked,
-                "Cannot lock destination for clean detach: {}",
-                std::io::Error::last_os_error()
-            );
-            // SAFETY: destination volume was flushed and locked; this dismount never targets a source.
-            ensure!(
-                // SAFETY: destination volume was flushed and locked; this dismount never targets a source.
+                // SAFETY: destination volume was flushed (and locked when possible); this dismount never targets a source.
                 unsafe {
                     DeviceIoControl(
                         volume.as_raw_handle(),
