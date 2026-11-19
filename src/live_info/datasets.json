@@ -755,5 +755,192 @@
     ],
     "Query": "Get-NetFirewallAddressFilter -PolicyStore ActiveStore | ForEach-Object { [ordered]@{ InstanceId=$_.InstanceID; LocalAddress=$_.LocalAddress; RemoteAddress=$_.RemoteAddress } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.sys.firewallrules/"
+  },
+  {
+    "Name": "SystemLocale",
+    "Fields": [
+      "Scope",
+      "LocaleName",
+      "Lcid",
+      "EnglishName",
+      "NativeName",
+      "DefaultLanguageId",
+      "InstallLanguageId",
+      "AnsiCodePage",
+      "OemCodePage",
+      "MacCodePage"
+    ],
+    "Query": "Read-LocaleInventory 'SystemLocale'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "CollectorLocale",
+    "Fields": [
+      "Scope",
+      "UserSid",
+      "UserName",
+      "CultureName",
+      "Lcid",
+      "EnglishName",
+      "NativeName",
+      "EffectiveProcessUiCulture",
+      "InstalledUiCulture",
+      "ConfiguredUiLanguageOverride",
+      "HomeGeoId",
+      "HomeLocation",
+      "ShortDatePattern",
+      "LongDatePattern",
+      "ShortTimePattern",
+      "LongTimePattern",
+      "FirstDayOfWeek",
+      "DecimalSeparator",
+      "ThousandsSeparator",
+      "CurrencySymbol"
+    ],
+    "Query": "Read-LocaleInventory 'CollectorLocale'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "InputLanguages",
+    "Fields": [
+      "Scope",
+      "UserSid",
+      "UserName",
+      "Order",
+      "LanguageTag",
+      "Autonym",
+      "EnglishName",
+      "LocalizedName",
+      "ScriptName",
+      "InputMethodTips",
+      "Spellchecking",
+      "Handwriting"
+    ],
+    "Query": "Read-LocaleInventory 'InputLanguages'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "KeyboardLayouts",
+    "Fields": [
+      "Scope",
+      "RegistryPath",
+      "LayoutId",
+      "LayoutText",
+      "LayoutDisplayName",
+      "LayoutFile",
+      "LayoutVariantId",
+      "ImeFile"
+    ],
+    "Query": "Read-LocaleInventory 'KeyboardLayouts'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "InstalledUiLanguages",
+    "Fields": [
+      "Scope",
+      "RegistryPath",
+      "LanguageTag",
+      "Lcid",
+      "Type",
+      "DefaultFallback"
+    ],
+    "Query": "Read-LocaleInventory 'InstalledUiLanguages'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "LoadedUserKeyboardLayouts",
+    "Fields": [
+      "Scope",
+      "UserSid",
+      "HiveName",
+      "ProfilePath",
+      "RegistryPath",
+      "PreloadValueName",
+      "ConfiguredLayoutId",
+      "ResolvedLayoutId",
+      "SubstitutionState",
+      "Substitutions",
+      "Registered",
+      "LayoutText",
+      "LayoutDisplayName",
+      "LayoutFile",
+      "ImeFile"
+    ],
+    "Query": "Read-LocaleInventory 'LoadedUserKeyboardLayouts'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "LoadedUserRegionalSettings",
+    "Fields": [
+      "Scope",
+      "UserSid",
+      "HiveName",
+      "ProfilePath",
+      "RegistryPath",
+      "LocaleId",
+      "LocaleName",
+      "Language",
+      "ShortDatePattern",
+      "LongDatePattern",
+      "ShortTimePattern",
+      "TimePattern",
+      "DateSeparator",
+      "TimeSeparator",
+      "DecimalSeparator",
+      "ThousandsSeparator",
+      "CurrencySymbol",
+      "MeasurementSystem",
+      "FirstDayOfWeek",
+      "GeoNation",
+      "GeoName",
+      "Languages",
+      "PreferredUiLanguages",
+      "PendingPreferredUiLanguages"
+    ],
+    "Query": "Read-LocaleInventory 'LoadedUserRegionalSettings'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "LoadedUserLanguages",
+    "Fields": [
+      "Scope",
+      "UserSid",
+      "HiveName",
+      "ProfilePath",
+      "RegistryPath",
+      "Order",
+      "LanguageTag",
+      "CultureName",
+      "InputMethodTips",
+      "Settings"
+    ],
+    "Query": "Read-LocaleInventory 'LoadedUserLanguages'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
+  },
+  {
+    "Name": "InputMethodEditors",
+    "Fields": [
+      "Scope",
+      "RegistryPath",
+      "RegistryView",
+      "TipId",
+      "LanguageId",
+      "ProfileId",
+      "Description",
+      "Enabled",
+      "IconFile",
+      "IconIndex"
+    ],
+    "Query": "Read-LocaleInventory 'InputMethodEditors'",
+    "Helper": "Locale",
+    "Reference": "https://learn.microsoft.com/en-us/powershell/module/international/"
   }
 ]

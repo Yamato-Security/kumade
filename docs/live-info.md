@@ -1,6 +1,6 @@
 # Live-response inventory
 
-Kumade captures live Windows system state **before copying artifact files**, using 50 independent read-only providers. It runs automatically for live collection and is stored inside the directory, VHDX or E01 collection under `LiveInfo/`. Offline `--source` collections do not query the analyst's machine. `plan` never queries live inventory.
+Kumade captures live Windows system state **before copying artifact files**, using 59 independent read-only providers. It runs automatically for live collection and is stored inside the directory, VHDX or E01 collection under `LiveInfo/`. Offline `--source` collections do not query the analyst's machine. `plan` never queries live inventory.
 
 ```powershell
 # Full collection: CSV live inventory is included by default
@@ -74,6 +74,17 @@ Optional unsupported features remain visible in the manifest without forcing par
 - Firewall rules and their port/application/address filters are separate tables. Preserve their instance identifiers when correlating them; this is configuration inventory, not proof that traffic was allowed or blocked.
 - PowerShell/CIM queries create their own processes, log activity and system load. Capture times and the collector's own command lines can appear in the results. File acquisition follows inventory, so it may collect those new logs too.
 - This feature does not add memory acquisition, process dumps, handle enumeration, packet capture, historical deleted-state recovery or automated maliciousness verdicts.
+
+## Language, locale and keyboard interpretation
+
+- `SystemLocale` records the machine's locale for non-Unicode programs, NLS language identifiers and ANSI/OEM code pages. It is separate from user display/input languages and from the basic WMI `OperatingSystem.Locale` field.
+- `CollectorLocale` describes the **collector account and its PowerShell process**, identified by SID and account name. It includes culture, date/time/number/currency formatting, effective process UI culture, the installed primary UI culture, home location and the configured UI-language override. A null override means no explicit override; it does not mean no display language is installed. A configured override can require logoff/reboot before taking effect.
+- `InputLanguages` is the collector account's ordered language list, input-method TIP identifiers, handwriting and spellchecking preferences. It is not the preferences of whichever person happens to be at the desktop when the collector runs as Administrator or SYSTEM.
+- `KeyboardLayouts` lists machine-registered KLIDs, descriptions, layout DLL names and legacy IME filenames. `InputMethodEditors` lists registered TSF TIP/profile GUIDs and language/profile metadata in native and 32-bit registry views. Registration does not prove use, activation, execution or that the referenced binary exists.
+- `InstalledUiLanguages` lists machine MUI registrations and fallback metadata; compare with `WindowsPackages` for servicing/package state. It does not prove which display language an interactive user currently sees.
+- `LoadedUserKeyboardLayouts`, `LoadedUserRegionalSettings` and `LoadedUserLanguages` read **loaded** HKEY_USERS SID hives, retaining SID, hive name, profile path and registry path. This includes loaded service-account hives. `.DEFAULT` is labeled `SystemDefaultHive` with no claimed user SID: it is not the `C:\Users\Default` template profile. No hives are loaded and no users are impersonated; unloaded profiles are outside this live view.
+- Keyboard preload order/value names, original IDs, substitution chains and resolved IDs are retained. Cycles, invalid IDs and excessive chain depth are reported in `SubstitutionState`, with a 16-link bound. IDs retain leading zeroes. IME/TIP identifiers and indirect resource descriptions remain data; the collector never activates layouts or loads the referenced DLLs.
+- Loaded-hive language lists, regional formats and preferred/pending UI-language values are configured registry state, not proof of the currently active keyboard layout on every desktop/session. Unknown per-language registry settings retain their names/types/data under `Settings`.
 
 ## Provider catalog
 
@@ -279,6 +290,42 @@ The following field lists omit the three common provenance fields above.
 
 `FirewallAddressFilters.<csv|json|jsonl>`: `InstanceId`, `LocalAddress`, `RemoteAddress`.
 
+### SystemLocale
+
+`SystemLocale.<csv|json|jsonl>`: `Scope`, `LocaleName`, `Lcid`, `EnglishName`, `NativeName`, `DefaultLanguageId`, `InstallLanguageId`, `AnsiCodePage`, `OemCodePage`, `MacCodePage`.
+
+### CollectorLocale
+
+`CollectorLocale.<csv|json|jsonl>`: `Scope`, `UserSid`, `UserName`, `CultureName`, `Lcid`, `EnglishName`, `NativeName`, `EffectiveProcessUiCulture`, `InstalledUiCulture`, `ConfiguredUiLanguageOverride`, `HomeGeoId`, `HomeLocation`, `ShortDatePattern`, `LongDatePattern`, `ShortTimePattern`, `LongTimePattern`, `FirstDayOfWeek`, `DecimalSeparator`, `ThousandsSeparator`, `CurrencySymbol`.
+
+### InputLanguages
+
+`InputLanguages.<csv|json|jsonl>`: `Scope`, `UserSid`, `UserName`, `Order`, `LanguageTag`, `Autonym`, `EnglishName`, `LocalizedName`, `ScriptName`, `InputMethodTips`, `Spellchecking`, `Handwriting`.
+
+### KeyboardLayouts
+
+`KeyboardLayouts.<csv|json|jsonl>`: `Scope`, `RegistryPath`, `LayoutId`, `LayoutText`, `LayoutDisplayName`, `LayoutFile`, `LayoutVariantId`, `ImeFile`.
+
+### InstalledUiLanguages
+
+`InstalledUiLanguages.<csv|json|jsonl>`: `Scope`, `RegistryPath`, `LanguageTag`, `Lcid`, `Type`, `DefaultFallback`.
+
+### LoadedUserKeyboardLayouts
+
+`LoadedUserKeyboardLayouts.<csv|json|jsonl>`: `Scope`, `UserSid`, `HiveName`, `ProfilePath`, `RegistryPath`, `PreloadValueName`, `ConfiguredLayoutId`, `ResolvedLayoutId`, `SubstitutionState`, `Substitutions`, `Registered`, `LayoutText`, `LayoutDisplayName`, `LayoutFile`, `ImeFile`.
+
+### LoadedUserRegionalSettings
+
+`LoadedUserRegionalSettings.<csv|json|jsonl>`: `Scope`, `UserSid`, `HiveName`, `ProfilePath`, `RegistryPath`, `LocaleId`, `LocaleName`, `Language`, `ShortDatePattern`, `LongDatePattern`, `ShortTimePattern`, `TimePattern`, `DateSeparator`, `TimeSeparator`, `DecimalSeparator`, `ThousandsSeparator`, `CurrencySymbol`, `MeasurementSystem`, `FirstDayOfWeek`, `GeoNation`, `GeoName`, `Languages`, `PreferredUiLanguages`, `PendingPreferredUiLanguages`.
+
+### LoadedUserLanguages
+
+`LoadedUserLanguages.<csv|json|jsonl>`: `Scope`, `UserSid`, `HiveName`, `ProfilePath`, `RegistryPath`, `Order`, `LanguageTag`, `CultureName`, `InputMethodTips`, `Settings`.
+
+### InputMethodEditors
+
+`InputMethodEditors.<csv|json|jsonl>`: `Scope`, `RegistryPath`, `RegistryView`, `TipId`, `LanguageId`, `ProfileId`, `Description`, `Enabled`, `IconFile`, `IconIndex`.
+
 ## Reference coverage
 
 Coverage was informed by Velociraptor’s public Windows artifact catalog. Queries and exporters here are independently implemented using built-in Windows interfaces; no Velociraptor executable or VQL plugin is bundled.
@@ -303,3 +350,10 @@ Coverage was informed by Velociraptor’s public Windows artifact catalog. Queri
 - https://docs.velociraptor.app/artifact_references/pages/windows.system.shares/
 - https://docs.velociraptor.app/artifact_references/pages/windows.system.taskscheduler/
 - https://docs.velociraptor.app/artifact_references/pages/windows.system.wmiquery/
+
+Additional locale/keyboard references:
+
+- https://learn.microsoft.com/en-us/powershell/module/international/get-winuserlanguagelist
+- https://learn.microsoft.com/en-us/powershell/module/international/get-winsystemlocale
+- https://learn.microsoft.com/en-us/powershell/module/international/get-winuilanguageoverride
+- https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/troubleshoot-ime-common-issues

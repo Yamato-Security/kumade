@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add live-response inventory with 50 read-only Windows providers, PascalCase CSV/JSON/JSONL, bounded concurrency/deadlines/output, provider diagnostics and integrity seals. Capture volatile state before live file collection, including VHDX/E01 output. Add inventory-only `live-info`, provider selection, format selection and `--no-live-info`; offline scans never query the analyst host.
+- Add live-response inventory with 59 read-only Windows providers, PascalCase CSV/JSON/JSONL, bounded concurrency/deadlines/output, provider diagnostics and integrity seals. Capture volatile state before live file collection, including VHDX/E01 output. Add inventory-only `live-info`, provider selection, format selection and `--no-live-info`; offline scans never query the analyst host.
 
 - Add `--e01 FILE` to package a collection in compressed EWF1 physical segments,
   with the VHDX backend's NTFS metadata and native ADS preservation. Reopen the

@@ -79,6 +79,7 @@ pub struct Dataset {
     pub fields: Vec<String>,
     pub query: String,
     pub reference: String,
+    pub helper: Option<String>,
 }
 pub fn datasets() -> Vec<Dataset> {
     serde_json::from_str(include_str!("datasets.json")).expect("embedded dataset catalog")
@@ -133,8 +134,34 @@ struct Capture {
 
 fn script(dataset: &Dataset) -> String {
     // The query is compiled into the binary; callers can only select named providers.
+    let helper = match dataset.helper.as_deref() {
+        None => String::new(),
+        Some("Locale") => {
+            let query = match dataset.name.as_str() {
+                "SystemLocale" => include_str!("locale/SystemLocale.ps1"),
+                "CollectorLocale" => include_str!("locale/CollectorLocale.ps1"),
+                "InputLanguages" => include_str!("locale/InputLanguages.ps1"),
+                "KeyboardLayouts" => include_str!("locale/KeyboardLayouts.ps1"),
+                "InstalledUiLanguages" => include_str!("locale/InstalledUiLanguages.ps1"),
+                "LoadedUserKeyboardLayouts" => include_str!("locale/LoadedUserKeyboardLayouts.ps1"),
+                "LoadedUserRegionalSettings" => {
+                    include_str!("locale/LoadedUserRegionalSettings.ps1")
+                }
+                "LoadedUserLanguages" => include_str!("locale/LoadedUserLanguages.ps1"),
+                "InputMethodEditors" => include_str!("locale/InputMethodEditors.ps1"),
+                _ => panic!("unknown locale provider"),
+            };
+            format!(
+                "{}\nfunction Read-LocaleInventory([string]$provider) {{\n{}\n}}",
+                include_str!("locale.ps1"),
+                query
+            )
+        }
+        Some(_) => panic!("unknown embedded helper"),
+    };
     format!(
         r#"{COMMON}
+{helper}
 try {{
  $count=0
  & {{ {} }} | ForEach-Object {{
@@ -667,7 +694,10 @@ mod tests {
                 assert!(f.starts_with(char::is_uppercase));
                 assert!(fields.insert(f));
             }
-            assert!(s.reference.starts_with("https://docs.velociraptor.app/"));
+            assert!(
+                s.reference.starts_with("https://docs.velociraptor.app/")
+                    || s.reference.starts_with("https://learn.microsoft.com/")
+            );
             assert!(!s.query.to_ascii_lowercase().contains("win32_product"));
             let script = script(&s);
             let decoded = STANDARD.decode(encoded_script(&script)).unwrap();
@@ -759,6 +789,48 @@ mod tests {
         let row = json!({"Kind":"Row","Data":{"Computer":"HOST","CollectedUtc":"2026-11-20T01:02:03Z","Provider":s.name,"IPAddress":["::1","127.0.0.1"]}});
         let (rows, _, _) = parse(&s, capture(row));
         assert_eq!(rows[0]["IpAddress"], json!(["::1", "127.0.0.1"]));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn keyboard_substitution_chains_cycles_and_invalid_ids_are_reported() {
+        let name = format!("KumadeLocaleTest-{}", uuid::Uuid::new_v4());
+        let body = format!(
+            r#"{}
+$path='HKCU:\Software\{}'
+$key=New-Item -Path $path -ErrorAction Stop
+try {{
+ $key.SetValue('d0010404','00000411',[Microsoft.Win32.RegistryValueKind]::String)
+ $resolved=Resolve-KeyboardLayout $key 'D0010404'
+ $key.SetValue('00000411','d0010404',[Microsoft.Win32.RegistryValueKind]::String)
+ $cycle=Resolve-KeyboardLayout $key 'd0010404'
+ $invalid=Resolve-KeyboardLayout $key '../../not-a-layout'
+ for($i=0;$i -lt 20;$i++){{$key.SetValue(('D{{0:X7}}' -f $i),('D{{0:X7}}' -f ($i+1)),[Microsoft.Win32.RegistryValueKind]::String)}}
+ $deep=Resolve-KeyboardLayout $key 'D0000000'
+ [Console]::WriteLine((@{{Resolved=$resolved;Cycle=$cycle;Invalid=$invalid;Deep=$deep}} | ConvertTo-Json -Compress -Depth 8))
+}} finally {{ $key.Close();Remove-Item -LiteralPath $path -Recurse -Force }}
+"#,
+            include_str!("locale.ps1"),
+            name
+        );
+        let mut command = Command::new(powershell().unwrap());
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &encoded_script(&body),
+        ]);
+        let capture = execute(command, Duration::from_secs(30)).unwrap();
+        assert!(
+            capture.success,
+            "{}",
+            String::from_utf8_lossy(&capture.stderr)
+        );
+        let value: Value = serde_json::from_slice(&capture.stdout).unwrap();
+        assert_eq!(value["Resolved"]["LayoutId"], "00000411");
+        assert_eq!(value["Resolved"]["State"], "Substituted");
+        assert_eq!(value["Cycle"]["State"], "SubstitutionCycle");
+        assert_eq!(value["Invalid"]["State"], "InvalidLayoutId");
+        assert_eq!(value["Deep"]["State"], "DepthLimit");
     }
     #[cfg(windows)]
     #[test]

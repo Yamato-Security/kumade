@@ -19,7 +19,7 @@ Windows examples below.
 
 ## Implemented
 
-- [Live-response inventory](docs/live-info.md): 50 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.
+- [Live-response inventory](docs/live-info.md): 59 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.
 
 - Embedded acquisition catalog with 43 artifact families, including event logs,
   registry, Prefetch, Jump Lists, SRUM recovery families, browsers, Outlook,

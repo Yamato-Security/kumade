@@ -71,6 +71,11 @@ fn all_builtin_providers_run_on_a_live_windows_host_and_seal_their_results() {
                 | "Processes"
                 | "LocalUsers"
                 | "IpConfiguration"
+                | "SystemLocale"
+                | "CollectorLocale"
+                | "InputLanguages"
+                | "KeyboardLayouts"
+                | "InstalledUiLanguages"
         ) {
             assert_eq!(
                 entry.status, "Success",
@@ -83,6 +88,53 @@ fn all_builtin_providers_run_on_a_live_windows_host_and_seal_their_results() {
             assert!(row["Computer"].as_str().is_some_and(|s| !s.is_empty()));
             assert!(row["CollectedUtc"].as_str().unwrap().ends_with('Z'));
             assert_eq!(row["Provider"], entry.provider);
+        }
+    }
+    let mut locale_buffer = [0_u16; 85];
+    // SAFETY: a writable UTF-16 buffer of the stated length.
+    let size = unsafe {
+        windows_sys::Win32::Globalization::GetSystemDefaultLocaleName(
+            locale_buffer.as_mut_ptr(),
+            locale_buffer.len() as i32,
+        )
+    };
+    assert!(size > 0);
+    let native_locale = String::from_utf16(&locale_buffer[..size as usize - 1]).unwrap();
+    assert!(
+        rows(temp.path(), "SystemLocale")[0]["LocaleName"]
+            .as_str()
+            .unwrap()
+            .eq_ignore_ascii_case(&native_locale)
+    );
+    let collector = rows(temp.path(), "CollectorLocale");
+    assert_eq!(collector[0]["Scope"], "CollectorAccount");
+    let sid = collector[0]["UserSid"].as_str().unwrap();
+    assert!(sid.starts_with("S-1-"));
+    for row in rows(temp.path(), "InputLanguages") {
+        assert_eq!(row["UserSid"], sid);
+        assert_eq!(row["Scope"], "CollectorAccount");
+        assert!(row["InputMethodTips"].is_array());
+    }
+    for name in [
+        "LoadedUserKeyboardLayouts",
+        "LoadedUserRegionalSettings",
+        "LoadedUserLanguages",
+    ] {
+        let entry = result.entries.iter().find(|e| e.provider == name).unwrap();
+        assert!(
+            matches!(entry.status.as_str(), "Success" | "Empty"),
+            "{name}: {}",
+            entry.message
+        );
+        for row in rows(temp.path(), name) {
+            match row["Scope"].as_str().unwrap() {
+                "LoadedUserHive" => assert_eq!(row["UserSid"], row["HiveName"]),
+                "SystemDefaultHive" => {
+                    assert_eq!(row["HiveName"], ".DEFAULT");
+                    assert!(row["UserSid"].is_null());
+                }
+                other => panic!("Unrecognized user hive scope: {other}"),
+            }
         }
     }
     assert_eq!(
