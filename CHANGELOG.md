@@ -11,7 +11,9 @@
 - Read the metadata of a file Windows refuses to open, such as the in-use
   `pagefile.sys`, from the raw `$STANDARD_INFORMATION` as for NTFS system
   files, so a default live `--vhdx` or `--e01` run no longer ends partial with a
-  metadata error for the paging file.
+  metadata error for the paging file. Only metadata-open failures use this fallback;
+  failures while reading identity, security or extended attributes retain captured
+  fields and remain visible as metadata errors.
 - Size evidence containers to hold their largest stream at its logical size: a
   sparse copy keeps a USN journal's `$J` at that size, and The Sleuth Kit rejects
   an NTFS run longer than the volume. An E01 run refused before staging leaves

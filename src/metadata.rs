@@ -185,29 +185,12 @@ pub(crate) fn prepare(plan: &Plan) -> Vec<Snapshot> {
             #[cfg(windows)]
             match windows::capture(&target.source, &mut record) {
                 Ok(()) => record.capture_status = "Captured".into(),
-                Err(error) => {
-                    // NTFS system files cannot be opened by name, and a file the
-                    // system holds exclusively (pagefile.sys, hiberfil.sys) refuses
-                    // even a metadata open while its payload is still read raw; the
-                    // raw reader is the authoritative source of their basic
-                    // information.
-                    let raw = target.device.as_deref().is_some_and(|device| {
-                        raw_capture(&mut volumes, device, &relative, &mut record)
-                    });
-                    if raw {
-                        record.capture_status = "RawBasic".into();
-                        record.notes = if target.raw_only {
-                            RAW_BASIC_NOTE.into()
-                        } else {
-                            format!("{RAW_OPEN_REFUSED_NOTE}: {error:#}")
-                        };
-                    } else {
-                        if record.attributes.is_some() {
-                            record.capture_status = "Partial".into();
-                        }
-                        record.problems = format!("Capture: {error:#}");
-                    }
-                }
+                Err(error) => capture_failed(&mut record, target.raw_only, &error, |record| {
+                    target
+                        .device
+                        .as_deref()
+                        .is_some_and(|device| raw_capture(&mut volumes, device, &relative, record))
+                }),
             }
             #[cfg(not(windows))]
             {
@@ -217,6 +200,43 @@ pub(crate) fn prepare(plan: &Plan) -> Vec<Snapshot> {
             record
         })
         .collect()
+}
+
+/// Marks failures at the metadata-open stage, rather than failures while reading
+/// identity, ACLs or extended attributes from an already open file.
+#[cfg(any(windows, test))]
+#[derive(Debug)]
+struct MetadataOpenFailed;
+
+#[cfg(any(windows, test))]
+impl std::fmt::Display for MetadataOpenFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Windows metadata open failed")
+    }
+}
+
+#[cfg(any(windows, test))]
+fn capture_failed(
+    record: &mut Snapshot,
+    raw_only: bool,
+    error: &anyhow::Error,
+    raw: impl FnOnce(&mut Snapshot) -> bool,
+) {
+    // Only an open failure permits this downgrade. Later failures must retain
+    // metadata already captured and stay visible in the metadata-error count.
+    if error.is::<MetadataOpenFailed>() && raw(record) {
+        record.capture_status = "RawBasic".into();
+        record.notes = if raw_only {
+            RAW_BASIC_NOTE.into()
+        } else {
+            format!("{RAW_OPEN_REFUSED_NOTE}: {error:#}")
+        };
+    } else {
+        if record.attributes.is_some() {
+            record.capture_status = "Partial".into();
+        }
+        record.problems = format!("Capture: {error:#}");
+    }
 }
 
 #[cfg(windows)]
@@ -714,6 +734,86 @@ pub fn sddl_equivalent(captured: &str, actual: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_capture_tags_metadata_open_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut snapshot = Snapshot::default();
+        let error = windows::capture(&temp.path().join("not-present"), &mut snapshot).unwrap_err();
+        assert!(error.is::<MetadataOpenFailed>());
+        assert!(snapshot.attributes.is_none());
+    }
+
+    #[test]
+    fn post_open_errors_preserve_captured_metadata_and_remain_errors() {
+        for message in [
+            "security descriptor unreadable",
+            "extended attributes unreadable",
+            "file identity unreadable",
+        ] {
+            let mut snapshot = Snapshot {
+                attributes: Some(0x20),
+                capture_status: "Failed".into(),
+                security_descriptor_hex: Some("01000000".into()),
+                extended_attributes_hex: Some("00000000".into()),
+                ..Default::default()
+            };
+            let called = std::cell::Cell::new(false);
+            let error = anyhow::anyhow!(message).context("capturing source metadata");
+            capture_failed(&mut snapshot, false, &error, |record| {
+                called.set(true);
+                // raw_capture would discard metadata already obtained through Windows.
+                record.security_descriptor_hex = None;
+                record.extended_attributes_hex = None;
+                true
+            });
+            assert!(
+                !called.get(),
+                "post-open failure must not call the raw fallback"
+            );
+            assert_eq!(snapshot.capture_status, "Partial");
+            assert_eq!(
+                snapshot.security_descriptor_hex.as_deref(),
+                Some("01000000")
+            );
+            assert_eq!(
+                snapshot.extended_attributes_hex.as_deref(),
+                Some("00000000")
+            );
+            assert!(snapshot.problems.contains(message));
+            assert!(snapshot.notes.is_empty());
+        }
+    }
+
+    #[test]
+    fn open_refusals_can_use_raw_metadata_but_failed_recovery_stays_failed() {
+        for recovered in [true, false] {
+            let mut snapshot = Snapshot {
+                capture_status: "Failed".into(),
+                ..Default::default()
+            };
+            let error =
+                anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                    .context(MetadataOpenFailed)
+                    .context("capturing source metadata");
+            capture_failed(&mut snapshot, false, &error, |record| {
+                if recovered {
+                    record.attributes = Some(0x20);
+                }
+                recovered
+            });
+            if recovered {
+                assert_eq!(snapshot.capture_status, "RawBasic");
+                assert!(snapshot.notes.starts_with(RAW_OPEN_REFUSED_NOTE));
+                assert!(snapshot.problems.is_empty());
+            } else {
+                assert_eq!(snapshot.capture_status, "Failed");
+                assert!(snapshot.problems.starts_with("Capture:"));
+                assert!(snapshot.notes.is_empty());
+            }
+        }
+    }
+
     #[test]
     fn stream_names_cannot_create_paths_or_collide_with_default_data() {
         let plain = output_relative("C", Path::new("Windows/file.bin"), None).unwrap();
