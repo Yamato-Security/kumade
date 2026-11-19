@@ -13,7 +13,8 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use ewf_image::{
-    Image, SequentialOptions, SequentialWriter, VerifyOptions, WriteCompression, WriteFormat,
+    Image, OpenOptions, OpenStrictness, SequentialOptions, SequentialWriter, VerifyOptions,
+    WriteCompression, WriteFormat,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -257,7 +258,12 @@ fn write_with_segments(
         if !options.quiet {
             ui::status("Verifying E01 container hashes…");
         }
-        let image = Image::open(&staged)?;
+        // Fresh output must be well formed; recovery-mode tolerance is for
+        // damaged input evidence, not a newly generated container.
+        let image = Image::open_with_options(
+            &staged,
+            OpenOptions::default().with_strictness(OpenStrictness::Strict),
+        )?;
         let verify_bar = ui::progress_bar(size, options.quiet || options.verbose);
         let verification = image.verify_with_progress(
             &VerifyOptions::default()
@@ -472,7 +478,11 @@ mod tests {
         assert_eq!(report.segments.len(), 3);
         assert_eq!(report.media_sha256, model::sha256(&raw));
         assert_eq!(fs::read(&path).unwrap()[..8], *b"EVF\x09\x0d\x0a\xff\0");
-        let image = Image::open(&path).unwrap();
+        let image = Image::open_with_options(
+            &path,
+            OpenOptions::default().with_strictness(OpenStrictness::Strict),
+        )
+        .unwrap();
         assert_eq!(image.media_size(), raw.len() as u64);
         let mut restored = Vec::new();
         image.cursor().read_to_end(&mut restored).unwrap();
