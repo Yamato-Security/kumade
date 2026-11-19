@@ -25,7 +25,12 @@ use std::{
 use windows_sys::Wdk::Storage::FileSystem::{NtQueryEaFile, NtSetEaFile};
 use windows_sys::Win32::{
     Foundation::*,
-    Security::{Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW, *},
+    Security::{
+        Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SE_FILE_OBJECT,
+        },
+        *,
+    },
     Storage::FileSystem::*,
     System::{
         IO::{DeviceIoControl, IO_STATUS_BLOCK},
@@ -152,40 +157,102 @@ fn basic(file: &File) -> Result<FILE_BASIC_INFO> {
 }
 
 fn descriptor(file: &File) -> Result<Vec<u8>> {
-    let mut length = 0;
-    // SAFETY: size-only query; length is writable and no buffer is supplied.
-    unsafe {
-        GetKernelObjectSecurity(
+    let mut descriptor = ptr::null_mut();
+    // SAFETY: live file handle; only the descriptor output is requested. Windows
+    // allocates a complete self-relative descriptor for backup/restore.
+    let code = unsafe {
+        GetSecurityInfo(
             file.as_raw_handle(),
-            SECURITY,
+            SE_FILE_OBJECT,
+            BACKUP_SECURITY_INFORMATION,
             ptr::null_mut(),
-            0,
-            &mut length,
-        );
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    ensure!(
+        code == 0,
+        "Cannot read complete file security: {}",
+        std::io::Error::from_raw_os_error(code as i32)
+    );
+    // SAFETY: successful API returned a valid security descriptor.
+    let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
+    let result = if (20..=1024 * 1024).contains(&length) {
+        // SAFETY: descriptor points to the API allocation of the stated length.
+        Ok(unsafe { std::slice::from_raw_parts(descriptor.cast(), length) }.to_vec())
+    } else {
+        Err(anyhow::anyhow!("Invalid security descriptor length"))
+    };
+    // SAFETY: GetSecurityInfo allocated the descriptor with LocalAlloc.
+    unsafe {
+        LocalFree(descriptor);
     }
-    ensure!(
-        (20..=1024 * 1024).contains(&length),
-        "Cannot size security descriptor: {}",
-        std::io::Error::last_os_error()
-    );
-    let mut buffer = vec![0_u32; (length as usize).div_ceil(4)];
-    // SAFETY: DWORD-aligned initialized allocation is at least length bytes long.
-    ensure!(
-        // SAFETY: DWORD-aligned initialized allocation is at least length bytes long.
-        unsafe {
-            GetKernelObjectSecurity(
+    result
+}
+
+fn restore_security(file: &File, data: &[u8]) -> Result<()> {
+    let _validated = aligned_descriptor(data)?;
+    // BackupWrite preserves the original auto-inheritance flags and absent
+    // SACL state; ordinary security-setting APIs normalize these properties.
+    let mut frame = Vec::with_capacity(20 + data.len());
+    frame.extend_from_slice(&3u32.to_le_bytes()); // BACKUP_SECURITY_DATA
+    frame.extend_from_slice(&0u32.to_le_bytes());
+    frame.extend_from_slice(&(data.len() as u64).to_le_bytes());
+    frame.extend_from_slice(&0u32.to_le_bytes()); // no stream name
+    frame.extend_from_slice(data);
+    let mut context = ptr::null_mut();
+    let result = (|| -> Result<()> {
+        let mut at = 0;
+        while at < frame.len() {
+            let mut written = 0;
+            // SAFETY: synchronous destination with security/restore access;
+            // frame contains a validated bounded security backup stream.
+            ensure!(
+                // SAFETY: complete bounded security frame and live synchronous destination/context.
+                unsafe {
+                    BackupWrite(
+                        file.as_raw_handle(),
+                        frame[at..].as_ptr(),
+                        (frame.len() - at) as u32,
+                        &mut written,
+                        0,
+                        1,
+                        &mut context,
+                    )
+                } != 0,
+                "BackupWrite security: {}",
+                std::io::Error::last_os_error()
+            );
+            ensure!(
+                written > 0 && written as usize <= frame.len() - at,
+                "Invalid BackupWrite byte count"
+            );
+            at += written as usize;
+        }
+        Ok(())
+    })();
+    let mut released = true;
+    if !context.is_null() {
+        let mut written = 0;
+        // SAFETY: abort releases only the BackupWrite-owned context after the
+        // complete stream has been processed (or after a handled write error).
+        released = unsafe {
+            BackupWrite(
                 file.as_raw_handle(),
-                SECURITY,
-                buffer.as_mut_ptr().cast(),
-                length,
-                &mut length,
+                ptr::null(),
+                0,
+                &mut written,
+                1,
+                1,
+                &mut context,
             )
-        } != 0,
-        "Cannot read owner/group/DACL/SACL: {}",
-        std::io::Error::last_os_error()
-    );
-    // SAFETY: API wrote length bytes into an initialized buffer of sufficient size.
-    Ok(unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast(), length as usize) }.to_vec())
+        } != 0;
+    }
+    result?;
+    ensure!(released, "Cannot release security restoration context");
+    Ok(())
 }
 
 fn aligned_descriptor(data: &[u8]) -> Result<Vec<u32>> {
@@ -226,9 +293,9 @@ fn sddl(data: &[u8]) -> Result<String> {
         "Cannot format security descriptor"
     );
     // SAFETY: successful API allocated a terminated UTF-16 string of length characters.
-    let result = String::from_utf16(unsafe {
-        std::slice::from_raw_parts(text, length.saturating_sub(1) as usize)
-    });
+    let chars = unsafe { std::slice::from_raw_parts(text, length as usize) };
+    let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
+    let result = String::from_utf16(&chars[..end]);
     // SAFETY: Windows allocated the string with LocalAlloc and it is no longer used.
     unsafe {
         LocalFree(text.cast());
@@ -304,6 +371,22 @@ fn normalize_ea(bytes: &[u8]) -> Result<EaEntries> {
     Ok(result)
 }
 
+pub fn file_identity(file: &File) -> Result<String> {
+    let mut identity = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: live source handle and correctly sized file information output.
+    ensure!(
+        // SAFETY: live source handle and correctly sized file information output.
+        unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut identity) } != 0,
+        "Cannot capture source file identity: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(format!(
+        "win:{:08x}:{:016x}",
+        identity.dwVolumeSerialNumber,
+        (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow)
+    ))
+}
+
 pub fn capture(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
     let file = open_metadata(path, false)?;
     let info = basic(&file)?;
@@ -312,15 +395,7 @@ pub fn capture(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
     snapshot.write_filetime = Some(info.LastWriteTime);
     snapshot.change_filetime = Some(info.ChangeTime);
     snapshot.attributes = Some(info.FileAttributes);
-    let mut identity = BY_HANDLE_FILE_INFORMATION::default();
-    // SAFETY: handle is live and the output structure is writable.
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut identity) } != 0 {
-        snapshot.source_file_id = Some(format!(
-            "{:08x}:{:016x}",
-            identity.dwVolumeSerialNumber,
-            (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow)
-        ));
-    }
+    snapshot.source_file_id = Some(file_identity(&file)?);
     let mut errors = Vec::new();
     match descriptor(&file) {
         Ok(data) => {
@@ -410,31 +485,8 @@ pub fn restore(path: &Path, snapshot: &Snapshot) -> Result<()> {
     }
     if let Some(data) = &snapshot.security_descriptor_hex {
         let data = unhex(data)?;
-        let aligned = aligned_descriptor(&data)?;
-        let control = u16::from_le_bytes([data[2], data[3]]);
-        let dacl = if control & SE_DACL_PROTECTED != 0 {
-            PROTECTED_DACL_SECURITY_INFORMATION
-        } else {
-            UNPROTECTED_DACL_SECURITY_INFORMATION
-        };
-        let sacl = if control & SE_SACL_PROTECTED != 0 {
-            PROTECTED_SACL_SECURITY_INFORMATION
-        } else {
-            UNPROTECTED_SACL_SECURITY_INFORMATION
-        };
-        // SAFETY: validated aligned descriptor and destination handle with restore/security rights.
-        if unsafe {
-            SetKernelObjectSecurity(
-                file.as_raw_handle(),
-                SECURITY | dacl | sacl,
-                aligned.as_ptr().cast_mut().cast(),
-            )
-        } == 0
-        {
-            errors.push(format!(
-                "Owner/group/DACL/SACL restoration: {}",
-                std::io::Error::last_os_error()
-            ));
+        if let Err(error) = restore_security(&file, &data) {
+            errors.push(format!("Owner/group/DACL/SACL restoration: {error:#}"));
         } else {
             match descriptor(&file).and_then(|sd| sddl(&sd)) {
                 Ok(actual) => {
@@ -448,6 +500,14 @@ pub fn restore(path: &Path, snapshot: &Snapshot) -> Result<()> {
     } else {
         errors.push("Security descriptor was not captured".into());
     }
+    ensure!(errors.is_empty(), "{}", errors.join("; "));
+    Ok(())
+}
+
+pub fn restore_times(path: &Path, snapshot: &Snapshot) -> Result<()> {
+    let file = open_metadata(path, true)?;
+    let original = snapshot.attributes.context("Missing original attributes")?;
+    let mut errors = Vec::new();
     let mut info = FILE_BASIC_INFO {
         CreationTime: snapshot
             .creation_filetime

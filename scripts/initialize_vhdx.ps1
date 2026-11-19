@@ -1,3 +1,5 @@
+# Copyright (C) 2026 Shirofune Security Co., Ltd.
+# SPDX-License-Identifier: RPL-1.5
 # Called only after Kumade has exclusively created and attached a new image.
 # Values are passed through the child environment, never interpolated as code.
 $ErrorActionPreference = 'Stop'

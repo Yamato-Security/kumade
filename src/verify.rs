@@ -146,7 +146,10 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         let mut errors = 0u64;
         for line in inventory.lines() {
             let row: metadata::Snapshot = serde_json::from_str(&line?)?;
-            if matches!(row.restore_status.as_str(), "Partial" | "CaptureFailed") {
+            if matches!(
+                row.restore_status.as_str(),
+                "Partial" | "CaptureFailed" | "SourceChanged"
+            ) {
                 errors += 1;
             }
         }

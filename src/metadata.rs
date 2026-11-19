@@ -26,7 +26,7 @@ use std::{
 #[path = "metadata_windows.rs"]
 mod windows;
 #[cfg(windows)]
-pub use windows::{augment_streams, enable_privileges};
+pub use windows::{augment_streams, enable_privileges, file_identity};
 
 pub const FILES: [&str; 2] = ["NTFS-Metadata.jsonl", "NTFS-Metadata.csv"];
 
@@ -162,6 +162,24 @@ pub fn prepare(plan: &Plan) -> Vec<Snapshot> {
         .collect()
 }
 
+fn same_identity(captured: Option<&str>, acquired: Option<&str>) -> bool {
+    let (Some(captured), Some(acquired)) = (captured, acquired) else {
+        return false;
+    };
+    if captured == acquired {
+        return true;
+    }
+    if acquired.starts_with("ntfs:")
+        && let Some(index) = captured
+            .strip_prefix("win:")
+            .and_then(|s| s.split_once(':'))
+            .and_then(|(_, i)| u64::from_str_radix(i, 16).ok())
+    {
+        return acquired == format!("ntfs:{}:{}", index & 0x0000_ffff_ffff_ffff, index >> 48);
+    }
+    false
+}
+
 pub fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> usize {
     let available: BTreeSet<_> = records
         .iter()
@@ -169,24 +187,46 @@ pub fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> u
         .filter_map(|r| r.relative_output_path.as_deref())
         .map(|p| p.split_once(':').map_or(p, |(p, _)| p).to_owned())
         .collect();
-    // File metadata first, then directories deepest first; no subsequent writes
-    // take place under restored source directories.
+    // Restore directory properties top-down, then file properties. This keeps
+    // parent inheritance changes ahead of each child's final security state.
     snapshots.sort_by_key(|s| {
         (
-            s.directory,
-            std::cmp::Reverse(Path::new(&s.relative_output_path).components().count()),
+            !s.directory,
+            Path::new(&s.relative_output_path).components().count(),
         )
     });
-    let mut errors = 0;
-    for snapshot in snapshots {
+    for snapshot in snapshots.iter_mut() {
         if !snapshot.directory && !available.contains(&snapshot.relative_output_path) {
             snapshot.restore_status = "PayloadUnavailable".into();
             continue;
         }
         if snapshot.capture_status == "Failed" {
             snapshot.restore_status = "CaptureFailed".into();
-            errors += 1;
             continue;
+        }
+        if !snapshot.directory {
+            let matching: Vec<_> = records
+                .iter()
+                .filter(|r| r.verified)
+                .filter(|r| {
+                    r.relative_output_path.as_deref().is_some_and(|p| {
+                        p.split_once(':').map_or(p, |(base, _)| base)
+                            == snapshot.relative_output_path
+                    })
+                })
+                .collect();
+            if matching.iter().any(|r| {
+                !same_identity(
+                    snapshot.source_file_id.as_deref(),
+                    r.source_file_id.as_deref(),
+                )
+            }) {
+                snapshot.restore_status = "SourceChanged".into();
+                snapshot
+                    .problems
+                    .push_str("Captured metadata does not identify the acquired file generation");
+                continue;
+            }
         }
         let result = paths::safe_join(root, &snapshot.relative_output_path).and_then(|path| {
             #[cfg(windows)]
@@ -204,11 +244,39 @@ pub fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> u
             Err(error) => {
                 snapshot.restore_status = "Partial".into();
                 snapshot.problems.push_str(&format!("Restore: {error:#}"));
-                errors += 1;
             }
         }
     }
-    errors
+    // After every property/security operation, restore basic timestamps deepest
+    // first. Parent security propagation can no longer rewrite a child's times.
+    snapshots.sort_by_key(|s| {
+        std::cmp::Reverse(Path::new(&s.relative_output_path).components().count())
+    });
+    for snapshot in snapshots
+        .iter_mut()
+        .filter(|s| matches!(s.restore_status.as_str(), "Restored" | "Partial"))
+    {
+        #[cfg(windows)]
+        let result = paths::safe_join(root, &snapshot.relative_output_path)
+            .and_then(|path| windows::restore_times(&path, snapshot));
+        #[cfg(not(windows))]
+        let result: Result<()> = Err(anyhow::anyhow!("Native NTFS restoration requires Windows"));
+        if let Err(error) = result {
+            snapshot.restore_status = "Partial".into();
+            snapshot
+                .problems
+                .push_str(&format!(" Basic metadata: {error:#}"));
+        }
+    }
+    snapshots
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.restore_status.as_str(),
+                "Partial" | "CaptureFailed" | "SourceChanged"
+            )
+        })
+        .count()
 }
 
 pub fn write_inventory(root: &Path, snapshots: &[Snapshot]) -> Result<()> {
@@ -275,6 +343,23 @@ mod tests {
         assert!(path.starts_with("Evidence/Live/C/Windows"));
         assert!(!path.to_string_lossy().contains("LongPaths"));
         assert!(output_relative("C", Path::new(&"x".repeat(256)), None).is_err());
+    }
+
+    #[test]
+    fn metadata_cannot_be_assigned_to_another_file_generation() {
+        assert!(same_identity(
+            Some("win:12345678:000a000000001234"),
+            Some("ntfs:4660:10")
+        ));
+        assert!(!same_identity(
+            Some("win:12345678:000a000000001234"),
+            Some("ntfs:4660:11")
+        ));
+        assert!(!same_identity(
+            Some("win:12345678:000a000000001234"),
+            Some("win:87654321:000a000000001234")
+        ));
+        assert!(!same_identity(None, Some("ntfs:4660:10")));
     }
 
     #[test]

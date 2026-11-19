@@ -127,6 +127,23 @@ impl Write for Transfer<'_> {
     }
 }
 
+fn source_fingerprint(file: &File, native_ntfs: bool) -> Result<Fingerprint> {
+    let value = fingerprint(&file.metadata()?);
+    #[cfg(windows)]
+    {
+        let mut value = value;
+        if native_ntfs {
+            value.identity = Some(metadata::file_identity(file)?);
+        }
+        Ok(value)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = native_ntfs;
+        Ok(value)
+    }
+}
+
 pub fn acquire_one(
     root: &Path,
     source: &Source,
@@ -232,10 +249,10 @@ fn acquire_one_inner(
             match platform::open_source(&native_path) {
                 Ok(mut input) => {
                     platform::validate_open_file(&input, &source.root)?;
-                    let before = fingerprint(&input.metadata()?);
+                    let before = source_fingerprint(&input, native_ntfs)?;
                     let limit = before.size.checked_add(1).context("Source size overflow")?;
                     io::copy(&mut Read::by_ref(&mut input).take(limit), &mut transfer)?;
-                    let after = fingerprint(&input.metadata()?);
+                    let after = source_fingerprint(&input, native_ntfs)?;
                     ensure!(
                         transfer.bytes == before.size,
                         "Source changed size or ended early during acquisition"
