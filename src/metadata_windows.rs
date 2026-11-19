@@ -34,7 +34,9 @@ use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{
         IO::{DeviceIoControl, IO_STATUS_BLOCK},
-        Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE},
+        Ioctl::{
+            FSCTL_QUERY_USN_JOURNAL, FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE, USN_JOURNAL_DATA_V0,
+        },
         SystemServices::{
             ACCESS_FILTER_SECURITY_INFORMATION, ACCESS_SYSTEM_SECURITY,
             PROCESS_TRUST_LABEL_SECURITY_INFORMATION,
@@ -43,15 +45,19 @@ use windows_sys::Win32::{
     },
 };
 
-const SECURITY: u32 = OWNER_SECURITY_INFORMATION
+/// Security information understood by every supported Windows 10 build.
+const SECURITY_BASE: u32 = OWNER_SECURITY_INFORMATION
     | GROUP_SECURITY_INFORMATION
     | DACL_SECURITY_INFORMATION
     | SACL_SECURITY_INFORMATION
     | LABEL_SECURITY_INFORMATION
     | ATTRIBUTE_SECURITY_INFORMATION
     | SCOPE_SECURITY_INFORMATION
-    | PROCESS_TRUST_LABEL_SECURITY_INFORMATION as u32
-    | ACCESS_FILTER_SECURITY_INFORMATION as u32;
+    | PROCESS_TRUST_LABEL_SECURITY_INFORMATION as u32;
+/// Access-filter ACEs were added in Windows 10 1703. Capture and readback use
+/// the same mask, falling back when a kernel rejects the newer flag.
+const SECURITY: u32 = SECURITY_BASE | ACCESS_FILTER_SECURITY_INFORMATION as u32;
+const SECURITY_MASKS: [u32; 2] = [SECURITY, SECURITY_BASE];
 
 pub fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
@@ -163,40 +169,55 @@ fn basic(file: &File) -> Result<FILE_BASIC_INFO> {
     Ok(info)
 }
 
-fn descriptor(file: &File) -> Result<Vec<u8>> {
-    let mut descriptor = ptr::null_mut();
-    // SAFETY: live file handle; only the descriptor output is requested. Windows
-    // allocates a complete self-relative descriptor for backup/restore.
-    let code = unsafe {
-        GetSecurityInfo(
-            file.as_raw_handle(),
-            SE_FILE_OBJECT,
-            SECURITY,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &mut descriptor,
-        )
-    };
-    ensure!(
-        code == 0,
+/// The complete self-relative descriptor and the information mask it was read with.
+fn descriptor(file: &File) -> Result<(Vec<u8>, u32)> {
+    let mut code = 0;
+    for mask in SECURITY_MASKS {
+        let mut descriptor = ptr::null_mut();
+        // SAFETY: live file handle; only the descriptor output is requested. Windows
+        // allocates a complete self-relative descriptor for backup/restore.
+        code = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                mask,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if code == ERROR_INVALID_PARAMETER && mask != SECURITY_BASE {
+            // An older kernel rejects a flag it does not know; retry without it.
+            continue;
+        }
+        ensure!(
+            code == 0,
+            "Cannot read complete file security: {}",
+            std::io::Error::from_raw_os_error(code as i32)
+        );
+        // SAFETY: successful API returned a valid security descriptor.
+        let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
+        let result = if (20..=1024 * 1024).contains(&length) {
+            // SAFETY: descriptor points to the API allocation of the stated length.
+            Ok((
+                unsafe { std::slice::from_raw_parts(descriptor.cast(), length) }.to_vec(),
+                mask,
+            ))
+        } else {
+            Err(anyhow::anyhow!("Invalid security descriptor length"))
+        };
+        // SAFETY: GetSecurityInfo allocated the descriptor with LocalAlloc.
+        unsafe {
+            LocalFree(descriptor);
+        }
+        return result;
+    }
+    anyhow::bail!(
         "Cannot read complete file security: {}",
         std::io::Error::from_raw_os_error(code as i32)
-    );
-    // SAFETY: successful API returned a valid security descriptor.
-    let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
-    let result = if (20..=1024 * 1024).contains(&length) {
-        // SAFETY: descriptor points to the API allocation of the stated length.
-        Ok(unsafe { std::slice::from_raw_parts(descriptor.cast(), length) }.to_vec())
-    } else {
-        Err(anyhow::anyhow!("Invalid security descriptor length"))
-    };
-    // SAFETY: GetSecurityInfo allocated the descriptor with LocalAlloc.
-    unsafe {
-        LocalFree(descriptor);
-    }
-    result
+    )
 }
 
 fn restore_security(file: &File, data: &[u8]) -> Result<()> {
@@ -281,24 +302,27 @@ fn aligned_descriptor(data: &[u8]) -> Result<Vec<u32>> {
     Ok(aligned)
 }
 
-fn sddl(data: &[u8]) -> Result<String> {
+fn sddl(data: &[u8], mask: u32) -> Result<String> {
     let aligned = aligned_descriptor(data)?;
     let mut text = ptr::null_mut();
     let mut length = 0;
-    // SAFETY: descriptor is aligned/validated and output string/length are writable.
-    ensure!(
+    let mut converted = false;
+    for mask in [mask, SECURITY_BASE] {
         // SAFETY: descriptor is aligned/validated and output string/length are writable.
-        unsafe {
+        converted = unsafe {
             ConvertSecurityDescriptorToStringSecurityDescriptorW(
                 aligned.as_ptr().cast_mut().cast(),
                 1,
-                SECURITY,
+                mask,
                 &mut text,
                 &mut length,
             )
-        } != 0,
-        "Cannot format security descriptor"
-    );
+        } != 0;
+        if converted || mask == SECURITY_BASE {
+            break;
+        }
+    }
+    ensure!(converted, "Cannot format security descriptor");
     // SAFETY: successful API allocated a terminated UTF-16 string of length characters.
     let chars = unsafe { std::slice::from_raw_parts(text, length as usize) };
     let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
@@ -378,9 +402,9 @@ pub fn capture(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
     snapshot.source_file_id = Some(file_identity(&file)?);
     let mut errors = Vec::new();
     match descriptor(&file) {
-        Ok(data) => {
+        Ok((data, mask)) => {
             snapshot.security_descriptor_hex = Some(hex(&data));
-            match sddl(&data) {
+            match sddl(&data, mask) {
                 Ok(text) => snapshot.sddl = Some(text),
                 Err(e) => errors.push(e.to_string()),
             }
@@ -490,7 +514,7 @@ pub fn restore(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
         if let Err(error) = restore_security(&file, &data) {
             errors.push(format!("Owner/group/DACL/SACL restoration: {error:#}"));
         } else {
-            match descriptor(&file).and_then(|sd| sddl(&sd)) {
+            match descriptor(&file).and_then(|(sd, mask)| sddl(&sd, mask)) {
                 Ok(actual) => match sddl_equivalent(&captured_sddl, &actual) {
                     Some(text) => {
                         if !text.is_empty() {
@@ -577,6 +601,30 @@ pub fn restore_times(path: &Path, snapshot: &Snapshot) -> Result<()> {
     }
     ensure!(errors.is_empty(), "{}", errors.join("; "));
     Ok(())
+}
+
+/// Bytes of live USN journal data, `NextUsn - FirstUsn`. NTFS keeps `$J`
+/// allocated beyond the written records, so this bounds what a sparse-aware
+/// copy of the stream will store.
+pub fn usn_journal_live_bytes(device: &Path) -> Option<u64> {
+    let volume = crate::platform::open_source(device).ok()?;
+    let mut data = USN_JOURNAL_DATA_V0::default();
+    let mut returned = 0;
+    // SAFETY: read handle to the volume device and an output buffer of exactly
+    // USN_JOURNAL_DATA_V0 size; no input buffer.
+    let ok = unsafe {
+        DeviceIoControl(
+            volume.as_raw_handle(),
+            FSCTL_QUERY_USN_JOURNAL,
+            ptr::null(),
+            0,
+            (&mut data as *mut USN_JOURNAL_DATA_V0).cast(),
+            size_of::<USN_JOURNAL_DATA_V0>() as u32,
+            &mut returned,
+            ptr::null_mut(),
+        )
+    } != 0;
+    (ok && data.NextUsn >= data.FirstUsn).then(|| (data.NextUsn - data.FirstUsn) as u64)
 }
 
 pub fn augment_streams(plan: &mut Plan) -> Result<()> {

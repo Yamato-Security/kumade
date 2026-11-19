@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Default acquisition workers to the available logical CPU count, show help
+- Default acquisition workers to the available logical CPU count (at most 128), show help
   when no arguments are supplied, and add `-v, --verbose` to list each source
   file/stream being copied instead of displaying a progress bar.
 - Keep permission-sensitive ACE order and absent/empty ACL distinctions in

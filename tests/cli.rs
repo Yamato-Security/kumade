@@ -118,6 +118,7 @@ fn verbose_and_quiet_conflict_and_zero_workers_are_rejected() {
         vec!["-v", "-q"],
         vec!["collect", "--verbose", "--quiet"],
         vec!["collect", "-T", "0"],
+        vec!["collect", "-T", "129"],
     ] {
         assert_eq!(run(&args).status.code(), Some(2), "{args:?}");
     }

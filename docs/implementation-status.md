@@ -23,8 +23,8 @@ Windows. The new dynamic NTFS image holds the acquisition directly. Available
 source metadata is inventoried and restored, with explicit partial results for
 losses. See [VHDX output](vhdx-output.md) for dependencies and fidelity limits.
 
-Acquisition uses the available logical CPU count by default; `-T, --threads`
-sets the maximum worker count. Workers are limited to the number of planned
+Acquisition uses the available logical CPU count by default, capped at 128;
+`-T, --threads` sets the maximum worker count within that limit. Workers are limited to the number of planned
 files when there are fewer files than CPUs. `-v, --verbose` prints each source
 file/stream being copied in full, one line per attempt, instead of displaying
 the progress bar. Parallel copies can appear in any order; their final outcome

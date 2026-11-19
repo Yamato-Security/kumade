@@ -26,7 +26,7 @@ use std::{
 #[path = "metadata_windows.rs"]
 mod windows;
 #[cfg(windows)]
-pub use windows::{augment_streams, enable_privileges, file_identity};
+pub use windows::{augment_streams, enable_privileges, file_identity, usn_journal_live_bytes};
 
 pub const FILES: [&str; 2] = ["NTFS-Metadata.jsonl", "NTFS-Metadata.csv"];
 
@@ -237,12 +237,25 @@ fn raw_capture(
     true
 }
 
+/// The USN journal's `$J` stream: NTFS keeps it allocated well beyond the
+/// written records, so its allocated size overstates what a sparse-aware copy
+/// stores.
+pub fn is_usn_journal(relative: &Path, stream: Option<&str>) -> bool {
+    relative
+        .to_string_lossy()
+        .replace('\\', "/")
+        .eq_ignore_ascii_case("$Extend/$UsnJrnl")
+        && stream.is_some_and(|s| s.eq_ignore_ascii_case("$J"))
+}
+
 /// Sizes of raw-only plan items, read from the raw NTFS provider so that a
 /// container can be sized before it is created. Returns the bytes that are now
-/// known (allocated size for sparse streams, which are copied sparsely; zero
-/// for legitimately absent objects) and the number of items that stay unknown.
+/// known (allocated size for sparse streams, which are copied sparsely, bounded
+/// by the live journal range for `$UsnJrnl:$J`; zero for legitimately absent
+/// objects) and the number of items that stay unknown.
 pub fn raw_candidate_sizes(plan: &Plan) -> (u64, u64) {
     let mut volumes = RawVolumes::new();
+    let mut journals = HashMap::<PathBuf, Option<u64>>::new();
     let (mut known, mut unknown) = (0u64, 0u64);
     for item in plan.files.iter().filter(|f| f.before.is_none()) {
         let size = plan
@@ -256,7 +269,25 @@ pub fn raw_candidate_sizes(plan: &Plan) -> (u64, u64) {
                     .or_insert_with(|| RawVolume::open(device).ok())
                     .as_mut()?;
                 match volume.stat(&item.relative_path, item.stream.as_deref()) {
-                    Ok(stat) if stat.attributes & 0x200 != 0 => Some(stat.allocated),
+                    Ok(stat) if stat.attributes & 0x200 != 0 => {
+                        let mut bytes = stat.allocated;
+                        if is_usn_journal(&item.relative_path, item.stream.as_deref()) {
+                            let live = journals.entry(device.to_owned()).or_insert_with(|| {
+                                #[cfg(windows)]
+                                {
+                                    usn_journal_live_bytes(device)
+                                }
+                                #[cfg(not(windows))]
+                                {
+                                    None
+                                }
+                            });
+                            if let Some(live) = *live {
+                                bytes = bytes.min(live);
+                            }
+                        }
+                        Some(bytes)
+                    }
                     Ok(stat) => Some(stat.size.max(stat.allocated)),
                     Err(error) if crate::raw::is_missing(&error) => Some(0),
                     Err(_) => None,
@@ -682,6 +713,15 @@ mod tests {
         assert!(path.starts_with("Evidence/Live/C/Windows"));
         assert!(!path.to_string_lossy().contains("LongPaths"));
         assert!(output_relative("C", Path::new(&"x".repeat(256)), None).is_err());
+    }
+
+    #[test]
+    fn the_usn_journal_data_stream_is_recognized_case_insensitively() {
+        assert!(is_usn_journal(Path::new("$Extend/$UsnJrnl"), Some("$J")));
+        assert!(is_usn_journal(Path::new("$extend\\$usnjrnl"), Some("$j")));
+        assert!(!is_usn_journal(Path::new("$Extend/$UsnJrnl"), Some("$Max")));
+        assert!(!is_usn_journal(Path::new("$Extend/$UsnJrnl"), None));
+        assert!(!is_usn_journal(Path::new("$MFT"), Some("$J")));
     }
 
     #[test]

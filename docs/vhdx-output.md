@@ -29,9 +29,12 @@ source: creating the image changes that volume, as any local collection does.
 `DestinationOnLiveSource`, alongside the inner evidence destination.
 
 Automatic virtual capacity includes known file sizes, the sizes of raw-only NTFS
-metafiles read from the raw provider before the image exists (allocated size for
-sparse streams such as `$UsnJrnl:$J`), NTFS/metadata headroom, the container
-reserve described below, and 1 GiB for every stream whose size is still unknown.
+metafiles read from the raw provider before the image exists, NTFS/metadata
+headroom, the container reserve described below, and 1 GiB for every stream
+whose size is still unknown. Sparse streams count their allocated clusters;
+for `$UsnJrnl:$J`, which NTFS keeps allocated far beyond the written records,
+the estimate is bounded by the live journal range (`NextUsn - FirstUsn` from
+`FSCTL_QUERY_USN_JOURNAL`), because the sparse-aware copy stores only that.
 `--vhdx-size-gib` overrides it (1–65536 GiB) and must fit the known evidence
 estimate plus the reserve. Virtual capacity is a ceiling, not an up-front
 allocation. Unknown sizes can exceed an estimate; choose a larger capacity when
@@ -67,6 +70,9 @@ attempts to restore:
 - Owner, primary group, DACL, SACL and protection state. SID values are preserved
   without substituting accounts from the analyst's machine. Reading auditing data
   and restoring owners/ACLs requires backup, restore and security privileges.
+  Access-filter ACE information (Windows 10 1703 and later) is included when the
+  kernel supports it; an older kernel that rejects the flag is read with the
+  base information mask.
 - Supported file attributes, including compression/sparse state, and extended
   attributes with their original names, flags and byte values.
 - Named `$DATA` streams discovered on selected files, including their exact bytes.

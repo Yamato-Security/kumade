@@ -69,6 +69,12 @@ After the fixes:
 The branch's `scripts/test_vhdx.ps1` round trip passed on the same system with
 the fixed tree.
 
+Tested Windows versions for the container path: Windows Server 2025 (live and
+CI), Windows Server 2022 (CI) and Windows 11 ARM64. Windows 10 builds before
+1703 and Windows Server 2016 have not been exercised; the security capture falls
+back to the information mask those kernels understand, but the fallback itself
+is untested.
+
 The following sections retain the initial release validation for context.
 
 ## Automated checks

@@ -85,7 +85,7 @@ struct CollectionArgs {
     /// Additional local profile root under a selected source
     #[arg(long = "profile-root", value_name = "DIR")]
     profile_roots: Vec<PathBuf>,
-    /// Maximum acquisition workers (default: available logical CPUs)
+    /// Maximum acquisition workers (default: available logical CPUs, at most 128)
     #[arg(short = 'T', long, default_value_t = default_threads())]
     threads: usize,
     /// Keep this much destination space free (MiB)
@@ -102,8 +102,14 @@ struct CollectionArgs {
     verbose: bool,
 }
 
+/// One worker per logical CPU, capped: more workers than that only multiply
+/// open raw-volume handles and I/O contention on an evidence disk.
+pub const MAX_THREADS: usize = 128;
+
 fn default_threads() -> usize {
-    std::thread::available_parallelism().map_or(1, usize::from)
+    std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(MAX_THREADS)
 }
 
 fn rules(path: Option<&Path>) -> Result<Rules> {
@@ -280,9 +286,8 @@ fn run() -> Result<u8> {
         ui::status("Discovering artifacts…");
     }
     ensure!(
-        options.threads > 0 && options.threads <= rayon::max_num_threads(),
-        "--threads must be between 1 and {}",
-        rayon::max_num_threads()
+        options.threads > 0 && options.threads <= MAX_THREADS,
+        "--threads must be between 1 and {MAX_THREADS}"
     );
     let rules = rules(options.catalog.as_deref())?;
     let discovered = sources(&options)?;
@@ -393,7 +398,7 @@ mod tests {
     fn default_workers_follow_available_cpus_and_explicit_workers_override_them() {
         let cli = Cli::try_parse_from(["kumade", "-o", "results"]).unwrap();
         assert_eq!(cli.options.threads, default_threads());
-        assert!(cli.options.threads > 0);
+        assert!(cli.options.threads > 0 && cli.options.threads <= MAX_THREADS);
         let cli = Cli::try_parse_from(["kumade", "collect", "-T", "2"]).unwrap();
         let Some(Command::Collect(options)) = cli.command else {
             panic!("expected collect");

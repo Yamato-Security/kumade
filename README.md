@@ -39,8 +39,8 @@ Windows examples below.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
-- Acquisition defaults to one worker per available logical CPU; `-T, --threads`
-  overrides it. `-v, --verbose` lists each file/stream being copied instead of
+- Acquisition defaults to one worker per available logical CPU (at most 128);
+  `-T, --threads` overrides it within that limit. `-v, --verbose` lists each file/stream being copied instead of
   displaying a progress bar. Running without arguments displays help.
 
 ## Run locally

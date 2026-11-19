@@ -451,9 +451,8 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         paths::relative_text(&f.relative_path)?;
     }
     ensure!(
-        options.threads > 0 && options.threads <= rayon::max_num_threads(),
-        "Threads must be in 1..={}",
-        rayon::max_num_threads()
+        options.threads > 0 && options.threads <= 128,
+        "Threads must be in 1..=128"
     );
     let parent = paths::resolve_future(parent)?;
     for source in &plan.sources {
