@@ -35,8 +35,11 @@ whose size is still unknown. Sparse streams count their allocated clusters;
 for `$UsnJrnl:$J`, which NTFS keeps allocated far beyond the written records,
 the estimate is bounded by the live journal range (`NextUsn - FirstUsn` from
 `FSCTL_QUERY_USN_JOURNAL`), because the sparse-aware copy stores only that.
-`--vhdx-size-gib` overrides it (1–65536 GiB) and must fit the known evidence
-estimate plus the reserve. Virtual capacity is a ceiling, not an up-front
+The capacity is also at least the largest stream's logical size plus headroom:
+the sparse copy keeps `$J` at its logical size, and The Sleuth Kit rejects an
+NTFS run longer than the volume, so a smaller container would hold a journal
+that Autopsy cannot read. `--vhdx-size-gib` overrides it (1–65536 GiB) and must
+fit the known evidence estimate, the largest stream and the reserve. Virtual capacity is a ceiling, not an up-front
 allocation. Unknown sizes can exceed an estimate; choose a larger capacity when
 collecting large paging files or other unknown-size artifacts.
 

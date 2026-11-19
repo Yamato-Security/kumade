@@ -27,6 +27,10 @@ of the original machine's whole disk or its unallocated space**. Collected
 files, native NTFS named streams, manifests, metadata inventories and the seal
 are inside it. Windows creates new MFT records and filesystem history here.
 
+The disk is sized as for VHDX output, including the rule that it holds the largest
+sparse stream at its logical size, so The Sleuth Kit and Autopsy can read a
+collected USN journal.
+
 The [VHDX preservation limits](vhdx-output.md) apply: available basic timestamps,
 permissions, auditing, attributes and supported extended attributes are restored
 and checked. Unsupported or unavailable metadata is recorded explicitly.
@@ -91,7 +95,8 @@ Preflight reserves room for staging, estimated output and compression scratch.
 Writes also check host free space. Live growth, unknown sizes and unexpectedly
 poor compression can still exhaust an estimate. On success, owned staging is
 removed. On acquisition, conversion or publication failure it is retained,
-with its location in the error. No existing E01 family or receipt is overwritten,
+with its location in the error; a run refused before anything was staged, such
+as by the capacity check, leaves no directory behind. No existing E01 family or receipt is overwritten,
 including symlinks. Each published file uses an OS no-overwrite commit.
 
 Publication of a set is not a single atomic filesystem operation. Failure can

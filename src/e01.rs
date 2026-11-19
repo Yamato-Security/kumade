@@ -225,10 +225,12 @@ fn write_with_segments(
             .write
             .metadata
             .set_header_value("acquiry_software", "Kumade");
-        settings
-            .write
-            .metadata
-            .set_header_value("acquiry_software_version", env!("CARGO_PKG_VERSION"));
+        // EWF1 headers carry only a version field; name the tool in it so that
+        // libewf and EnCase show who wrote the container.
+        settings.write.metadata.set_header_value(
+            "acquiry_software_version",
+            concat!("Kumade ", env!("CARGO_PKG_VERSION")),
+        );
         settings.write.metadata.set_header_value(
             "description",
             "Logical triage collection in a newly created NTFS disk; not a source-disk image",
@@ -320,13 +322,15 @@ fn write_with_segments(
     })();
     bar.finish_and_clear();
     if result.is_err() {
-        let retained = work.keep();
-        return result.with_context(|| {
-            format!(
-                "E01 encoding/publication failed; owned staging retained at {}",
-                retained.display()
-            )
-        });
+        return match retain(work) {
+            Some(retained) => result.with_context(|| {
+                format!(
+                    "E01 encoding/publication failed; owned staging retained at {}",
+                    retained.display()
+                )
+            }),
+            None => result.context("E01 encoding/publication failed"),
+        };
     }
     work.close()
         .context("Verified E01 saved, but encoding scratch cleanup failed")?;
@@ -368,7 +372,7 @@ pub fn collect(
             // Leave space for both the NTFS stage and compressed output. The
             // result can be less compressible than anticipated; writes still
             // enforce the physical reserve throughout encoding.
-            let (raw_known, _) = crate::metadata::raw_candidate_sizes(plan);
+            let raw_known = crate::metadata::raw_candidate_sizes(plan).known;
             let output_headroom = plan
                 .known_bytes
                 .checked_add(raw_known)
@@ -418,16 +422,29 @@ pub fn collect(
                 }
                 Ok(summary)
             }
-            Err(error) => {
-                let retained = work.keep();
-                Err(error).with_context(|| {
+            Err(error) => match retain(work) {
+                Some(retained) => Err(error).with_context(|| {
                     format!(
                         "E01 collection failed; NTFS staging retained at {}",
                         retained.display()
                     )
-                })
-            }
+                }),
+                None => Err(error).context("E01 collection failed"),
+            },
         }
+    }
+}
+
+/// Keep a scratch directory that holds anything (partial segments, a staged
+/// disk) for inspection; a run refused before it wrote anything, such as a
+/// capacity check, leaves no empty protected directory behind.
+fn retain(work: tempfile::TempDir) -> Option<PathBuf> {
+    let path = work.keep();
+    let empty = fs::read_dir(&path).is_ok_and(|mut entries| entries.next().is_none());
+    if empty && fs::remove_dir(&path).is_ok() {
+        None
+    } else {
+        Some(path)
     }
 }
 
@@ -561,6 +578,26 @@ mod tests {
             assert!(validate_new_image_path(Path::new(name)).is_err());
         }
         assert!(segment_path(Path::new("case.E01"), MAX_SEGMENTS + 1).is_err());
+    }
+
+    #[test]
+    fn only_scratch_that_holds_something_is_retained() {
+        let root = tempfile::tempdir().unwrap();
+        let empty = tempfile::Builder::new()
+            .prefix(".kumade-e01-ntfs-")
+            .tempdir_in(root.path())
+            .unwrap();
+        let empty_path = empty.path().to_owned();
+        assert_eq!(retain(empty), None);
+        assert!(!empty_path.exists());
+        let used = tempfile::Builder::new()
+            .prefix(".kumade-e01-encode-")
+            .tempdir_in(root.path())
+            .unwrap();
+        fs::write(used.path().join("case.E01"), b"partial").unwrap();
+        let used_path = used.path().to_owned();
+        assert_eq!(retain(used), Some(used_path.clone()));
+        assert!(used_path.join("case.E01").exists());
     }
 
     #[cfg(unix)]

@@ -34,6 +34,11 @@ pub const FILES: [&str; 2] = ["NTFS-Metadata.jsonl", "NTFS-Metadata.csv"];
 pub const RAW_BASIC_NOTE: &str = "NTFS system file: Windows does not expose it to file APIs; \
     basic times, attributes and the file reference were read from the raw $STANDARD_INFORMATION, \
     and no security descriptor or extended attributes are captured";
+/// A file Windows refuses to open even for its metadata (an in-use `pagefile.sys`
+/// or `hiberfil.sys`): the raw reader is the only source of its basic information.
+pub const RAW_OPEN_REFUSED_NOTE: &str = "Windows refused to open the file for metadata; \
+    basic times, attributes and the file reference were read from the raw $STANDARD_INFORMATION, \
+    and no security descriptor or extended attributes are captured";
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -181,15 +186,21 @@ pub(crate) fn prepare(plan: &Plan) -> Vec<Snapshot> {
             match windows::capture(&target.source, &mut record) {
                 Ok(()) => record.capture_status = "Captured".into(),
                 Err(error) => {
-                    // NTFS system files cannot be opened by name; the raw reader
-                    // is the authoritative source of their basic information.
-                    let raw = target.raw_only
-                        && target.device.as_deref().is_some_and(|device| {
-                            raw_capture(&mut volumes, device, &relative, &mut record)
-                        });
+                    // NTFS system files cannot be opened by name, and a file the
+                    // system holds exclusively (pagefile.sys, hiberfil.sys) refuses
+                    // even a metadata open while its payload is still read raw; the
+                    // raw reader is the authoritative source of their basic
+                    // information.
+                    let raw = target.device.as_deref().is_some_and(|device| {
+                        raw_capture(&mut volumes, device, &relative, &mut record)
+                    });
                     if raw {
                         record.capture_status = "RawBasic".into();
-                        record.notes = RAW_BASIC_NOTE.into();
+                        record.notes = if target.raw_only {
+                            RAW_BASIC_NOTE.into()
+                        } else {
+                            format!("{RAW_OPEN_REFUSED_NOTE}: {error:#}")
+                        };
                     } else {
                         if record.attributes.is_some() {
                             record.capture_status = "Partial".into();
@@ -248,15 +259,28 @@ pub fn is_usn_journal(relative: &Path, stream: Option<&str>) -> bool {
         && stream.is_some_and(|s| s.eq_ignore_ascii_case("$J"))
 }
 
+/// What the raw NTFS provider knows about the raw-only plan items before the
+/// container exists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RawSizes {
+    /// Bytes now known: the allocated size of sparse streams, which are copied
+    /// sparsely, bounded by the live journal range for `$UsnJrnl:$J`; zero for
+    /// legitimately absent objects.
+    pub known: u64,
+    /// Items whose size stays unknown.
+    pub unknown: u64,
+    /// The largest logical stream size. A sparse copy keeps that size, and an
+    /// NTFS reader such as The Sleuth Kit rejects a run longer than the volume,
+    /// so the container must be at least this large to stay readable.
+    pub largest_stream: u64,
+}
+
 /// Sizes of raw-only plan items, read from the raw NTFS provider so that a
-/// container can be sized before it is created. Returns the bytes that are now
-/// known (allocated size for sparse streams, which are copied sparsely, bounded
-/// by the live journal range for `$UsnJrnl:$J`; zero for legitimately absent
-/// objects) and the number of items that stay unknown.
-pub fn raw_candidate_sizes(plan: &Plan) -> (u64, u64) {
+/// container can be sized before it is created.
+pub fn raw_candidate_sizes(plan: &Plan) -> RawSizes {
     let mut volumes = RawVolumes::new();
     let mut journals = HashMap::<PathBuf, Option<u64>>::new();
-    let (mut known, mut unknown) = (0u64, 0u64);
+    let mut sizes = RawSizes::default();
     for item in plan.files.iter().filter(|f| f.before.is_none()) {
         let size = plan
             .sources
@@ -270,6 +294,7 @@ pub fn raw_candidate_sizes(plan: &Plan) -> (u64, u64) {
                     .as_mut()?;
                 match volume.stat(&item.relative_path, item.stream.as_deref()) {
                     Ok(stat) if stat.attributes & 0x200 != 0 => {
+                        sizes.largest_stream = sizes.largest_stream.max(stat.size);
                         let mut bytes = stat.allocated;
                         if is_usn_journal(&item.relative_path, item.stream.as_deref()) {
                             let live = journals.entry(device.to_owned()).or_insert_with(|| {
@@ -288,17 +313,20 @@ pub fn raw_candidate_sizes(plan: &Plan) -> (u64, u64) {
                         }
                         Some(bytes)
                     }
-                    Ok(stat) => Some(stat.size.max(stat.allocated)),
+                    Ok(stat) => {
+                        sizes.largest_stream = sizes.largest_stream.max(stat.size);
+                        Some(stat.size.max(stat.allocated))
+                    }
                     Err(error) if crate::raw::is_missing(&error) => Some(0),
                     Err(_) => None,
                 }
             });
         match size {
-            Some(bytes) => known = known.saturating_add(bytes),
-            None => unknown += 1,
+            Some(bytes) => sizes.known = sizes.known.saturating_add(bytes),
+            None => sizes.unknown += 1,
         }
     }
-    (known, unknown)
+    sizes
 }
 
 fn same_identity(captured: Option<&str>, acquired: Option<&str>) -> bool {
