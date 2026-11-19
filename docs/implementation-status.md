@@ -1,6 +1,6 @@
 # Kumade implementation status
 
-Updated 18 November 2026. The architecture document is the target design;
+Updated 19 November 2026. The architecture document is the target design;
 this file distinguishes it from the code actually implemented.
 
 The first increment uses one Rust package with separate library modules for
@@ -16,6 +16,11 @@ verification. Splitting the stable modules into workspace crates remains possibl
 | `list` | List embedded or explicitly supplied acquisition definitions |
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
 | `verify` | Verify sealed metadata, observation accounting and every referenced payload |
+
+`collect` also accepts `--vhdx FILE` and optional `--vhdx-size-gib GIB` on
+Windows. The new dynamic NTFS image holds the acquisition directly. Available
+source metadata is inventoried and restored, with explicit partial results for
+losses. See [VHDX output](vhdx-output.md) for dependencies and fidelity limits.
 
 No other proposed commands are exposed as working functionality.
 

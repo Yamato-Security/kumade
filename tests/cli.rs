@@ -146,3 +146,25 @@ fn version_remains_a_single_machine_readable_line() {
         concat!("kumade ", env!("CARGO_PKG_VERSION"))
     );
 }
+
+#[test]
+fn vhdx_options_reject_ambiguous_destinations_and_invalid_capacity() {
+    for args in [
+        vec!["--vhdx", "evidence.vhdx", "-o", "output"],
+        vec!["--vhdx-size-gib", "1"],
+        vec!["--vhdx", "evidence.vhdx", "--vhdx-size-gib", "0"],
+        vec!["--vhdx", "evidence.vhdx", "--vhdx-size-gib", "65537"],
+        vec!["plan", "--vhdx", "evidence.vhdx"],
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn vhdx_is_explicitly_unsupported_on_other_platforms() {
+    let output = run(&["--vhdx", "evidence.vhdx"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("VHDX creation requires Windows"));
+}

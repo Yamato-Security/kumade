@@ -59,6 +59,8 @@ fn options() -> Options {
         threads: 4,
         reserve_bytes: 0,
         quiet: true,
+        ntfs_metadata: false,
+        host_reserve: None,
     }
 }
 fn read_records(root: &Path) -> Vec<Record> {

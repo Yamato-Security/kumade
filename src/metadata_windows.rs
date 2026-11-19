@@ -1,0 +1,651 @@
+// Copyright (C) 2026 Shirofune Security Co., Ltd.
+// SPDX-License-Identifier: RPL-1.5
+//
+// Unless explicitly acquired and licensed from Licensor under another license, the contents of this
+// file are subject to the Reciprocal Public License ("RPL") Version 1.5, or subsequent versions as
+// allowed by the RPL, and You may not copy or use this file in either source code or executable
+// form, except in compliance with the terms and conditions of the RPL.
+//
+// All software distributed under the RPL is provided strictly on an "AS IS" basis, WITHOUT WARRANTY
+// OF ANY KIND, EITHER EXPRESS OR IMPLIED, AND LICENSOR HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+// INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+// PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
+// and limitations under the RPL.
+
+use super::{Snapshot, unhex};
+use crate::model::*;
+use anyhow::{Context, Result, ensure};
+use std::{
+    collections::BTreeSet,
+    fs::{File, OpenOptions},
+    os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
+    path::Path,
+    ptr,
+};
+use windows_sys::Wdk::Storage::FileSystem::{NtQueryEaFile, NtSetEaFile};
+use windows_sys::Win32::{
+    Foundation::*,
+    Security::{Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW, *},
+    Storage::FileSystem::*,
+    System::{
+        IO::{DeviceIoControl, IO_STATUS_BLOCK},
+        Ioctl::{FSCTL_SET_COMPRESSION, FSCTL_SET_SPARSE},
+        SystemServices::ACCESS_SYSTEM_SECURITY,
+        Threading::{GetCurrentProcess, OpenProcessToken},
+    },
+};
+
+const SECURITY: u32 = OWNER_SECURITY_INFORMATION
+    | GROUP_SECURITY_INFORMATION
+    | DACL_SECURITY_INFORMATION
+    | SACL_SECURITY_INFORMATION
+    | LABEL_SECURITY_INFORMATION;
+
+pub fn wide(path: &Path) -> Vec<u16> {
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
+
+pub fn enable_privileges() -> Result<()> {
+    let mut token = ptr::null_mut();
+    // SAFETY: current process is valid and token is a writable handle output.
+    ensure!(
+        // SAFETY: current process is valid and token is a writable handle output.
+        unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                &mut token,
+            )
+        } != 0,
+        "Cannot open process token: {}",
+        std::io::Error::last_os_error()
+    );
+    let result = (|| {
+        for name in [
+            "SeBackupPrivilege",
+            "SeRestorePrivilege",
+            "SeSecurityPrivilege",
+            "SeManageVolumePrivilege",
+        ] {
+            let name_wide: Vec<_> = name.encode_utf16().chain(Some(0)).collect();
+            let mut luid = LUID::default();
+            // SAFETY: the name is terminated and luid is a writable output.
+            ensure!(
+                // SAFETY: the name is terminated and luid is a writable output.
+                unsafe { LookupPrivilegeValueW(ptr::null(), name_wide.as_ptr(), &mut luid) } != 0,
+                "Cannot resolve {name}"
+            );
+            let state = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: SE_PRIVILEGE_ENABLED,
+                }],
+            };
+            // SAFETY: token and one-entry TOKEN_PRIVILEGES are valid; clear the documented last-error result before adjusting.
+            unsafe {
+                SetLastError(0);
+            }
+            // SAFETY: valid token and input state; previous state is not requested.
+            let ok = unsafe {
+                AdjustTokenPrivileges(token, 0, &state, 0, ptr::null_mut(), ptr::null_mut())
+            };
+            // SAFETY: thread-local last-error query immediately follows the API.
+            let error = unsafe { GetLastError() };
+            ensure!(
+                ok != 0 && error != ERROR_NOT_ALL_ASSIGNED,
+                "VHDX metadata preservation requires {name}; run elevated as an administrator (Windows error {error})"
+            );
+        }
+        Ok(())
+    })();
+    // SAFETY: this function owns the successful OpenProcessToken handle.
+    unsafe {
+        CloseHandle(token);
+    }
+    result
+}
+
+fn open_metadata(path: &Path, write: bool) -> Result<File> {
+    let access = if write {
+        GENERIC_READ
+            | GENERIC_WRITE
+            | FILE_READ_ATTRIBUTES
+            | FILE_WRITE_ATTRIBUTES
+            | FILE_READ_EA
+            | FILE_WRITE_EA
+            | READ_CONTROL
+            | WRITE_DAC
+            | WRITE_OWNER
+            | ACCESS_SYSTEM_SECURITY
+    } else {
+        FILE_READ_ATTRIBUTES | FILE_READ_EA | READ_CONTROL | ACCESS_SYSTEM_SECURITY
+    };
+    Ok(OpenOptions::new()
+        .access_mode(access)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?)
+}
+
+fn basic(file: &File) -> Result<FILE_BASIC_INFO> {
+    let mut info = FILE_BASIC_INFO::default();
+    // SAFETY: handle is live and output is exactly FILE_BASIC_INFO-sized.
+    ensure!(
+        // SAFETY: handle is live and output is exactly FILE_BASIC_INFO-sized.
+        unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileBasicInfo,
+                (&mut info as *mut FILE_BASIC_INFO).cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } != 0,
+        "GetFileInformationByHandleEx: {}",
+        std::io::Error::last_os_error()
+    );
+    ensure!(
+        info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0,
+        "Reparse-backed metadata restoration is unsupported"
+    );
+    Ok(info)
+}
+
+fn descriptor(file: &File) -> Result<Vec<u8>> {
+    let mut length = 0;
+    // SAFETY: size-only query; length is writable and no buffer is supplied.
+    unsafe {
+        GetKernelObjectSecurity(
+            file.as_raw_handle(),
+            SECURITY,
+            ptr::null_mut(),
+            0,
+            &mut length,
+        );
+    }
+    ensure!(
+        (20..=1024 * 1024).contains(&length),
+        "Cannot size security descriptor: {}",
+        std::io::Error::last_os_error()
+    );
+    let mut buffer = vec![0_u32; (length as usize).div_ceil(4)];
+    // SAFETY: DWORD-aligned initialized allocation is at least length bytes long.
+    ensure!(
+        // SAFETY: DWORD-aligned initialized allocation is at least length bytes long.
+        unsafe {
+            GetKernelObjectSecurity(
+                file.as_raw_handle(),
+                SECURITY,
+                buffer.as_mut_ptr().cast(),
+                length,
+                &mut length,
+            )
+        } != 0,
+        "Cannot read owner/group/DACL/SACL: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: API wrote length bytes into an initialized buffer of sufficient size.
+    Ok(unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast(), length as usize) }.to_vec())
+}
+
+fn aligned_descriptor(data: &[u8]) -> Result<Vec<u32>> {
+    ensure!(
+        data.len() >= 20 && data.len() <= 1024 * 1024,
+        "Invalid security descriptor size"
+    );
+    let mut aligned = vec![0u32; data.len().div_ceil(4)];
+    // SAFETY: destination allocation has at least data.len() initialized bytes; regions are disjoint.
+    unsafe {
+        ptr::copy_nonoverlapping(data.as_ptr(), aligned.as_mut_ptr().cast::<u8>(), data.len());
+    }
+    // SAFETY: this descriptor was read from Windows and copied into an aligned buffer.
+    ensure!(
+        // SAFETY: this descriptor was read from Windows and copied into an aligned buffer.
+        unsafe { IsValidSecurityDescriptor(aligned.as_ptr().cast_mut().cast()) } != 0,
+        "Invalid security descriptor"
+    );
+    Ok(aligned)
+}
+
+fn sddl(data: &[u8]) -> Result<String> {
+    let aligned = aligned_descriptor(data)?;
+    let mut text = ptr::null_mut();
+    let mut length = 0;
+    // SAFETY: descriptor is aligned/validated and output string/length are writable.
+    ensure!(
+        // SAFETY: descriptor is aligned/validated and output string/length are writable.
+        unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                aligned.as_ptr().cast_mut().cast(),
+                1,
+                SECURITY,
+                &mut text,
+                &mut length,
+            )
+        } != 0,
+        "Cannot format security descriptor"
+    );
+    // SAFETY: successful API allocated a terminated UTF-16 string of length characters.
+    let result = String::from_utf16(unsafe {
+        std::slice::from_raw_parts(text, length.saturating_sub(1) as usize)
+    });
+    // SAFETY: Windows allocated the string with LocalAlloc and it is no longer used.
+    unsafe {
+        LocalFree(text.cast());
+    }
+    Ok(result?)
+}
+
+fn ea(file: &File) -> Result<Vec<u8>> {
+    let mut bytes = vec![0u8; 65536];
+    let mut status = IO_STATUS_BLOCK::default();
+    // SAFETY: synchronous file handle, correctly sized initialized EA buffer and live status output; no name filter.
+    let code = unsafe {
+        NtQueryEaFile(
+            file.as_raw_handle(),
+            &mut status,
+            bytes.as_mut_ptr().cast(),
+            bytes.len() as u32,
+            false,
+            ptr::null(),
+            0,
+            ptr::null(),
+            true,
+        )
+    };
+    if code == STATUS_NO_EAS_ON_FILE {
+        return Ok(Vec::new());
+    }
+    ensure!(
+        code >= 0,
+        "NtQueryEaFile failed: NTSTATUS {:#010x}",
+        code as u32
+    );
+    ensure!(
+        status.Information <= bytes.len(),
+        "Invalid extended attribute length"
+    );
+    bytes.truncate(status.Information);
+    normalize_ea(&bytes)?;
+    Ok(bytes)
+}
+
+type EaEntries = Vec<(Vec<u8>, u8, Vec<u8>)>;
+
+fn normalize_ea(bytes: &[u8]) -> Result<EaEntries> {
+    let mut result = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        ensure!(bytes.len() - at >= 8, "Truncated extended attribute");
+        let next = u32::from_le_bytes(bytes[at..at + 4].try_into()?) as usize;
+        let flags = bytes[at + 4];
+        let name_len = bytes[at + 5] as usize;
+        let value_len = u16::from_le_bytes(bytes[at + 6..at + 8].try_into()?) as usize;
+        let end = at + 8 + name_len + 1 + value_len;
+        ensure!(
+            end <= bytes.len() && bytes[at + 8 + name_len] == 0,
+            "Invalid extended attribute lengths"
+        );
+        result.push((
+            bytes[at + 8..at + 8 + name_len].to_vec(),
+            flags,
+            bytes[at + 8 + name_len + 1..end].to_vec(),
+        ));
+        if next == 0 {
+            break;
+        }
+        ensure!(
+            next >= end - at && next.is_multiple_of(4) && next <= bytes.len() - at,
+            "Invalid extended attribute chain"
+        );
+        at += next;
+    }
+    result.sort();
+    Ok(result)
+}
+
+pub fn capture(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
+    let file = open_metadata(path, false)?;
+    let info = basic(&file)?;
+    snapshot.creation_filetime = Some(info.CreationTime);
+    snapshot.access_filetime = Some(info.LastAccessTime);
+    snapshot.write_filetime = Some(info.LastWriteTime);
+    snapshot.change_filetime = Some(info.ChangeTime);
+    snapshot.attributes = Some(info.FileAttributes);
+    let mut identity = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: handle is live and the output structure is writable.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut identity) } != 0 {
+        snapshot.source_file_id = Some(format!(
+            "{:08x}:{:016x}",
+            identity.dwVolumeSerialNumber,
+            (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow)
+        ));
+    }
+    let mut errors = Vec::new();
+    match descriptor(&file) {
+        Ok(data) => {
+            snapshot.security_descriptor_hex = Some(hex(&data));
+            match sddl(&data) {
+                Ok(text) => snapshot.sddl = Some(text),
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        Err(e) => errors.push(format!("security: {e:#}")),
+    }
+    match ea(&file) {
+        Ok(data) => snapshot.extended_attributes_hex = Some(hex(&data)),
+        Err(e) => errors.push(format!("extended attributes: {e:#}")),
+    }
+    ensure!(errors.is_empty(), "{}", errors.join("; "));
+    Ok(())
+}
+
+pub fn restore(path: &Path, snapshot: &Snapshot) -> Result<()> {
+    let file = open_metadata(path, true)?;
+    let original = snapshot.attributes.context("Missing original attributes")?;
+    let mut errors = Vec::new();
+    // Restore compression/sparse state separately; physical allocation and file
+    // IDs necessarily belong to the newly created destination filesystem.
+    for (flag, code, input) in [
+        (FILE_ATTRIBUTE_SPARSE_FILE, FSCTL_SET_SPARSE, vec![1u8]),
+        (
+            FILE_ATTRIBUTE_COMPRESSED,
+            FSCTL_SET_COMPRESSION,
+            2u16.to_le_bytes().to_vec(),
+        ),
+    ] {
+        if original & flag != 0 {
+            let mut returned = 0;
+            // SAFETY: output handle is owned and input has the documented FSCTL layout.
+            if unsafe {
+                DeviceIoControl(
+                    file.as_raw_handle(),
+                    code,
+                    input.as_ptr().cast(),
+                    input.len() as u32,
+                    ptr::null_mut(),
+                    0,
+                    &mut returned,
+                    ptr::null_mut(),
+                )
+            } == 0
+            {
+                errors.push(format!(
+                    "storage attribute {flag:#x}: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+    }
+    if original & FILE_ATTRIBUTE_ENCRYPTED != 0 {
+        errors.push("Original EFS encryption cannot be reproduced with the source key".into());
+    }
+    if let Some(data) = &snapshot.extended_attributes_hex {
+        let data = unhex(data)?;
+        if !data.is_empty() {
+            let mut status = IO_STATUS_BLOCK::default();
+            // SAFETY: captured and validated complete EA chain, live synchronous destination and status output.
+            let code = unsafe {
+                NtSetEaFile(
+                    file.as_raw_handle(),
+                    &mut status,
+                    data.as_ptr().cast(),
+                    data.len() as u32,
+                )
+            };
+            if code < 0 {
+                errors.push(format!("NtSetEaFile: NTSTATUS {:#010x}", code as u32));
+            }
+        }
+        match ea(&file) {
+            Ok(current) => {
+                if normalize_ea(&current)? != normalize_ea(&data)? {
+                    errors.push("Extended attribute readback differs".into());
+                }
+            }
+            Err(e) => errors.push(e.to_string()),
+        }
+    } else {
+        errors.push("Extended attributes were not captured".into());
+    }
+    if let Some(data) = &snapshot.security_descriptor_hex {
+        let data = unhex(data)?;
+        let aligned = aligned_descriptor(&data)?;
+        let control = u16::from_le_bytes([data[2], data[3]]);
+        let dacl = if control & SE_DACL_PROTECTED != 0 {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        let sacl = if control & SE_SACL_PROTECTED != 0 {
+            PROTECTED_SACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_SACL_SECURITY_INFORMATION
+        };
+        // SAFETY: validated aligned descriptor and destination handle with restore/security rights.
+        if unsafe {
+            SetKernelObjectSecurity(
+                file.as_raw_handle(),
+                SECURITY | dacl | sacl,
+                aligned.as_ptr().cast_mut().cast(),
+            )
+        } == 0
+        {
+            errors.push(format!(
+                "Owner/group/DACL/SACL restoration: {}",
+                std::io::Error::last_os_error()
+            ));
+        } else {
+            match descriptor(&file).and_then(|sd| sddl(&sd)) {
+                Ok(actual) => {
+                    if snapshot.sddl.as_deref() != Some(actual.as_str()) {
+                        errors.push(format!("Security descriptor readback differs: {actual}"));
+                    }
+                }
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+    } else {
+        errors.push("Security descriptor was not captured".into());
+    }
+    let mut info = FILE_BASIC_INFO {
+        CreationTime: snapshot
+            .creation_filetime
+            .context("Missing creation time")?,
+        LastAccessTime: snapshot.access_filetime.context("Missing access time")?,
+        LastWriteTime: snapshot.write_filetime.context("Missing write time")?,
+        ChangeTime: snapshot.change_filetime.context("Missing change time")?,
+        FileAttributes: original
+            & (FILE_ATTRIBUTE_READONLY
+                | FILE_ATTRIBUTE_HIDDEN
+                | FILE_ATTRIBUTE_SYSTEM
+                | FILE_ATTRIBUTE_ARCHIVE
+                | FILE_ATTRIBUTE_TEMPORARY
+                | FILE_ATTRIBUTE_OFFLINE
+                | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED),
+    };
+    if info.FileAttributes == 0 {
+        info.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+    }
+    // SAFETY: valid writable destination handle and a full FILE_BASIC_INFO input.
+    if unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&mut info as *mut FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    } == 0
+    {
+        errors.push(format!(
+            "NTFS basic times/attributes: {}",
+            std::io::Error::last_os_error()
+        ));
+    } else {
+        match basic(&file) {
+            Ok(actual) => {
+                if [
+                    actual.CreationTime,
+                    actual.LastAccessTime,
+                    actual.LastWriteTime,
+                    actual.ChangeTime,
+                ] != [
+                    info.CreationTime,
+                    info.LastAccessTime,
+                    info.LastWriteTime,
+                    info.ChangeTime,
+                ] {
+                    errors.push("NTFS basic timestamp readback differs (including an unset/unsupported timestamp)".into());
+                }
+                // NORMAL is a sentinel, not a persistent flag alongside other attributes.
+                if (actual.FileAttributes & !FILE_ATTRIBUTE_NORMAL)
+                    != (original & !FILE_ATTRIBUTE_NORMAL)
+                {
+                    errors.push(format!(
+                        "Attribute readback differs: source {original:#x}, destination {:#x}",
+                        actual.FileAttributes
+                    ));
+                }
+            }
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    ensure!(errors.is_empty(), "{}", errors.join("; "));
+    Ok(())
+}
+
+pub fn augment_streams(plan: &mut Plan) -> Result<()> {
+    let mut known: BTreeSet<_> = plan
+        .files
+        .iter()
+        .filter_map(|f| {
+            f.stream.as_ref().map(|stream| {
+                (
+                    f.source_id.clone(),
+                    f.relative_path.clone(),
+                    stream.to_ascii_lowercase(),
+                )
+            })
+        })
+        .collect();
+    let mut additions = Vec::new();
+    for file in &plan.files {
+        if file.stream.is_some() {
+            continue;
+        }
+        let path = wide(&file.source_path);
+        let mut data = WIN32_FIND_STREAM_DATA::default();
+        // SAFETY: terminated source path and correctly sized writable stream output.
+        let find = unsafe {
+            FindFirstStreamW(
+                path.as_ptr(),
+                FindStreamInfoStandard,
+                (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(),
+                0,
+            )
+        };
+        if find == INVALID_HANDLE_VALUE {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(ERROR_HANDLE_EOF as i32) {
+                plan.issues.push(Issue {
+                    source_id: file.source_id.clone(),
+                    path: file.source_path.display().to_string(),
+                    status: "Failed".into(),
+                    reason: format!("Alternate data streams could not be inventoried: {error}"),
+                });
+            }
+            continue;
+        }
+        let result = (|| -> Result<()> {
+            loop {
+                let end = data
+                    .cStreamName
+                    .iter()
+                    .position(|&c| c == 0)
+                    .context("Unterminated NTFS stream name")?;
+                let name = String::from_utf16(&data.cStreamName[..end])?;
+                if name != "::$DATA" {
+                    let stream = name
+                        .strip_prefix(':')
+                        .and_then(|n| n.strip_suffix(":$DATA"))
+                        .context("Unsupported NTFS stream type")?;
+                    ensure!(
+                        !stream.is_empty() && data.StreamSize >= 0,
+                        "Invalid NTFS stream metadata"
+                    );
+                    if known.insert((
+                        file.source_id.clone(),
+                        file.relative_path.clone(),
+                        stream.to_ascii_lowercase(),
+                    )) {
+                        let mut item = file.clone();
+                        item.id = uuid::Uuid::new_v4().to_string();
+                        item.stream = Some(stream.into());
+                        let size = data.StreamSize as u64;
+                        item.before = Some(Fingerprint {
+                            size,
+                            ..file.before.clone().unwrap_or_default()
+                        });
+                        plan.known_bytes = plan
+                            .known_bytes
+                            .checked_add(size)
+                            .context("Stream size overflow")?;
+                        for coverage in plan.coverage.iter_mut().filter(|c| {
+                            c.source_id == item.source_id && item.artifacts.contains(&c.artifact_id)
+                        }) {
+                            coverage.discovered += 1;
+                        }
+                        additions.push(item);
+                    }
+                }
+                // SAFETY: live enumeration handle and full writable stream output.
+                if unsafe {
+                    FindNextStreamW(find, (&mut data as *mut WIN32_FIND_STREAM_DATA).cast())
+                } == 0
+                {
+                    let error = std::io::Error::last_os_error();
+                    ensure!(
+                        error.raw_os_error() == Some(ERROR_HANDLE_EOF as i32),
+                        "Stream enumeration failed: {error}"
+                    );
+                    break;
+                }
+            }
+            Ok(())
+        })();
+        // SAFETY: this function owns the successful FindFirstStreamW search handle.
+        unsafe {
+            FindClose(find);
+        }
+        if let Err(error) = result {
+            plan.issues.push(Issue {
+                source_id: file.source_id.clone(),
+                path: file.source_path.display().to_string(),
+                status: "Failed".into(),
+                reason: format!("Stream inventory incomplete: {error:#}"),
+            });
+        }
+    }
+    plan.files.extend(additions);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn extended_attribute_chain_validates_lengths_offsets_and_values() {
+        let ea = [0, 0, 0, 0, 0, 1, 2, 0, b'A', 0, b'x', b'y'];
+        assert_eq!(
+            normalize_ea(&ea).unwrap(),
+            vec![(vec![b'A'], 0, vec![b'x', b'y'])]
+        );
+        for bad in [
+            &ea[..7],
+            &ea[..11],
+            &[4, 0, 0, 0, 0, 1, 2, 0, b'A', 0, b'x', b'y'][..],
+        ] {
+            assert!(normalize_ea(bad).is_err());
+        }
+    }
+}

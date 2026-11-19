@@ -19,7 +19,7 @@ use kumade::{
     collect::{self, Options},
     discovery,
     model::{Source, SourceDiscovery},
-    paths, platform, ui, verify,
+    paths, platform, ui, verify, vhdx,
 };
 use std::{
     collections::HashSet,
@@ -67,6 +67,12 @@ struct CollectionArgs {
     /// Output parent directory; plan writes Plan.json here
     #[arg(short, long, value_name = "DIR")]
     output: Option<PathBuf>,
+    /// Save evidence in a new NTFS VHDX container (Windows, administrator)
+    #[arg(long, value_name = "FILE", conflicts_with = "output")]
+    vhdx: Option<PathBuf>,
+    /// Virtual capacity in GiB (default: automatic, dynamically allocated)
+    #[arg(long, value_name = "GIB", requires = "vhdx", value_parser = clap::value_parser!(u64).range(1..=65536))]
+    vhdx_size_gib: Option<u64>,
     /// Computer name for offline evidence
     #[arg(long)]
     computer: Option<String>,
@@ -237,6 +243,14 @@ fn run() -> Result<u8> {
         Some(Command::Collect(options)) => (options, false),
         None => (cli.options, false),
     };
+    ensure!(
+        !plan_only || options.vhdx.is_none(),
+        "plan does not create containers; use -o DIR for a plan"
+    );
+    ensure!(
+        options.vhdx.is_none() || cfg!(windows),
+        "VHDX creation requires Windows"
+    );
     if !options.quiet {
         ui::banner();
         ui::field("Start time", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"));
@@ -251,12 +265,16 @@ fn run() -> Result<u8> {
     let rules = rules(options.catalog.as_deref())?;
     let discovered = sources(&options)?;
     let sources = discovered.sources;
-    let output = options.output.clone().unwrap_or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("Kumade-Results")))
-            .unwrap_or_else(|| PathBuf::from("Kumade-Results"))
-    });
+    let output = options
+        .vhdx
+        .clone()
+        .or_else(|| options.output.clone())
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.join("Kumade-Results")))
+                .unwrap_or_else(|| PathBuf::from("Kumade-Results"))
+        });
     let output = paths::resolve_future(&output)?;
     for source in &sources {
         ensure!(
@@ -281,6 +299,11 @@ fn run() -> Result<u8> {
         }
     }
     plan.issues.extend(discovered.issues);
+    #[cfg(windows)]
+    if options.vhdx.is_some() {
+        kumade::metadata::enable_privileges()?;
+        kumade::metadata::augment_streams(&mut plan)?;
+    }
     if !options.quiet {
         ui::field("Sources", ui::count(plan.sources.len() as u64));
         ui::field("Artifacts", ui::count(rules.catalog.artifacts.len() as u64));
@@ -309,15 +332,18 @@ fn run() -> Result<u8> {
         .reserve_mib
         .checked_mul(1024 * 1024)
         .context("Reserve value overflow")?;
-    let (_, summary) = collect::collect(
-        &plan,
-        &output,
-        &Options {
-            threads: options.threads,
-            reserve_bytes,
-            quiet: options.quiet,
-        },
-    )?;
+    let collect_options = Options {
+        threads: options.threads,
+        reserve_bytes,
+        quiet: options.quiet,
+        ntfs_metadata: false,
+        host_reserve: None,
+    };
+    let summary = if options.vhdx.is_some() {
+        vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)?
+    } else {
+        collect::collect(&plan, &output, &collect_options)?.1
+    };
     Ok(if summary.completeness == "Partial" {
         3
     } else {

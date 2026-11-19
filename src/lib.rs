@@ -16,9 +16,11 @@
 pub mod catalog;
 pub mod collect;
 pub mod discovery;
+pub mod metadata;
 pub mod model;
 pub mod paths;
 pub mod platform;
 pub mod raw;
 pub mod ui;
 pub mod verify;
+pub mod vhdx;

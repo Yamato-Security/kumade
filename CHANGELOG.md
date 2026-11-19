@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add opt-in `--vhdx FILE` collection into a fresh dynamic NTFS container,
+  with automatic/explicit virtual capacity and physical host-space checks.
+  Preserve file/directory basic timestamps, owner/group, ACLs, attributes,
+  extended attributes and native named streams; seal metadata inventories and
+  report incomplete preservation as partial. See the VHDX guide for limits.
+
 - Add a green Kumade terminal banner, green output labels with white values,
   and a Hayabusa/Juntei-style progress bar with a green spinner, file counters,
   percentage and a filename/size line. Keep redirected output uncolored.

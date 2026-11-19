@@ -1,0 +1,520 @@
+// Copyright (C) 2026 Shirofune Security Co., Ltd.
+// SPDX-License-Identifier: RPL-1.5
+//
+// Unless explicitly acquired and licensed from Licensor under another license, the contents of this
+// file are subject to the Reciprocal Public License ("RPL") Version 1.5, or subsequent versions as
+// allowed by the RPL, and You may not copy or use this file in either source code or executable
+// form, except in compliance with the terms and conditions of the RPL.
+//
+// All software distributed under the RPL is provided strictly on an "AS IS" basis, WITHOUT WARRANTY
+// OF ANY KIND, EITHER EXPRESS OR IMPLIED, AND LICENSOR HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+// INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+// PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
+// and limitations under the RPL.
+
+//! Optional Windows-native NTFS evidence container. No full host-side staging.
+use crate::{
+    collect::Options,
+    model::{Plan, Summary},
+};
+use anyhow::{Context, Result, ensure};
+use std::path::Path;
+
+const GIB: u64 = 1024 * 1024 * 1024;
+const MIB: u64 = 1024 * 1024;
+const MAX: u64 = 64 * 1024 * GIB;
+pub const INITIALIZE_SCRIPT: &str = include_str!("../scripts/initialize_vhdx.ps1");
+
+pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>) -> Result<u64> {
+    let minimum = known
+        .checked_add(known / 4)
+        .and_then(|v| v.checked_add(512 * MIB))
+        .context("VHDX capacity estimate overflow")?
+        .max(GIB);
+    let capacity = if let Some(gib) = explicit_gib {
+        gib.checked_mul(GIB).context("VHDX capacity overflow")?
+    } else {
+        minimum
+            .checked_add(
+                unknown
+                    .checked_mul(GIB)
+                    .context("Unknown-size capacity overflow")?,
+            )
+            .and_then(|v| v.checked_add(GIB - 1))
+            .context("VHDX capacity overflow")?
+            / GIB
+            * GIB
+    };
+    ensure!(
+        (GIB..=MAX).contains(&capacity),
+        "VHDX capacity must be between 1 and 65536 GiB"
+    );
+    ensure!(
+        capacity >= minimum,
+        "VHDX capacity is smaller than the known evidence plus NTFS/metadata headroom"
+    );
+    Ok(capacity)
+}
+
+pub fn physical_disk_number(path: &str) -> Result<u32> {
+    let text = path
+        .strip_prefix(r"\\.\PhysicalDrive")
+        .context("Unexpected virtual disk device path")?;
+    ensure!(
+        !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()),
+        "Invalid virtual disk device number"
+    );
+    Ok(text.parse()?)
+}
+
+pub fn validate_volume_path(path: &str) -> Result<()> {
+    let guid = path
+        .strip_prefix(r"\\?\Volume{")
+        .and_then(|s| s.strip_suffix("}\\"))
+        .context("Unexpected NTFS volume path")?;
+    uuid::Uuid::parse_str(guid).context("Invalid volume GUID")?;
+    Ok(())
+}
+
+pub fn collect(
+    plan: &Plan,
+    image: &Path,
+    explicit_gib: Option<u64>,
+    options: &Options,
+) -> Result<Summary> {
+    #[cfg(windows)]
+    {
+        windows::collect(plan, image, explicit_gib, options)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (plan, image, explicit_gib, options);
+        anyhow::bail!("VHDX creation requires Windows; use directory output on this platform")
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use crate::{
+        collect::{self, HostReserve},
+        metadata, paths, platform, ui,
+    };
+    use anyhow::bail;
+    use std::{
+        fs::{self, File, OpenOptions},
+        os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
+        path::PathBuf,
+        process::{Command, Stdio},
+        ptr,
+        time::Duration,
+    };
+    use windows_sys::Win32::{
+        Foundation::*,
+        Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        Storage::{FileSystem::*, Vhd::*},
+        System::{IO::DeviceIoControl, Ioctl::*},
+    };
+
+    struct Image {
+        handle: HANDLE,
+        attached: bool,
+        volume: PathBuf,
+        path: PathBuf,
+    }
+    impl Drop for Image {
+        fn drop(&mut self) {
+            // SAFETY: this RAII guard owns only the handle it created. Attachment
+            // has no permanent lifetime, so closing also releases it on errors.
+            unsafe {
+                if self.attached {
+                    let error = DetachVirtualDisk(self.handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0);
+                    if error != 0 {
+                        eprintln!(
+                            "VHDX cleanup: could not detach {} (Windows error {error}); inspect the image before reuse",
+                            self.path.display()
+                        );
+                    }
+                }
+                CloseHandle(self.handle);
+            }
+        }
+    }
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    }
+    fn win(code: u32, action: &str) -> Result<()> {
+        ensure!(
+            code == 0,
+            "{action}: {}",
+            std::io::Error::from_raw_os_error(code as i32)
+        );
+        Ok(())
+    }
+    fn powershell() -> Result<PathBuf> {
+        let windows = std::env::var_os("SystemRoot").context("SystemRoot is unavailable")?;
+        // A 32-bit collector must launch native PowerShell for Storage cmdlets.
+        for prefix in ["Sysnative", "System32"] {
+            let executable = PathBuf::from(&windows)
+                .join(prefix)
+                .join("WindowsPowerShell/v1.0/powershell.exe");
+            if executable.is_file() {
+                return Ok(executable);
+            }
+        }
+        bail!("Windows PowerShell with Storage cmdlets is required to format a new NTFS VHDX")
+    }
+    impl Image {
+        fn create(path: &Path, bytes: u64) -> Result<Self> {
+            ensure!(
+                !path.try_exists()?,
+                "Refusing to overwrite an existing VHDX"
+            );
+            ensure!(
+                path.extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("vhdx")),
+                "--vhdx requires a .vhdx filename"
+            );
+            ensure!(
+                !platform::is_remote_windows_path(&path.display().to_string()),
+                "VHDX output must be on a local volume"
+            );
+            let shell = powershell()?;
+            let storage = VIRTUAL_STORAGE_TYPE {
+                DeviceId: VIRTUAL_STORAGE_TYPE_DEVICE_VHDX,
+                VendorId: VIRTUAL_STORAGE_TYPE_VENDOR_MICROSOFT,
+            };
+            let parameters = CREATE_VIRTUAL_DISK_PARAMETERS {
+                Version: CREATE_VIRTUAL_DISK_VERSION_2,
+                Anonymous: CREATE_VIRTUAL_DISK_PARAMETERS_0 {
+                    Version2: CREATE_VIRTUAL_DISK_PARAMETERS_0_1 {
+                        UniqueId: windows_sys::core::GUID::from_u128(
+                            uuid::Uuid::new_v4().as_u128(),
+                        ),
+                        MaximumSize: bytes,
+                        BlockSizeInBytes: 2 * MIB as u32,
+                        SectorSizeInBytes: 512,
+                        PhysicalSectorSizeInBytes: 4096,
+                        ..Default::default()
+                    },
+                },
+            };
+            let sddl: Vec<_> = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            let mut descriptor = ptr::null_mut();
+            // SAFETY: terminated SDDL and writable LocalAlloc descriptor output.
+            ensure!(
+                // SAFETY: terminated SDDL and writable LocalAlloc descriptor output.
+                unsafe {
+                    ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                        sddl.as_ptr(),
+                        1,
+                        &mut descriptor,
+                        ptr::null_mut(),
+                    )
+                } != 0,
+                "Cannot build private VHDX permissions"
+            );
+            let mut handle = ptr::null_mut();
+            // SAFETY: correctly versioned parameters, terminated absolute new file path, valid descriptor and handle output.
+            let code = unsafe {
+                CreateVirtualDisk(
+                    &storage,
+                    wide(path).as_ptr(),
+                    VIRTUAL_DISK_ACCESS_NONE,
+                    descriptor,
+                    CREATE_VIRTUAL_DISK_FLAG_NONE,
+                    0,
+                    &parameters,
+                    ptr::null(),
+                    &mut handle,
+                )
+            };
+            // SAFETY: CreateVirtualDisk has finished using this API-allocated descriptor.
+            unsafe {
+                LocalFree(descriptor);
+            }
+            win(code, "CreateVirtualDisk")?;
+            let mut image = Self {
+                handle,
+                attached: false,
+                volume: PathBuf::new(),
+                path: path.to_owned(),
+            };
+            let attach = ATTACH_VIRTUAL_DISK_PARAMETERS {
+                Version: ATTACH_VIRTUAL_DISK_VERSION_1,
+                ..Default::default()
+            };
+            // SAFETY: only this newly created virtual disk is attached; no drive letter/permanent lifetime is requested.
+            win(
+                // SAFETY: only this newly created virtual disk is attached; no drive letter/permanent lifetime is requested.
+                unsafe {
+                    AttachVirtualDisk(
+                        handle,
+                        ptr::null_mut(),
+                        ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER,
+                        0,
+                        &attach,
+                        ptr::null(),
+                    )
+                },
+                "AttachVirtualDisk",
+            )?;
+            image.attached = true;
+            let mut buffer = vec![0u16; 512];
+            let mut length = (buffer.len() * 2) as u32;
+            // SAFETY: owned handle and correctly byte-sized UTF-16 output.
+            win(
+                // SAFETY: owned handle and correctly byte-sized UTF-16 output.
+                unsafe { GetVirtualDiskPhysicalPath(handle, &mut length, buffer.as_mut_ptr()) },
+                "GetVirtualDiskPhysicalPath",
+            )?;
+            let end = buffer
+                .iter()
+                .position(|&x| x == 0)
+                .context("Unterminated virtual disk path")?;
+            let number = physical_disk_number(&String::from_utf16(&buffer[..end])?)?;
+            let output = Command::new(shell)
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    INITIALIZE_SCRIPT,
+                ])
+                .env("KUMADE_VHDX_PATH", path)
+                .env("KUMADE_VHDX_DISK_NUMBER", number.to_string())
+                .stdin(Stdio::null())
+                .output()
+                .context("Cannot run Windows Storage initialization")?;
+            ensure!(
+                output.status.success(),
+                "New VHDX initialization failed; the image was retained: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: serde_json::Value =
+                serde_json::from_slice(&output.stdout).context("Invalid Windows Storage result")?;
+            ensure!(
+                result["DiskNumber"].as_u64() == Some(u64::from(number))
+                    && result["FileSystem"] == "NTFS",
+                "Initialized disk identity/filesystem mismatch"
+            );
+            let volume = result["VolumePath"]
+                .as_str()
+                .context("Missing formatted volume path")?;
+            validate_volume_path(volume)?;
+            image.volume = PathBuf::from(volume);
+            let handle = image.volume_handle()?;
+            let mut extents = VOLUME_DISK_EXTENTS::default();
+            let mut returned = 0;
+            // SAFETY: raw volume handle and fixed buffer for exactly one extent; additional extents are rejected by the buffer/error check.
+            ensure!(
+                // SAFETY: raw volume handle and fixed buffer for exactly one extent; additional extents are rejected by the buffer/error check.
+                unsafe {
+                    DeviceIoControl(
+                        handle.as_raw_handle(),
+                        IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                        ptr::null(),
+                        0,
+                        (&mut extents as *mut VOLUME_DISK_EXTENTS).cast(),
+                        size_of::<VOLUME_DISK_EXTENTS>() as u32,
+                        &mut returned,
+                        ptr::null_mut(),
+                    )
+                } != 0,
+                "Cannot validate the new volume's disk extent"
+            );
+            ensure!(
+                extents.NumberOfDiskExtents == 1 && extents.Extents[0].DiskNumber == number,
+                "Formatted volume is not on the created VHDX"
+            );
+            Ok(image)
+        }
+        fn volume_handle(&self) -> Result<File> {
+            let path = self
+                .volume
+                .to_str()
+                .context("Invalid volume path")?
+                .trim_end_matches('\\');
+            Ok(OpenOptions::new()
+                .access_mode(GENERIC_READ | GENERIC_WRITE)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                .open(path)?)
+        }
+        fn finish(mut self) -> Result<()> {
+            let volume = self.volume_handle()?;
+            // SAFETY: owned writable volume handle; every payload/metadata file is closed.
+            ensure!(
+                // SAFETY: owned writable volume handle; every payload/metadata file is closed.
+                unsafe { FlushFileBuffers(volume.as_raw_handle()) } != 0,
+                "Cannot flush evidence volume: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut returned = 0;
+            let mut locked = false;
+            for _ in 0..10 {
+                // SAFETY: volume-control operation on the newly created destination only; no buffers.
+                if unsafe {
+                    DeviceIoControl(
+                        volume.as_raw_handle(),
+                        FSCTL_LOCK_VOLUME,
+                        ptr::null(),
+                        0,
+                        ptr::null_mut(),
+                        0,
+                        &mut returned,
+                        ptr::null_mut(),
+                    )
+                } != 0
+                {
+                    locked = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            ensure!(
+                locked,
+                "Cannot lock destination for clean detach: {}",
+                std::io::Error::last_os_error()
+            );
+            // SAFETY: destination volume was flushed and locked; this dismount never targets a source.
+            ensure!(
+                // SAFETY: destination volume was flushed and locked; this dismount never targets a source.
+                unsafe {
+                    DeviceIoControl(
+                        volume.as_raw_handle(),
+                        FSCTL_DISMOUNT_VOLUME,
+                        ptr::null(),
+                        0,
+                        ptr::null_mut(),
+                        0,
+                        &mut returned,
+                        ptr::null_mut(),
+                    )
+                } != 0,
+                "Cannot dismount evidence volume"
+            );
+            drop(volume);
+            // SAFETY: the owned virtual disk is the destination created by this guard.
+            win(
+                // SAFETY: the owned virtual disk is the destination created by this guard.
+                unsafe { DetachVirtualDisk(self.handle, DETACH_VIRTUAL_DISK_FLAG_NONE, 0) },
+                "DetachVirtualDisk",
+            )?;
+            self.attached = false;
+            Ok(())
+        }
+    }
+    pub(super) fn collect(
+        plan: &Plan,
+        path: &Path,
+        explicit_gib: Option<u64>,
+        options: &Options,
+    ) -> Result<Summary> {
+        metadata::enable_privileges()?;
+        let bytes = capacity(plan.known_bytes, plan.unknown_sizes, explicit_gib)?;
+        let path = paths::resolve_future(path)?;
+        ensure!(
+            !path.try_exists()?,
+            "Refusing to overwrite an existing VHDX"
+        );
+        let parent = path.parent().context("VHDX output has no parent")?;
+        fs::create_dir_all(parent)?;
+        let required = plan
+            .known_bytes
+            .checked_add(512 * MIB)
+            .and_then(|v| v.checked_add(options.reserve_bytes))
+            .context("Host free-space estimate overflow")?;
+        ensure!(
+            fs2::available_space(parent)? >= required,
+            "Insufficient physical host space for known evidence, VHDX overhead and the free-space reserve"
+        );
+        if !options.quiet {
+            ui::field("VHDX container", path.display());
+            ui::field("Virtual capacity", collect::human_bytes(bytes));
+            ui::status("Creating and formatting the new NTFS evidence container…");
+        }
+        let image = Image::create(&path, bytes)?;
+        let inner = Options {
+            threads: options.threads,
+            reserve_bytes: 0,
+            quiet: options.quiet,
+            ntfs_metadata: true,
+            host_reserve: Some(HostReserve {
+                path: parent.to_owned(),
+                bytes: options.reserve_bytes,
+            }),
+        };
+        // The planned sources were frozen before this destination was attached.
+        let result = collect::collect(plan, &image.volume, &inner);
+        let (_, summary) = result.with_context(|| {
+            format!(
+                "Collection failed; partial VHDX retained at {}",
+                path.display()
+            )
+        })?;
+        if !options.quiet {
+            ui::status("Flushing and detaching the evidence container…");
+        }
+        image
+            .finish()
+            .with_context(|| format!("VHDX finalization failed: {}", path.display()))?;
+        if !options.quiet {
+            ui::field(
+                "Results saved",
+                format!(
+                    "{} ( 1 file / {} )",
+                    path.display(),
+                    collect::human_bytes(fs::metadata(&path)?.len())
+                ),
+            );
+        }
+        Ok(summary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn capacity_is_bounded_and_counts_unknown_stream_headroom() {
+        assert_eq!(capacity(0, 0, None).unwrap(), GIB);
+        assert_eq!(capacity(0, 2, None).unwrap(), 3 * GIB);
+        assert!(capacity(0, 0, Some(0)).is_err());
+        assert!(capacity(0, 0, Some(65537)).is_err());
+        assert!(capacity(2 * GIB, 0, Some(1)).is_err());
+        assert!(capacity(u64::MAX, 0, None).is_err());
+        assert!(capacity(0, u64::MAX, None).is_err());
+        assert!(capacity(0, 0, Some(u64::MAX)).is_err());
+    }
+    #[test]
+    fn device_and_volume_identity_validation_rejects_unrelated_paths() {
+        assert_eq!(physical_disk_number(r"\\.\PhysicalDrive12").unwrap(), 12);
+        for path in [
+            r"C:\",
+            r"\\.\PhysicalDrive-1",
+            r"\\.\PhysicalDrive1;format",
+            r"\\.\PhysicalDrive",
+        ] {
+            assert!(physical_disk_number(path).is_err());
+        }
+        validate_volume_path(r"\\?\Volume{12345678-1234-4234-9234-123456789abc}\").unwrap();
+        for path in [
+            r"C:\",
+            r"\\?\Volume{bad}\",
+            r"\\?\Volume{12345678-1234-4234-9234-123456789abc}\evil",
+        ] {
+            assert!(validate_volume_path(path).is_err());
+        }
+    }
+    #[test]
+    fn formatter_uses_created_disk_identity_and_never_assigns_a_letter() {
+        assert!(INITIALIZE_SCRIPT.contains("$disk.Number -ne $number"));
+        assert!(INITIALIZE_SCRIPT.contains("$disk.PartitionStyle -ne 'RAW'"));
+        assert!(INITIALIZE_SCRIPT.contains("$disk.IsBoot -or $disk.IsSystem"));
+        assert!(INITIALIZE_SCRIPT.contains("-AssignDriveLetter:$false"));
+        assert!(INITIALIZE_SCRIPT.contains("$env:KUMADE_VHDX_PATH"));
+    }
+}

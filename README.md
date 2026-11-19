@@ -33,6 +33,8 @@ Windows examples below.
   verifier that rejects modified payloads and unsafe manifest paths.
 - Protected fresh run directories, no overwrite of existing payloads, source/output
   separation for offline evidence, and terminal progress.
+- Optional [NTFS VHDX output](docs/vhdx-output.md) with direct acquisition into
+  a dynamic image, native alternate streams and explicit NTFS metadata preservation.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
@@ -54,6 +56,9 @@ On Windows, run an elevated PowerShell session for live collection:
 
 ```powershell
 .\kumade.exe -o E:\Kumade-Results
+
+# Or save the entire acquisition in one new NTFS VHDX:
+.\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
 ```
 
 Without `--source`, only Windows live mode is accepted. Offline mode never
@@ -66,7 +71,9 @@ Each run creates `Plan.json`, `Run.json`, `Manifest.jsonl`, `Manifest.csv`,
 `Coverage.csv`, `DiscoveryIssues.csv`, `Errors.csv`, `Summary.json` and `Seal.json`.
 Payloads retain recognizable paths beneath `Evidence/Live/<SourceId>/`.
 Windows-incompatible names are reversibly encoded; exact source paths remain
-in the manifest. Very long names use a manifest-mapped hash path.
+in the manifest. Very long names in directory mode use a manifest-mapped hash path.
+For the VHDX layout, metadata fields and fidelity limits, see
+[NTFS VHDX output](docs/vhdx-output.md).
 
 `Verified` means stored-byte hash verification, **not structural validity or an
 atomic snapshot**. Source changes produce a partial result. A seal currently
@@ -76,7 +83,8 @@ uses hashes, not an authenticated signing identity.
 
 RAM capture/paired runtime pagefile discovery, VSS acquisition, external processing,
 image-source CLI support, archive packaging, cloud upload, resume,
-comprehensive ADS discovery and structural artifact validators are pending.
+general directory-mode ADS discovery and structural artifact validators are pending.
+VHDX mode inventories named data streams on selected files.
 
 `--memory` currently records an explicit failed RAM task and returns partial
 status after collecting supported disk artifacts. It never creates a fake dump
