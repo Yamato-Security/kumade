@@ -584,6 +584,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "console",
  "csv",
  "fs2",
  "globset",

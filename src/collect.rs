@@ -17,9 +17,9 @@ use crate::{
     model::*,
     paths, platform,
     raw::RawVolume,
+    ui,
 };
 use anyhow::{Context, Result, bail, ensure};
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::{
@@ -374,8 +374,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     fs::create_dir(&root)?;
     let destination_acl = platform::protect_output_root(&root)?;
     if destination_acl == "FilesystemHasNoPersistentACLs" && !options.quiet {
-        eprintln!(
-            "Notice: destination filesystem cannot enforce per-file access controls; secure the storage separately."
+        ui::field(
+            "Notice",
+            "Destination filesystem cannot enforce per-file access controls; secure the storage separately.",
         );
     }
     write_json_new(&root.join("Plan.json"), plan)?;
@@ -401,17 +402,12 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     }));
     let records = Arc::new(Mutex::new(Vec::new()));
     let journal_errors = Arc::new(Mutex::new(Vec::new()));
-    let progress = if options.quiet {
-        ProgressBar::hidden()
-    } else {
-        ProgressBar::new(plan.files.len() as u64)
-    };
-    progress.set_style(
-        ProgressStyle::with_template(
-            "[{elapsed_precise}] {pos}/{len} {wide_bar:.cyan/blue} {percent}%\n{wide_msg}",
-        )
-        .context("Invalid progress template")?,
-    );
+    if !options.quiet {
+        println!();
+        ui::status("Collecting evidence…");
+        println!();
+    }
+    let progress = ui::progress_bar(plan.files.len() as u64, options.quiet);
     let started = utc_now();
     let timer = Instant::now();
     let sources: HashMap<_, _> = plan.sources.iter().map(|s| (s.id.clone(), s)).collect();
@@ -423,13 +419,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             .par_iter()
             .for_each_init(HashMap::new, |raw_cache, item| {
                 let source = sources[&item.source_id];
-                progress.set_message(format!(
-                    "{} ({})",
-                    clip_label(&item.relative_path.display().to_string(), 120),
-                    item.before
-                        .as_ref()
-                        .map(|m| human_bytes(m.size))
-                        .unwrap_or_else(|| "size unknown".into())
+                progress.set_message(ui::progress_message(
+                    &format!("{}/{}", source.id, item.relative_path.display()),
+                    item.before.as_ref().map(|m| m.size),
                 ));
                 let record = acquire_one(&root, source, item, options.reserve_bytes, raw_cache);
                 match journal.lock() {
@@ -607,18 +599,23 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
                     .context("Output size overflow")?;
             }
         }
-        println!(
-            "Collected: {}\nPartial: {}\nFailed: {}\nDiscovery errors: {}\nResults saved: {}/ ( {} files / {} )\nCompleteness: {}\nElapsed: {:.3}s",
-            summary.collected,
-            summary.partial,
-            summary.failed,
-            summary.discovery_errors,
-            root.display(),
-            file_count,
-            human_bytes(output_bytes),
-            summary.completeness,
-            timer.elapsed().as_secs_f64()
+        println!();
+        ui::heading("Results Summary:");
+        ui::field("Collected", ui::count(summary.collected));
+        ui::field("Partial", ui::count(summary.partial));
+        ui::field("Failed", ui::count(summary.failed));
+        ui::field("Discovery errors", ui::count(summary.discovery_errors));
+        ui::field(
+            "Results saved",
+            format!(
+                "{}/ ( {} files / {} )",
+                root.display(),
+                ui::count(file_count),
+                human_bytes(output_bytes)
+            ),
         );
+        ui::field("Completeness", &summary.completeness);
+        ui::field("Elapsed", format!("{:.3}s", timer.elapsed().as_secs_f64()));
     }
     Ok((root, summary))
 }

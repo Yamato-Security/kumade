@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a green Kumade terminal banner, green output labels with white values,
+  and a Hayabusa/Juntei-style progress bar with a green spinner, file counters,
+  percentage and a filename/size line. Keep redirected output uncolored.
+
 - Fix Windows live collection aborting when an accessible recovery or EFI
   volume has no drive letter. Resolve GUID paths consistently for discovery
   and source-containment checks. Record unavailable volumes as discovery
