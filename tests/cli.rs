@@ -35,6 +35,91 @@ fn help_and_doctor_do_not_collect_evidence() {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     }
 }
+
+#[test]
+fn no_arguments_display_help_without_starting_acquisition() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("--vhdx"));
+    assert!(stdout.contains("--verbose"));
+    assert!(!stdout.contains("Discovering artifacts"));
+    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    // Several files exercise concurrent console writes without relying on order.
+    for i in 0..24 {
+        fs::write(source.join(format!("Windows/Prefetch/TEST-{i:02}.pf")), [i]).unwrap();
+    }
+    let output = temp.path().join("results");
+    for verbose in ["-v", "--verbose"] {
+        let out = run(&[
+            "collect",
+            "-d",
+            arg(&source),
+            "-o",
+            arg(&output),
+            "--artifact",
+            "windows.prefetch",
+            "--reserve-mib",
+            "0",
+            "-T",
+            "4",
+            verbose,
+        ]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let copies: Vec<_> = stdout
+            .lines()
+            .filter(|line| line.starts_with("Copying: "))
+            .collect();
+        assert_eq!(copies.len(), 24, "{stdout}");
+        for i in 0..24 {
+            assert_eq!(
+                copies
+                    .iter()
+                    .filter(|line| line.ends_with(&format!("TEST-{i:02}.pf")))
+                    .count(),
+                1
+            );
+        }
+        assert!(!stdout.contains(" / 24"));
+        assert!(!stdout.contains('\r'));
+        assert!(!stdout.contains('\x1b'));
+    }
+    for root in fs::read_dir(output).unwrap() {
+        assert!(
+            run(&["verify", arg(&root.unwrap().path())])
+                .status
+                .success()
+        );
+    }
+}
+
+#[test]
+fn verbose_and_quiet_conflict_and_zero_workers_are_rejected() {
+    for args in [
+        vec!["-v", "-q"],
+        vec!["collect", "--verbose", "--quiet"],
+        vec!["collect", "-T", "0"],
+    ] {
+        assert_eq!(run(&args).status.code(), Some(2), "{args:?}");
+    }
+}
 #[test]
 fn root_and_subcommand_options_cannot_silently_conflict() {
     let o = run(&["--computer", "IGNORED", "plan"]);

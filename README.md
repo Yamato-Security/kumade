@@ -39,6 +39,9 @@ Windows examples below.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
+- Acquisition defaults to one worker per available logical CPU; `-T, --threads`
+  overrides it. `-v, --verbose` lists each file/stream being copied instead of
+  displaying a progress bar. Running without arguments displays help.
 
 ## Run locally
 
@@ -60,6 +63,9 @@ On Windows, run an elevated PowerShell session for live collection:
 
 # Or save the entire acquisition in one new NTFS VHDX:
 .\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
+
+# List each copied file instead of displaying progress:
+.\kumade.exe --vhdx E:\Evidence\HOST01-verbose.vhdx -v
 ```
 
 Without `--source`, only Windows live mode is accepted. Offline mode never

@@ -13,7 +13,7 @@
 // and limitations under the RPL.
 
 use anyhow::{Context, Result, ensure};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use kumade::{
     catalog::{DEFAULT_CATALOG, Rules},
     collect::{self, Options},
@@ -85,8 +85,8 @@ struct CollectionArgs {
     /// Additional local profile root under a selected source
     #[arg(long = "profile-root", value_name = "DIR")]
     profile_roots: Vec<PathBuf>,
-    /// Maximum acquisition workers
-    #[arg(short = 'T', long, default_value_t = 4)]
+    /// Maximum acquisition workers (default: available logical CPUs)
+    #[arg(short = 'T', long, default_value_t = default_threads())]
     threads: usize,
     /// Keep this much destination space free (MiB)
     #[arg(long, default_value_t = 2048)]
@@ -97,6 +97,13 @@ struct CollectionArgs {
     /// Suppress progress and routine console messages
     #[arg(short, long)]
     quiet: bool,
+    /// List each file being copied instead of displaying a progress bar
+    #[arg(short = 'v', long, conflicts_with = "quiet")]
+    verbose: bool,
+}
+
+fn default_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, usize::from)
 }
 
 fn rules(path: Option<&Path>) -> Result<Rules> {
@@ -177,6 +184,12 @@ fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
 }
 
 fn run() -> Result<u8> {
+    if std::env::args_os().len() == 1 {
+        ui::banner();
+        Cli::command().print_help()?;
+        println!();
+        return Ok(0);
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
@@ -267,8 +280,9 @@ fn run() -> Result<u8> {
         ui::status("Discovering artifacts…");
     }
     ensure!(
-        options.threads > 0 && options.threads <= 128,
-        "--threads must be between 1 and 128"
+        options.threads > 0 && options.threads <= rayon::max_num_threads(),
+        "--threads must be between 1 and {}",
+        rayon::max_num_threads()
     );
     let rules = rules(options.catalog.as_deref())?;
     let discovered = sources(&options)?;
@@ -319,6 +333,7 @@ fn run() -> Result<u8> {
         ui::field("Known bytes", collect::human_bytes(plan.known_bytes));
         ui::field("Unknown sizes", ui::count(plan.unknown_sizes));
         ui::field("Discovery issues", ui::count(plan.issues.len() as u64));
+        ui::field("Threads", ui::count(options.threads as u64));
     }
     if plan_only {
         std::fs::create_dir_all(&output)?;
@@ -344,6 +359,7 @@ fn run() -> Result<u8> {
         threads: options.threads,
         reserve_bytes,
         quiet: options.quiet,
+        verbose: options.verbose,
         ntfs_metadata: false,
         host_reserve: None,
     };
@@ -366,5 +382,22 @@ fn main() -> ExitCode {
             let _ = writeln!(std::io::stderr(), "Error: {error:#}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_workers_follow_available_cpus_and_explicit_workers_override_them() {
+        let cli = Cli::try_parse_from(["kumade", "-o", "results"]).unwrap();
+        assert_eq!(cli.options.threads, default_threads());
+        assert!(cli.options.threads > 0);
+        let cli = Cli::try_parse_from(["kumade", "collect", "-T", "2"]).unwrap();
+        let Some(Command::Collect(options)) = cli.command else {
+            panic!("expected collect");
+        };
+        assert_eq!(options.threads, 2);
     }
 }

@@ -42,6 +42,7 @@ pub struct Options {
     pub threads: usize,
     pub reserve_bytes: u64,
     pub quiet: bool,
+    pub verbose: bool,
     pub ntfs_metadata: bool,
     pub host_reserve: Option<HostReserve>,
 }
@@ -450,8 +451,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         paths::relative_text(&f.relative_path)?;
     }
     ensure!(
-        options.threads > 0 && options.threads <= 128,
-        "Threads must be in 1..=128"
+        options.threads > 0 && options.threads <= rayon::max_num_threads(),
+        "Threads must be in 1..={}",
+        rayon::max_num_threads()
     );
     let parent = paths::resolve_future(parent)?;
     for source in &plan.sources {
@@ -534,12 +536,12 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         .filter(|s| s.attributes.is_some_and(|a| a & 0x200 != 0))
         .map(|s| (s.source_id.clone(), s.source_path.clone()))
         .collect();
-    let progress = ui::progress_bar(plan.files.len() as u64, options.quiet);
+    let progress = ui::progress_bar(plan.files.len() as u64, options.quiet || options.verbose);
     let started = utc_now();
     let timer = Instant::now();
     let sources: HashMap<_, _> = plan.sources.iter().map(|s| (s.id.clone(), s)).collect();
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(options.threads)
+        .num_threads(options.threads.min(plan.files.len().max(1)))
         .build()?;
     for phase in 0..if options.ntfs_metadata { 2 } else { 1 } {
         pool.install(|| {
@@ -548,10 +550,19 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
                 .filter(|item| !options.ntfs_metadata || item.stream.is_some() == (phase == 1))
                 .for_each_init(HashMap::new, |raw_cache, item| {
                     let source = sources[&item.source_id];
-                    progress.set_message(ui::progress_message(
-                        &format!("{}/{}", source.id, item.relative_path.display()),
-                        item.before.as_ref().map(|m| m.size),
-                    ));
+                    if options.verbose && !options.quiet {
+                        let mut path = item.source_path.display().to_string();
+                        if let Some(stream) = &item.stream {
+                            path.push(':');
+                            path.push_str(stream);
+                        }
+                        ui::field("Copying", path);
+                    } else if !options.quiet {
+                        progress.set_message(ui::progress_message(
+                            &format!("{}/{}", source.id, item.relative_path.display()),
+                            item.before.as_ref().map(|m| m.size),
+                        ));
+                    }
                     let record = acquire_one_inner(
                         &root,
                         source,

@@ -59,6 +59,7 @@ fn options() -> Options {
         threads: 4,
         reserve_bytes: 0,
         quiet: true,
+        verbose: false,
         ntfs_metadata: false,
         host_reserve: None,
     }

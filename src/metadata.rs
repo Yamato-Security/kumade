@@ -505,7 +505,7 @@ pub fn encode_ea(entries: &EaEntries) -> Vec<u8> {
 /// Splits an SDDL string into its owner, group, DACL and SACL texts. Component
 /// markers are recognized only outside parentheses, so conditional ACEs and
 /// SIDs never start a component.
-fn sddl_parts(text: &str) -> Option<[String; 4]> {
+fn sddl_parts(text: &str) -> Option<[Option<String>; 4]> {
     let bytes = text.as_bytes();
     let mut parts: [Option<String>; 4] = Default::default();
     let mut current = None;
@@ -545,10 +545,10 @@ fn sddl_parts(text: &str) -> Option<[String; 4]> {
     if let Some(previous) = current {
         parts[previous] = Some(text[start..].to_owned());
     }
-    Some(parts.map(Option::unwrap_or_default))
+    Some(parts)
 }
 
-/// ACL text into its control-flag letters and sorted ACE strings.
+/// ACL text into its control-flag letters and ACE strings in their original order.
 fn acl_parts(text: &str) -> (String, Vec<String>) {
     let flags = text[..text.find('(').unwrap_or(text.len())].to_owned();
     let mut aces = Vec::new();
@@ -571,8 +571,27 @@ fn acl_parts(text: &str) -> (String, Vec<String>) {
             _ => {}
         }
     }
-    aces.sort();
     (flags, aces)
+}
+
+fn equivalent_dacl_aces(captured: &[String], actual: &[String]) -> bool {
+    if captured == actual {
+        return true;
+    }
+    // Windows checks a DACL in order. Arbitrarily sorting ACEs would silently
+    // accept allow/deny inversions that change effective access. Restrict the
+    // observed Windows normalization to ordinary allow-only ACLs; preserve the
+    // order of mixed, object-specific and conditional ACEs conservatively.
+    if !captured.iter().all(|ace| ace.starts_with("(A;"))
+        || !actual.iter().all(|ace| ace.starts_with("(A;"))
+    {
+        return false;
+    }
+    let mut captured = captured.to_vec();
+    let mut actual = actual.to_vec();
+    captured.sort();
+    actual.sort();
+    captured == actual
 }
 
 fn acl_flags(text: &str) -> Option<BTreeSet<&'static str>> {
@@ -597,17 +616,19 @@ pub fn sddl_equivalent(captured: &str, actual: &str) -> Option<String> {
     if captured == actual {
         return Some(String::new());
     }
+    // Quoted conditional expressions have their own escaping grammar. For a
+    // changed descriptor, require exact readback rather than guessing at it.
+    if captured.contains('"') || actual.contains('"') {
+        return None;
+    }
     let [c_owner, c_group, c_dacl, c_sacl] = sddl_parts(captured)?;
     let [a_owner, a_group, a_dacl, a_sacl] = sddl_parts(actual)?;
-    let (c_flags, c_aces) = acl_parts(&c_dacl);
-    let (a_flags, a_aces) = acl_parts(&a_dacl);
-    let (c_sacl_flags, c_sacl_aces) = acl_parts(&c_sacl);
-    let (a_sacl_flags, a_sacl_aces) = acl_parts(&a_sacl);
+    let (c_flags, c_aces) = acl_parts(c_dacl.as_deref()?);
+    let (a_flags, a_aces) = acl_parts(a_dacl.as_deref()?);
     if c_owner != a_owner
         || c_group != a_group
-        || c_aces != a_aces
-        || c_sacl_aces != a_sacl_aces
-        || c_sacl_flags != a_sacl_flags
+        || !equivalent_dacl_aces(&c_aces, &a_aces)
+        || c_sacl != a_sacl
     {
         return None;
     }
@@ -784,5 +805,20 @@ mod tests {
                 .map(|n| n.contains("protected")),
             Some(true)
         );
+    }
+
+    #[test]
+    fn permission_order_and_missing_acls_are_not_normalized_away() {
+        let allow_first = "O:BAG:BAD:(A;;FR;;;WD)(D;;FR;;;WD)";
+        let deny_first = "O:BAG:BAD:(D;;FR;;;WD)(A;;FR;;;WD)";
+        assert!(sddl_equivalent(allow_first, deny_first).is_none());
+        assert!(sddl_equivalent(allow_first, &deny_first.replace("D:(", "D:P(")).is_none());
+        // A missing DACL grants access; a present empty DACL denies access.
+        assert!(sddl_equivalent("O:BAG:BA", "O:BAG:BAD:").is_none());
+        assert!(sddl_equivalent("O:BAG:BA", "O:BAG:BAD:P").is_none());
+        assert!(sddl_equivalent("O:BAG:BAD:", "O:BAG:BAD:S:").is_none());
+        let sacl = "O:BAG:BAD:(A;;FA;;;BA)S:(AU;SA;FR;;;WD)(AU;FA;FW;;;WD)";
+        let reordered = "O:BAG:BAD:(A;;FA;;;BA)S:(AU;FA;FW;;;WD)(AU;SA;FR;;;WD)";
+        assert!(sddl_equivalent(sacl, reordered).is_none());
     }
 }

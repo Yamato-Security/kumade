@@ -11,7 +11,8 @@ verification. Splitting the stable modules into workspace crates remains possibl
 
 | Command | Current behavior |
 |---|---|
-| `collect` / no subcommand | Plan, acquire, hash-verify and seal a new local collection |
+| `collect` / collection options without a subcommand | Plan, acquire, hash-verify and seal a new local collection |
+| No arguments | Display help without starting collection |
 | `doctor` | Describe compiled capabilities and unfinished providers |
 | `list` | List embedded or explicitly supplied acquisition definitions |
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
@@ -21,6 +22,13 @@ verification. Splitting the stable modules into workspace crates remains possibl
 Windows. The new dynamic NTFS image holds the acquisition directly. Available
 source metadata is inventoried and restored, with explicit partial results for
 losses. See [VHDX output](vhdx-output.md) for dependencies and fidelity limits.
+
+Acquisition uses the available logical CPU count by default; `-T, --threads`
+sets the maximum worker count. Workers are limited to the number of planned
+files when there are fewer files than CPUs. `-v, --verbose` prints each source
+file/stream being copied in full, one line per attempt, instead of displaying
+the progress bar. Parallel copies can appear in any order; their final outcome
+is recorded in the manifest. `--quiet` and `--verbose` are mutually exclusive.
 
 No other proposed commands are exposed as working functionality.
 

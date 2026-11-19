@@ -96,7 +96,10 @@ user mode without storing, and a DACL without the auto-inherited flag (a freshly
 formatted data volume's root, for instance), which Windows stores as protected
 and in canonical ACE order when it is written inside the container's
 auto-inheriting tree. Owner, group, SACL and every ACE are still compared and
-must match.
+must match. Reordering is accepted only for ordinary allow-only DACLs; mixed
+allow/deny, conditional and object-specific ACEs retain their order in the
+comparison because reordering them can change effective access. A missing ACL
+is distinguished from an empty one.
 
 These inventories include source identity/path, relative output path, file or
 directory type, raw FILETIME values, source attributes, source file identity,

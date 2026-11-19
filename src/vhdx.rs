@@ -30,7 +30,8 @@ pub const INITIALIZE_SCRIPT: &str = include_str!("../scripts/initialize_vhdx.ps1
 /// slack of the throttled free-space check. A payload that would consume it is
 /// stopped and recorded as failed instead of filling the volume.
 pub fn metadata_reserve(files: usize, threads: usize) -> u64 {
-    64 * MIB + files as u64 * 8 * 1024 + threads.max(1) as u64 * 16 * MIB
+    let workers = threads.max(1).min(files.max(1));
+    64 * MIB + files as u64 * 8 * 1024 + workers as u64 * 16 * MIB
 }
 
 pub fn capacity(known: u64, unknown: u64, explicit_gib: Option<u64>, reserve: u64) -> Result<u64> {
@@ -471,10 +472,15 @@ mod windows {
             threads: options.threads,
             reserve_bytes: reserve,
             quiet: options.quiet,
+            verbose: options.verbose,
             ntfs_metadata: true,
             host_reserve: Some(HostReserve {
                 path: parent.to_owned(),
-                bytes: options.reserve_bytes,
+                // Each active worker can write up to 16 MiB between checks.
+                // Account for that slack on the physical host as well.
+                bytes: options
+                    .reserve_bytes
+                    .saturating_add(options.threads.min(plan.files.len().max(1)) as u64 * 16 * MIB),
             }),
         };
         // The planned sources were frozen before this destination was attached.
@@ -532,6 +538,8 @@ mod tests {
         assert!(capacity(0, 0, Some(1), 600 * MIB).is_err());
         assert_eq!(capacity(0, 0, Some(2), 600 * MIB).unwrap(), 2 * GIB);
         assert!(capacity(0, 0, None, u64::MAX).is_err());
+        // High CPU counts must not reserve slack for workers with no tasks.
+        assert_eq!(metadata_reserve(2, 256), 96 * MIB + 2 * 8 * 1024);
     }
     #[test]
     fn device_and_volume_identity_validation_rejects_unrelated_paths() {

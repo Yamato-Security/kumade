@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Default acquisition workers to the available logical CPU count, show help
+  when no arguments are supplied, and add `-v, --verbose` to list each source
+  file/stream being copied instead of displaying a progress bar.
+- Keep permission-sensitive ACE order and absent/empty ACL distinctions in
+  VHDX metadata readback checks; size worker reserve slack from active workers.
+
 - Add opt-in `--vhdx FILE` collection into a fresh dynamic NTFS container,
   with automatic/explicit virtual capacity and physical host-space checks.
   Preserve file/directory basic timestamps, owner/group, ACLs, attributes,
