@@ -426,7 +426,7 @@ Processing interoperability depends on the external processor and its dependenci
 | Dedup/hash exclusions | Overlap dedup and explicit content/hash policies | Preserve every logical source reference and exclusion reason |
 | External processing | Approved external processor broker | Differential orchestration and error propagation tests |
 | Unattended operation | Structured profiles, plans, exit codes | No hidden prompts or destructive default cleanup |
-| Containers | Directory and streaming ZIP64 first; VHDX later | Interoperability and large-file/long-name validation |
+| Containers | Directory and optional Windows NTFS VHDX; streaming ZIP64 planned | Interoperability and large-file/long-name validation |
 | Cloud upload | Sealed-object S3/Azure adapters | End-to-end checksum, resume and access-control tests |
 | Receiving service | Optional separate service or approved integration | Explicitly deferred; never start a listener during collection |
 | GUI convenience | Simple launch experience first; optional plan GUI later | Equivalent scope and clear partial-result display |
@@ -524,7 +524,8 @@ Phase-one directory output prioritizes interoperability. Only deduplicate payloa
 
 Support streaming ZIP64 as the first portable package. For `--format zip`, write entries directly from acquisition/validated staging as appropriate; do not first require a complete directory plus another complete archive. A non-seekable cloud pipeline should use sealed segments, not depend on modifying an already-uploaded ZIP central directory.
 
-VHDX is a later output option, useful for encapsulating many files. A VHDX **reader** does not implement VHDX creation; use a qualified Windows Virtual Disk API writer or a separately tested writer. Reusing `ys-vhdx-parser` for reading does not make output creation available.
+Optional Windows NTFS VHDX output now encapsulates the acquisition directly;
+see [VHDX output](vhdx-output.md) for implemented behavior and validation. A VHDX **reader** does not implement VHDX creation; use a qualified Windows Virtual Disk API writer or a separately tested writer. Reusing `ys-vhdx-parser` for reading does not make output creation available.
 
 Do not invent a proprietary evidence container for v1. If future chunk-deduplicated bundles are added, publish their schema, a verifier and a materializer before asking analysts to trust them.
 

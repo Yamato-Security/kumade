@@ -59,6 +59,9 @@ fn options() -> Options {
         threads: 4,
         reserve_bytes: 0,
         quiet: true,
+        verbose: false,
+        ntfs_metadata: false,
+        host_reserve: None,
     }
 }
 fn read_records(root: &Path) -> Vec<Record> {
@@ -641,4 +644,164 @@ fn unavailable_volume_is_a_partial_collection_with_a_durable_issue() {
             .contains("UnavailableVolume")
     );
     assert_eq!(verify::verify(&root).unwrap(), (2, false));
+}
+
+#[test]
+fn physical_host_reserve_failures_are_retained_and_sealed() {
+    let (temp, source) = fixture();
+    let plan = plan(source);
+    let mut opts = options();
+    opts.host_reserve = Some(collect::HostReserve {
+        path: temp.path().to_owned(),
+        bytes: u64::MAX,
+    });
+    let (root, summary) = collect::collect(&plan, &temp.path().join("output"), &opts).unwrap();
+    assert_eq!(summary.completeness, "Partial");
+    assert!(summary.failed > 0);
+    assert!(
+        read_records(&root)
+            .iter()
+            .any(|r| r.reason.contains("Physical host free-space reserve"))
+    );
+    assert!(!verify::verify(&root).unwrap().1);
+}
+
+#[test]
+fn verifier_checks_additional_sealed_metadata_inventories() {
+    let (temp, source) = fixture();
+    let (root, _) =
+        collect::collect(&plan(source), &temp.path().join("output"), &options()).unwrap();
+    let inventory = root.join("NTFS-Metadata.jsonl");
+    fs::write(&inventory, "{}\n").unwrap();
+    let seal_path = root.join("Seal.json");
+    let mut seal: serde_json::Value =
+        serde_json::from_reader(File::open(&seal_path).unwrap()).unwrap();
+    seal["MetadataSHA256"]["NTFS-Metadata.jsonl"] =
+        serde_json::Value::String(collect::hash_file(&inventory).unwrap().1);
+    fs::write(&seal_path, serde_json::to_vec(&seal).unwrap()).unwrap();
+    assert!(verify::verify(&root).is_ok());
+    fs::write(&inventory, "{\"tampered\":true}\n").unwrap();
+    assert!(
+        verify::verify(&root)
+            .unwrap_err()
+            .to_string()
+            .contains("Sealed metadata differs")
+    );
+}
+
+#[test]
+fn raw_storage_attributes_are_available_before_payload_writes() {
+    let mut volume = RawVolume::open(&ntfs_image()).unwrap();
+    let mut output = Vec::new();
+    let mut sparse = false;
+    volume
+        .copy_file_with_attributes(
+            Path::new("sparse-file"),
+            None,
+            &mut output,
+            |attributes, writer| {
+                assert!(writer.is_empty());
+                sparse = attributes & 0x200 != 0;
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(sparse);
+    assert!(!output.is_empty());
+    let mut rejected = Vec::new();
+    assert!(
+        volume
+            .copy_file_with_attributes(
+                Path::new("sparse-file"),
+                None,
+                &mut rejected,
+                |_, _| anyhow::bail!("blocked destination")
+            )
+            .is_err()
+    );
+    assert!(rejected.is_empty());
+}
+
+#[test]
+fn container_host_writes_remain_part_of_live_source_provenance() {
+    let (temp, mut source) = fixture();
+    source.live = true;
+    let host = source.root.clone();
+    let mut opts = options();
+    opts.host_reserve = Some(collect::HostReserve {
+        path: host.clone(),
+        bytes: 0,
+    });
+    let (root, _) =
+        collect::collect(&plan(source), &temp.path().join("container-volume"), &opts).unwrap();
+    let run: serde_json::Value =
+        serde_json::from_reader(File::open(root.join("Run.json")).unwrap()).unwrap();
+    assert_eq!(run["DestinationOnLiveSource"], true);
+    assert_eq!(
+        run["PhysicalHostDestination"],
+        host.to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn raw_stat_reports_basic_information_and_sizes_without_reading_data() {
+    let mut volume = RawVolume::open(&ntfs_image()).unwrap();
+    let mft = volume.stat(Path::new("$MFT"), None).unwrap();
+    assert_eq!(mft.identity, "ntfs:0:1");
+    assert_eq!(mft.attributes & 0x16, 0x06, "{:#x}", mft.attributes);
+    // The synthetic fixture stores zero (unset) times on $MFT itself.
+    assert!(!mft.directory, "{mft:?}");
+    assert!(mft.size > 0 && mft.allocated >= mft.size);
+    let sparse = volume.stat(Path::new("sparse-file"), None).unwrap();
+    assert_ne!(sparse.attributes & 0x200, 0, "{:#x}", sparse.attributes);
+    assert!(
+        sparse.created != 0 && sparse.modified != 0 && sparse.changed != 0 && sparse.accessed != 0,
+        "{sparse:?}"
+    );
+    assert!(
+        sparse.allocated < sparse.size,
+        "{} {}",
+        sparse.allocated,
+        sparse.size
+    );
+    let root = volume.stat(Path::new(""), None).unwrap();
+    assert!(root.directory && root.attributes & 0x10 != 0 && root.size == 0);
+    let sds = volume.stat(Path::new("$Secure"), Some("$SDS")).unwrap();
+    assert!(sds.size > 0 && sds.identity.starts_with("ntfs:9:"));
+    assert!(kumade::raw::is_missing(
+        &volume.stat(Path::new("absent"), None).unwrap_err()
+    ));
+    assert!(kumade::raw::is_missing(
+        &volume
+            .stat(Path::new("$Secure"), Some("$Absent"))
+            .unwrap_err()
+    ));
+}
+
+#[test]
+fn raw_candidate_sizes_come_from_the_raw_provider_before_the_container_exists() {
+    let (_temp, mut s) = fixture();
+    s.raw_device = Some(ntfs_image());
+    let p = discovery::build_plan(
+        vec![s],
+        &rules(),
+        &["windows.ntfs.mft".into(), "windows.ntfs.usn".into()],
+        false,
+    )
+    .unwrap();
+    assert!(p.unknown_sizes >= 3, "{}", p.unknown_sizes);
+    let (known, unknown) = kumade::metadata::raw_candidate_sizes(&p);
+    let mft = RawVolume::open(&ntfs_image())
+        .unwrap()
+        .stat(Path::new("$MFT"), None)
+        .unwrap();
+    assert!(known >= mft.size, "{known} {}", mft.size);
+    // Legitimately absent objects count as zero bytes, not as unknown sizes.
+    assert_eq!(unknown, 0);
+    let mut without = p.clone();
+    without.sources[0].raw_device = None;
+    assert_eq!(
+        kumade::metadata::raw_candidate_sizes(&without).1,
+        p.unknown_sizes
+    );
 }

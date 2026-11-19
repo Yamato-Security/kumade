@@ -14,6 +14,7 @@
 
 use crate::{
     collect::hash_file,
+    metadata,
     model::{Plan, Record, SCHEMA_VERSION, Summary},
     paths,
 };
@@ -48,14 +49,29 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         "Errors.csv",
         "Summary.json",
     ] {
-        let expected = digests
-            .get(file)
-            .and_then(|s| s.as_str())
-            .context("Missing seal digest")?;
+        ensure!(
+            digests.contains_key(file),
+            "Missing required seal digest: {file}"
+        );
+    }
+    for (file, expected) in digests {
+        let expected = expected.as_str().context("Invalid sealed digest")?;
         ensure!(
             hash_file(&paths::safe_join(&root, file)?)?.1 == expected,
             "Sealed metadata differs: {file}"
         );
+    }
+    let run: serde_json::Value = serde_json::from_reader(File::open(root.join("Run.json"))?)?;
+    let native_streams = run["NativeNTFSStreams"].as_bool().unwrap_or(false);
+    if native_streams {
+        #[cfg(windows)]
+        crate::platform::enable_backup_privilege()?;
+        for name in metadata::FILES {
+            ensure!(
+                digests.contains_key(name),
+                "Missing NTFS metadata inventory seal"
+            );
+        }
     }
     let summary: Summary = serde_json::from_reader(File::open(root.join("Summary.json"))?)?;
     ensure!(
@@ -98,7 +114,11 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
             _ => anyhow::bail!("Unknown manifest result status"),
         }
         if let Some(path) = &record.relative_output_path {
-            let payload = paths::safe_join(&root, path)?;
+            let payload = if native_streams {
+                metadata::payload_path(&root, path, record.stream_name.as_deref())?
+            } else {
+                paths::safe_join(&root, path)?
+            };
             let (bytes, digest) = hash_file(&payload)?;
             ensure!(
                 bytes == record.bytes_read && record.sha256.as_ref() == Some(&digest),
@@ -121,6 +141,27 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         summary.collected == acquired && summary.failed == failed && summary.partial == partial,
         "Summary counters do not match the manifest"
     );
+    if native_streams {
+        let inventory = BufReader::new(File::open(root.join(metadata::FILES[0]))?);
+        let mut errors = 0u64;
+        for line in inventory.lines() {
+            let row: metadata::Snapshot = serde_json::from_str(&line?)?;
+            if matches!(
+                row.restore_status.as_str(),
+                "Partial" | "CaptureFailed" | "SourceChanged"
+            ) {
+                errors += 1;
+            }
+        }
+        ensure!(
+            errors == summary.metadata_errors,
+            "NTFS metadata error count differs from the inventory"
+        );
+        ensure!(
+            errors == 0 || summary.completeness == "Partial",
+            "Metadata loss must be reported as partial"
+        );
+    }
     Ok((
         checked,
         summary.completeness == "CompleteWithinSelectedPrototypeScope",

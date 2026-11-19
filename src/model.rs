@@ -153,6 +153,8 @@ pub struct Summary {
     pub discovery_errors: u64,
     pub bytes_acquired: u64,
     pub catalog_sha256: String,
+    #[serde(default)]
+    pub metadata_errors: u64,
 }
 
 pub fn sha256(data: &[u8]) -> String {

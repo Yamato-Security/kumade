@@ -1,6 +1,6 @@
 # Kumade implementation status
 
-Updated 18 November 2026. The architecture document is the target design;
+Updated 19 November 2026. The architecture document is the target design;
 this file distinguishes it from the code actually implemented.
 
 The first increment uses one Rust package with separate library modules for
@@ -11,11 +11,24 @@ verification. Splitting the stable modules into workspace crates remains possibl
 
 | Command | Current behavior |
 |---|---|
-| `collect` / no subcommand | Plan, acquire, hash-verify and seal a new local collection |
+| `collect` / collection options without a subcommand | Plan, acquire, hash-verify and seal a new local collection |
+| No arguments | Display help without starting collection |
 | `doctor` | Describe compiled capabilities and unfinished providers |
 | `list` | List embedded or explicitly supplied acquisition definitions |
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
 | `verify` | Verify sealed metadata, observation accounting and every referenced payload |
+
+`collect` also accepts `--vhdx FILE` and optional `--vhdx-size-gib GIB` on
+Windows. The new dynamic NTFS image holds the acquisition directly. Available
+source metadata is inventoried and restored, with explicit partial results for
+losses. See [VHDX output](vhdx-output.md) for dependencies and fidelity limits.
+
+Acquisition uses the available logical CPU count by default, capped at 128;
+`-T, --threads` sets the maximum worker count within that limit. Workers are limited to the number of planned
+files when there are fewer files than CPUs. `-v, --verbose` prints each source
+file/stream being copied in full, one line per attempt, instead of displaying
+the progress bar. Parallel copies can appear in any order; their final outcome
+is recorded in the manifest. `--quiet` and `--verbose` are mutually exclusive.
 
 No other proposed commands are exposed as working functionality.
 
@@ -46,15 +59,16 @@ correctness of privilege, volume, locked-file or
 device-control operations on every Windows build. Synthetic NTFS tests exercise
 the shared read engine without mounting an image or using a driver.
 
-The available Windows VM was not reachable over SSH during this implementation.
-Live locked-file tests, security-policy qualification and memory drivers remain
-separate required validation work. No live company system or private company
-evidence is used in platform CI.
+Targeted Windows 11 ARM64 tests cover fixed/GUID volumes, Prefetch collection,
+raw metadata, a live locked SYSTEM hive and VHDX metadata round trips. Windows
+x86/x64 CI now creates, inspects read-only and detaches a synthetic NTFS image.
+These checks do not qualify every Windows build, filesystem or security policy.
+No live company system or private company evidence is used in platform CI.
 
 ## Remaining milestones
 
-1. Native Windows runtime tests; handle-based file IDs and complete lossless
-   Windows filename/ADS metadata, inaccessible-directory raw enumeration,
+1. Broader Windows runtime and filename/metadata qualification, directory-mode
+   ADS discovery, inaccessible-directory raw enumeration,
    custom event-log locations and pagefile discovery.
 2. Qualified memory-provider interface and paired acquisition with independent
    timing/range validation; no automatic untrusted helper download.

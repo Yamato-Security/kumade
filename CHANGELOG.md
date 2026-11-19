@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Default acquisition workers to the available logical CPU count (at most 128), show help
+  when no arguments are supplied, and add `-v, --verbose` to list each source
+  file/stream being copied instead of displaying a progress bar.
+- Keep permission-sensitive ACE order and absent/empty ACL distinctions in
+  VHDX metadata readback checks; size worker reserve slack from active workers.
+
+- Add opt-in `--vhdx FILE` collection into a fresh dynamic NTFS container,
+  with automatic/explicit virtual capacity and physical host-space checks.
+  Preserve file/directory basic timestamps, owner/group, ACLs, attributes,
+  extended attributes and native named streams; seal metadata inventories and
+  report incomplete preservation as partial. Raw-only NTFS metafiles take their
+  basic information and sizes from the raw provider, a container reserve keeps
+  room for the manifests and seal, and kernel-namespace extended attributes and
+  protected-DACL normalization are noted instead of counted as errors. See the
+  VHDX guide for limits.
+
 - Add a green Kumade terminal banner, green output labels with white values,
   and a Hayabusa/Juntei-style progress bar with a green spinner, file counters,
   percentage and a filename/size line. Keep redirected output uncolored.

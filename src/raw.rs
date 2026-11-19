@@ -16,7 +16,10 @@
 //! No acquisition implementation is copied from the GPL/AGPL reference tools.
 use crate::model::Fingerprint;
 use anyhow::{Context, Result, bail, ensure};
-use ntfs::{Ntfs, NtfsAttributeFlags, NtfsReadSeek, indexes::NtfsFileNameIndex};
+use ntfs::{
+    Ntfs, NtfsAttributeFlags, NtfsAttributeType, NtfsFile, NtfsReadSeek,
+    attribute_value::NtfsAttributeValue, indexes::NtfsFileNameIndex,
+};
 use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
@@ -114,6 +117,46 @@ pub struct RawResult {
     pub after: Fingerprint,
     pub bytes: u64,
 }
+/// Basic information of a raw NTFS object, read without touching its data.
+#[derive(Clone, Debug)]
+pub struct RawStat {
+    /// `$STANDARD_INFORMATION` times as NTFS 100 ns FILETIME ticks (zero = unset).
+    pub created: u64,
+    pub modified: u64,
+    pub changed: u64,
+    pub accessed: u64,
+    /// Win32-style file attributes, including the directory flag and the
+    /// sparse flag when any `$DATA` attribute of the file is sparse.
+    pub attributes: u32,
+    pub directory: bool,
+    /// `ntfs:<record>:<sequence>`, the same identity the raw copy records.
+    pub identity: String,
+    /// Logical and allocated size of the selected `$DATA` stream; zero when
+    /// the object has no such stream (directories, stream-only files).
+    pub size: u64,
+    pub allocated: u64,
+}
+
+fn locate<'n>(ntfs: &'n Ntfs, device: &mut DeviceReader, relative: &Path) -> Result<NtfsFile<'n>> {
+    let mut file = ntfs.root_directory(device)?;
+    for part in relative.components() {
+        let Component::Normal(name) = part else {
+            bail!("Unsafe raw relative path")
+        };
+        let name = name.to_str().context("Unsupported NTFS name encoding")?;
+        let index = file.directory_index(device)?;
+        let mut finder = index.finder();
+        let entry =
+            NtfsFileNameIndex::find(&mut finder, ntfs, device, name).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("NTFS object not present: {}", relative.display()),
+                )
+            })??;
+        file = entry.to_file(ntfs, device)?;
+    }
+    Ok(file)
+}
 
 pub fn is_missing(error: &anyhow::Error) -> bool {
     error.chain().any(|e| {
@@ -152,24 +195,90 @@ impl RawVolume {
         stream: Option<&str>,
         writer: &mut impl Write,
     ) -> Result<RawResult> {
+        self.copy_file_with_attributes(relative, stream, writer, |_, _| Ok(()))
+    }
+
+    /// Basic information of an NTFS object: `$STANDARD_INFORMATION` times and
+    /// attributes, the file reference, and the logical/allocated size of the
+    /// selected `$DATA` stream. Windows does not expose its own system files
+    /// (`$MFT`, `$LogFile`, `$Extend\$UsnJrnl`, …) to file APIs, so this is the
+    /// only metadata source for them. Sizes count allocated clusters, which is
+    /// what a sparse-aware copy of the stream occupies.
+    pub fn stat(&mut self, relative: &Path, stream: Option<&str>) -> Result<RawStat> {
         self.device.invalidate();
-        let mut file = self.ntfs.root_directory(&mut self.device)?;
-        for part in relative.components() {
-            let Component::Normal(name) = part else {
-                bail!("Unsafe raw relative path")
-            };
-            let name = name.to_str().context("Unsupported NTFS name encoding")?;
-            let index = file.directory_index(&mut self.device)?;
-            let mut finder = index.finder();
-            let entry = NtfsFileNameIndex::find(&mut finder, &self.ntfs, &mut self.device, name)
-                .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("NTFS object not present: {}", relative.display()),
-                )
-            })??;
-            file = entry.to_file(&self.ntfs, &mut self.device)?;
+        let file = locate(&self.ntfs, &mut self.device, relative)?;
+        let info = file.info()?;
+        let mut stat = RawStat {
+            created: info.creation_time().nt_timestamp(),
+            modified: info.modification_time().nt_timestamp(),
+            changed: info.mft_record_modification_time().nt_timestamp(),
+            accessed: info.access_time().nt_timestamp(),
+            attributes: info.file_attributes().bits(),
+            directory: file.is_directory(),
+            identity: format!(
+                "ntfs:{}:{}",
+                file.file_record_number(),
+                file.sequence_number()
+            ),
+            size: 0,
+            allocated: 0,
+        };
+        if stat.directory {
+            // Win32 reports the directory flag; $STANDARD_INFORMATION does not store it.
+            stat.attributes |= 0x10;
         }
+        // The sparse flag is per $DATA attribute; Win32 reports it on the file
+        // when any stream is sparse.
+        let mut attributes = file.attributes();
+        while let Some(item) = attributes.next(&mut self.device) {
+            let item = item?;
+            let attribute = item.to_attribute()?;
+            if attribute.ty()? == NtfsAttributeType::Data
+                && attribute.flags().contains(NtfsAttributeFlags::SPARSE)
+            {
+                stat.attributes |= 0x200;
+            }
+        }
+        match file.data(&mut self.device, stream.unwrap_or_default()) {
+            Some(item) => {
+                let item = item?;
+                let attribute = item.to_attribute()?;
+                let value = attribute.value(&mut self.device)?;
+                stat.size = value.len();
+                stat.allocated = match &value {
+                    NtfsAttributeValue::NonResident(value) => {
+                        let mut allocated = 0u64;
+                        for run in value.data_runs() {
+                            let run = run?;
+                            // Sparse runs have no data position and occupy nothing.
+                            if run.data_position().value().is_some() {
+                                allocated = allocated
+                                    .checked_add(run.allocated_size())
+                                    .context("Allocated size overflow")?;
+                            }
+                        }
+                        allocated
+                    }
+                    _ => stat.size,
+                };
+            }
+            None => ensure!(
+                stream.is_none(),
+                io::Error::new(io::ErrorKind::NotFound, "NTFS data stream is absent")
+            ),
+        }
+        Ok(stat)
+    }
+
+    pub fn copy_file_with_attributes<W: Write>(
+        &mut self,
+        relative: &Path,
+        stream: Option<&str>,
+        writer: &mut W,
+        mut attributes: impl FnMut(u32, &mut W) -> Result<()>,
+    ) -> Result<RawResult> {
+        self.device.invalidate();
+        let file = locate(&self.ntfs, &mut self.device, relative)?;
         let entry_number = file.file_record_number();
         let sequence = file.sequence_number();
         let info = file.info()?;
@@ -199,6 +308,15 @@ impl RawVolume {
             accessed_ns: filetime(info.access_time().nt_timestamp()),
             identity: Some(format!("ntfs:{entry_number}:{sequence}")),
         };
+        // Sparse is also a per-DATA attribute. Qualify the write policy from
+        // that flag even when the standard-information flag is incomplete.
+        let storage_attributes = info.file_attributes().bits()
+            | if attr.flags().contains(NtfsAttributeFlags::SPARSE) {
+                0x200
+            } else {
+                0
+            };
+        attributes(storage_attributes, writer)?;
         let mut buffer = vec![0_u8; 1024 * 1024];
         let mut bytes = 0_u64;
         loop {

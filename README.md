@@ -24,7 +24,8 @@ Windows examples below.
   local GPO/SYSVOL, Defender and standard paging-file locations.
 - Offline collection from Windows volume directories on Linux, macOS and Windows.
 - Windows fixed-volume/mount-point discovery, profile discovery and backup privilege
-  setup. Platform CI exercises offline acquisition; live Windows qualification is pending.
+  setup. Windows x86/x64 CI includes NTFS VHDX round trips; targeted live
+  collection and metadata tests also run on Windows 11 ARM64.
 - Read-only raw NTFS fallback for discovered locked files and hidden metadata,
   including resident/nonresident data, named streams and sparse logical content.
 - Parallel acquisition, bounded copy/hash buffers, sparse output where supported,
@@ -33,9 +34,14 @@ Windows examples below.
   verifier that rejects modified payloads and unsafe manifest paths.
 - Protected fresh run directories, no overwrite of existing payloads, source/output
   separation for offline evidence, and terminal progress.
+- Optional [NTFS VHDX output](docs/vhdx-output.md) with direct acquisition into
+  a dynamic image, native alternate streams and explicit NTFS metadata preservation.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
+- Acquisition defaults to one worker per available logical CPU (at most 128);
+  `-T, --threads` overrides it within that limit. `-v, --verbose` lists each file/stream being copied instead of
+  displaying a progress bar. Running without arguments displays help.
 
 ## Run locally
 
@@ -54,6 +60,12 @@ On Windows, run an elevated PowerShell session for live collection:
 
 ```powershell
 .\kumade.exe -o E:\Kumade-Results
+
+# Or save the entire acquisition in one new NTFS VHDX:
+.\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
+
+# List each copied file instead of displaying progress:
+.\kumade.exe --vhdx E:\Evidence\HOST01-verbose.vhdx -v
 ```
 
 Without `--source`, only Windows live mode is accepted. Offline mode never
@@ -66,7 +78,9 @@ Each run creates `Plan.json`, `Run.json`, `Manifest.jsonl`, `Manifest.csv`,
 `Coverage.csv`, `DiscoveryIssues.csv`, `Errors.csv`, `Summary.json` and `Seal.json`.
 Payloads retain recognizable paths beneath `Evidence/Live/<SourceId>/`.
 Windows-incompatible names are reversibly encoded; exact source paths remain
-in the manifest. Very long names use a manifest-mapped hash path.
+in the manifest. Very long names in directory mode use a manifest-mapped hash path.
+For the VHDX layout, metadata fields and fidelity limits, see
+[NTFS VHDX output](docs/vhdx-output.md).
 
 `Verified` means stored-byte hash verification, **not structural validity or an
 atomic snapshot**. Source changes produce a partial result. A seal currently
@@ -75,8 +89,9 @@ uses hashes, not an authenticated signing identity.
 ## Not implemented yet
 
 RAM capture/paired runtime pagefile discovery, VSS acquisition, external processing,
-image-source CLI support, archive packaging, cloud upload, resume,
-comprehensive ADS discovery and structural artifact validators are pending.
+image-source CLI support, ZIP archive packaging, cloud upload, resume,
+general directory-mode ADS discovery and structural artifact validators are pending.
+VHDX mode inventories named data streams on selected files.
 
 `--memory` currently records an explicit failed RAM task and returns partial
 status after collecting supported disk artifacts. It never creates a fake dump
@@ -87,7 +102,8 @@ Raw compressed/encrypted/reparse-backed content is rejected rather than copied
 as incorrect logical bytes. Directory enumeration failures remain visible;
 raw traversal of inaccessible directories is not implemented yet. Planning keeps
 the task index in memory; million-file/disk-backed scheduling remains future work.
-Use controlled lab data until live Windows and destination-policy testing is complete.
+Use controlled lab data while broader Windows, destination-policy and coverage
+qualification continues.
 
 ## Development
 

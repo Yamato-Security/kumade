@@ -14,6 +14,7 @@
 
 use crate::{
     discovery::{fingerprint, same_version},
+    metadata,
     model::*,
     paths, platform,
     raw::RawVolume,
@@ -32,14 +33,22 @@ use std::{
 };
 
 const BUFFER: usize = 1024 * 1024;
+pub struct HostReserve {
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
 pub struct Options {
     pub threads: usize,
     pub reserve_bytes: u64,
     pub quiet: bool,
+    pub verbose: bool,
+    pub ntfs_metadata: bool,
+    pub host_reserve: Option<HostReserve>,
 }
 
 pub fn hash_file(path: &Path) -> Result<(u64, String)> {
-    let mut file = BufReader::with_capacity(BUFFER, File::open(path)?);
+    let mut file = BufReader::with_capacity(BUFFER, platform::open_source(path)?);
     let mut hash = Sha256::new();
     let mut bytes = 0u64;
     let mut buffer = vec![0u8; BUFFER];
@@ -74,6 +83,7 @@ struct Transfer<'a> {
     bytes: u64,
     checked_at: u64,
     sparse: bool,
+    host_reserve: Option<&'a HostReserve>,
 }
 impl Write for Transfer<'_> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
@@ -81,6 +91,19 @@ impl Write for Transfer<'_> {
             let available = fs2::available_space(self.root)?;
             if available < self.reserve.saturating_add(data.len() as u64) {
                 return Err(io::Error::other("Destination free-space reserve reached"));
+            }
+            if let Some(host) = self.host_reserve {
+                // Dynamic image allocation needs host space as well as NTFS space.
+                // Leave extra headroom for in-flight workers and VHDX block metadata.
+                let available = fs2::available_space(&host.path)?;
+                if available
+                    < host
+                        .bytes
+                        .saturating_add(64 * 1024 * 1024)
+                        .saturating_add(data.len() as u64)
+                {
+                    return Err(io::Error::other("Physical host free-space reserve reached"));
+                }
             }
             self.checked_at = self.bytes;
         }
@@ -105,6 +128,23 @@ impl Write for Transfer<'_> {
     }
 }
 
+fn source_fingerprint(file: &File, native_ntfs: bool) -> Result<Fingerprint> {
+    let value = fingerprint(&file.metadata()?);
+    #[cfg(windows)]
+    {
+        let mut value = value;
+        if native_ntfs {
+            value.identity = Some(metadata::file_identity(file)?);
+        }
+        Ok(value)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = native_ntfs;
+        Ok(value)
+    }
+}
+
 pub fn acquire_one(
     root: &Path,
     source: &Source,
@@ -112,6 +152,33 @@ pub fn acquire_one(
     reserve: u64,
     raw_cache: &mut HashMap<PathBuf, RawVolume>,
 ) -> Record {
+    acquire_one_inner(
+        root,
+        source,
+        item,
+        reserve,
+        raw_cache,
+        DestinationPolicy::default(),
+    )
+}
+
+#[derive(Default)]
+struct DestinationPolicy<'a> {
+    native_ntfs: bool,
+    source_sparse: bool,
+    host_reserve: Option<&'a HostReserve>,
+}
+
+fn acquire_one_inner(
+    root: &Path,
+    source: &Source,
+    item: &PlannedFile,
+    reserve: u64,
+    raw_cache: &mut HashMap<PathBuf, RawVolume>,
+    destination: DestinationPolicy<'_>,
+) -> Record {
+    let native_ntfs = destination.native_ntfs;
+    let host_reserve = destination.host_reserve;
     let mut record = Record {
         schema_version: SCHEMA_VERSION,
         observation_id: item.id.clone(),
@@ -137,8 +204,11 @@ pub fn acquire_one(
         source_file_id: None,
     };
     let outcome = (|| -> Result<()> {
-        let relative =
-            paths::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?;
+        let relative = if native_ntfs {
+            metadata::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
+        } else {
+            paths::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
+        };
         let output = root.join(&relative);
         fs::create_dir_all(output.parent().context("Missing payload parent")?)?;
         let mut partial = output.clone();
@@ -147,13 +217,36 @@ pub fn acquire_one(
             .context("Missing payload name")?
             .to_str()
             .context("Unsupported output name")?;
-        partial.set_file_name(format!("{original}.{}.partial", item.id));
+        let direct_stream = native_ntfs && item.stream.is_some();
+        if direct_stream {
+            // Unnamed payloads finish in phase one. Stream-only NTFS objects
+            // need an explicitly empty host file; no data is claimed for it.
+            let base = root.join(metadata::output_relative(
+                &source.id,
+                &item.relative_path,
+                None,
+            )?);
+            match OpenOptions::new().write(true).create_new(true).open(&base) {
+                Ok(file) => file.sync_all()?,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    ensure!(
+                        base.symlink_metadata()?.is_file()
+                            && !platform::is_reparse_directory(&base),
+                        "Unsafe ADS host file"
+                    );
+                }
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            partial.set_file_name(format!("{original}.{}.partial", item.id));
+        }
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&partial)?;
         record.relative_output_path = Some(paths::relative_text(partial.strip_prefix(root)?)?);
-        let sparse = platform::enable_sparse_output(&file);
+        let sparse =
+            (!native_ntfs || destination.source_sparse) && platform::enable_sparse_output(&file);
         let mut transfer = Transfer {
             file,
             root,
@@ -162,6 +255,7 @@ pub fn acquire_one(
             bytes: 0,
             checked_at: 0,
             sparse,
+            host_reserve,
         };
         let native_path = if let Some(stream) = &item.stream {
             PathBuf::from(format!("{}:{stream}", item.source_path.display()))
@@ -172,10 +266,18 @@ pub fn acquire_one(
             match platform::open_source(&native_path) {
                 Ok(mut input) => {
                     platform::validate_open_file(&input, &source.root)?;
-                    let before = fingerprint(&input.metadata()?);
+                    let before = source_fingerprint(&input, native_ntfs)?;
+                    #[cfg(windows)]
+                    if native_ntfs {
+                        use std::os::windows::fs::MetadataExt;
+                        if input.metadata()?.file_attributes() & 0x200 != 0 && !transfer.sparse {
+                            transfer.sparse = platform::enable_sparse_output(&transfer.file);
+                            ensure!(transfer.sparse, "Cannot preserve sparse source stream");
+                        }
+                    }
                     let limit = before.size.checked_add(1).context("Source size overflow")?;
                     io::copy(&mut Read::by_ref(&mut input).take(limit), &mut transfer)?;
-                    let after = fingerprint(&input.metadata()?);
+                    let after = source_fingerprint(&input, native_ntfs)?;
                     ensure!(
                         transfer.bytes == before.size,
                         "Source changed size or ended early during acquisition"
@@ -194,7 +296,18 @@ pub fn acquire_one(
                     let result = raw_cache
                         .get_mut(device)
                         .context("Raw provider missing")?
-                        .copy_file(&item.relative_path, item.stream.as_deref(), &mut transfer)?;
+                        .copy_file_with_attributes(
+                            &item.relative_path,
+                            item.stream.as_deref(),
+                            &mut transfer,
+                            |attributes, writer| {
+                                if native_ntfs && attributes & 0x200 != 0 && !writer.sparse {
+                                    writer.sparse = platform::enable_sparse_output(&writer.file);
+                                    ensure!(writer.sparse, "Cannot preserve sparse source stream");
+                                }
+                                Ok(())
+                            },
+                        )?;
                     ensure!(
                         result.bytes == transfer.bytes,
                         "Raw reader/writer byte count mismatch"
@@ -220,10 +333,12 @@ pub fn acquire_one(
                         .before
                         .as_ref()
                         .is_some_and(|p| !same_version(p, &before));
-                if output.exists() {
-                    bail!("Payload destination collision: {}", output.display());
+                if !direct_stream {
+                    if output.exists() {
+                        bail!("Payload destination collision: {}", output.display());
+                    }
+                    commit_payload(&partial, &output)?;
                 }
-                commit_payload(&partial, &output)?;
                 record.relative_output_path = Some(paths::relative_text(&relative)?);
                 let (verified_bytes, verified_hash) = hash_file(&output)?;
                 ensure!(
@@ -238,7 +353,8 @@ pub fn acquire_one(
                 } else {
                     record.status = "Acquired".into();
                 }
-                if let (Some(atime), Some(mtime)) = (before.accessed_ns, before.modified_ns)
+                if !native_ntfs
+                    && let (Some(atime), Some(mtime)) = (before.accessed_ns, before.modified_ns)
                     && let (Ok(a), Ok(m)) = (
                         chrono::DateTime::parse_from_rfc3339(&atime),
                         chrono::DateTime::parse_from_rfc3339(&mtime),
@@ -346,6 +462,10 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             "Output and source trees must not overlap"
         );
     }
+    ensure!(
+        !options.ntfs_metadata || cfg!(windows),
+        "Native NTFS metadata output requires Windows"
+    );
     fs::create_dir_all(&parent)?;
     let available = fs2::available_space(&parent)?;
     ensure!(
@@ -382,7 +502,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     write_json_new(&root.join("Plan.json"), plan)?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live&&parent.starts_with(&s.root)),"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     let new_file = |name: &str| -> Result<File> {
         Ok(OpenOptions::new()
@@ -407,43 +527,77 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         ui::status("Collecting evidence…");
         println!();
     }
-    let progress = ui::progress_bar(plan.files.len() as u64, options.quiet);
+    let mut ntfs_metadata = options.ntfs_metadata.then(|| metadata::prepare(plan));
+    let sparse_sources: std::collections::HashSet<_> = ntfs_metadata
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter(|s| s.attributes.is_some_and(|a| a & 0x200 != 0))
+        .map(|s| (s.source_id.clone(), s.source_path.clone()))
+        .collect();
+    let progress = ui::progress_bar(plan.files.len() as u64, options.quiet || options.verbose);
     let started = utc_now();
     let timer = Instant::now();
     let sources: HashMap<_, _> = plan.sources.iter().map(|s| (s.id.clone(), s)).collect();
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(options.threads)
+        .num_threads(options.threads.min(plan.files.len().max(1)))
         .build()?;
-    pool.install(|| {
-        plan.files
-            .par_iter()
-            .for_each_init(HashMap::new, |raw_cache, item| {
-                let source = sources[&item.source_id];
-                progress.set_message(ui::progress_message(
-                    &format!("{}/{}", source.id, item.relative_path.display()),
-                    item.before.as_ref().map(|m| m.size),
-                ));
-                let record = acquire_one(&root, source, item, options.reserve_bytes, raw_cache);
-                match journal.lock() {
-                    Ok(mut j) => {
-                        if let Err(e) = j.append(&record)
-                            && let Ok(mut v) = journal_errors.lock()
-                        {
-                            v.push(e.to_string());
+    for phase in 0..if options.ntfs_metadata { 2 } else { 1 } {
+        pool.install(|| {
+            plan.files
+                .par_iter()
+                .filter(|item| !options.ntfs_metadata || item.stream.is_some() == (phase == 1))
+                .for_each_init(HashMap::new, |raw_cache, item| {
+                    let source = sources[&item.source_id];
+                    if options.verbose && !options.quiet {
+                        let mut path = item.source_path.display().to_string();
+                        if let Some(stream) = &item.stream {
+                            path.push(':');
+                            path.push_str(stream);
+                        }
+                        ui::field("Copying", path);
+                    } else if !options.quiet {
+                        progress.set_message(ui::progress_message(
+                            &format!("{}/{}", source.id, item.relative_path.display()),
+                            item.before.as_ref().map(|m| m.size),
+                        ));
+                    }
+                    let record = acquire_one_inner(
+                        &root,
+                        source,
+                        item,
+                        options.reserve_bytes,
+                        raw_cache,
+                        DestinationPolicy {
+                            native_ntfs: options.ntfs_metadata,
+                            source_sparse: sparse_sources.contains(&(
+                                source.id.clone(),
+                                item.source_path.display().to_string(),
+                            )),
+                            host_reserve: options.host_reserve.as_ref(),
+                        },
+                    );
+                    match journal.lock() {
+                        Ok(mut j) => {
+                            if let Err(e) = j.append(&record)
+                                && let Ok(mut v) = journal_errors.lock()
+                            {
+                                v.push(e.to_string());
+                            }
+                        }
+                        Err(e) => {
+                            if let Ok(mut v) = journal_errors.lock() {
+                                v.push(e.to_string());
+                            }
                         }
                     }
-                    Err(e) => {
-                        if let Ok(mut v) = journal_errors.lock() {
-                            v.push(e.to_string());
-                        }
+                    if let Ok(mut v) = records.lock() {
+                        v.push(record);
                     }
-                }
-                if let Ok(mut v) = records.lock() {
-                    v.push(record);
-                }
-                progress.inc(1);
-            })
-    });
+                    progress.inc(1);
+                })
+        });
+    }
     progress.finish_and_clear();
     journal
         .lock()
@@ -485,6 +639,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             .count() as u64,
         bytes_acquired: 0,
         catalog_sha256: plan.catalog_sha256.clone(),
+        metadata_errors: 0,
     };
     for record in records.iter() {
         match record.status.as_str() {
@@ -568,6 +723,16 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         .lock()
         .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
         .finish()?;
+    if let Some(snapshots) = ntfs_metadata.as_mut() {
+        if !options.quiet {
+            ui::status("Restoring NTFS metadata and original permissions…");
+        }
+        summary.metadata_errors = metadata::restore(&root, snapshots, &records) as u64;
+        if summary.metadata_errors > 0 {
+            summary.completeness = "Partial".into();
+        }
+        metadata::write_inventory(&root, snapshots)?;
+    }
     write_json_new(&root.join("Summary.json"), &summary)?;
     let (_, manifest_hash) = hash_file(&root.join("Manifest.jsonl"))?;
     let mut metadata = std::collections::BTreeMap::new();
@@ -583,6 +748,11 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     ] {
         metadata.insert(name, hash_file(&root.join(name))?.1);
     }
+    if options.ntfs_metadata {
+        for name in metadata::FILES {
+            metadata.insert(name, hash_file(&root.join(name))?.1);
+        }
+    }
     write_json_new(
         &root.join("Seal.json"),
         &serde_json::json!({"SchemaVersion":1,"RunId":summary.run_id,"ManifestSHA256":manifest_hash,"MetadataSHA256":metadata,"SealedUTC":utc_now(),"Signature":"NotConfigured"}),
@@ -590,13 +760,15 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     if !options.quiet {
         let mut file_count = 0u64;
         let mut output_bytes = 0u64;
-        for entry in walkdir::WalkDir::new(&root).follow_links(false) {
-            let entry = entry?;
-            if entry.file_type().is_file() {
-                file_count += 1;
-                output_bytes = output_bytes
-                    .checked_add(entry.metadata()?.len())
-                    .context("Output size overflow")?;
+        if !options.ntfs_metadata {
+            for entry in walkdir::WalkDir::new(&root).follow_links(false) {
+                let entry = entry?;
+                if entry.file_type().is_file() {
+                    file_count += 1;
+                    output_bytes = output_bytes
+                        .checked_add(entry.metadata()?.len())
+                        .context("Output size overflow")?;
+                }
             }
         }
         println!();
@@ -605,15 +777,20 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         ui::field("Partial", ui::count(summary.partial));
         ui::field("Failed", ui::count(summary.failed));
         ui::field("Discovery errors", ui::count(summary.discovery_errors));
-        ui::field(
-            "Results saved",
-            format!(
-                "{}/ ( {} files / {} )",
-                root.display(),
-                ui::count(file_count),
-                human_bytes(output_bytes)
-            ),
-        );
+        if options.ntfs_metadata {
+            ui::field("Metadata errors", ui::count(summary.metadata_errors));
+        }
+        if !options.ntfs_metadata {
+            ui::field(
+                "Results saved",
+                format!(
+                    "{}/ ( {} files / {} )",
+                    root.display(),
+                    ui::count(file_count),
+                    human_bytes(output_bytes)
+                ),
+            );
+        }
         ui::field("Completeness", &summary.completeness);
         ui::field("Elapsed", format!("{:.3}s", timer.elapsed().as_secs_f64()));
     }
