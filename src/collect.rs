@@ -151,7 +151,21 @@ pub fn acquire_one(
     reserve: u64,
     raw_cache: &mut HashMap<PathBuf, RawVolume>,
 ) -> Record {
-    acquire_one_inner(root, source, item, reserve, raw_cache, false, None)
+    acquire_one_inner(
+        root,
+        source,
+        item,
+        reserve,
+        raw_cache,
+        DestinationPolicy::default(),
+    )
+}
+
+#[derive(Default)]
+struct DestinationPolicy<'a> {
+    native_ntfs: bool,
+    source_sparse: bool,
+    host_reserve: Option<&'a HostReserve>,
 }
 
 fn acquire_one_inner(
@@ -160,9 +174,10 @@ fn acquire_one_inner(
     item: &PlannedFile,
     reserve: u64,
     raw_cache: &mut HashMap<PathBuf, RawVolume>,
-    native_ntfs: bool,
-    host_reserve: Option<&HostReserve>,
+    destination: DestinationPolicy<'_>,
 ) -> Record {
+    let native_ntfs = destination.native_ntfs;
+    let host_reserve = destination.host_reserve;
     let mut record = Record {
         schema_version: SCHEMA_VERSION,
         observation_id: item.id.clone(),
@@ -229,7 +244,8 @@ fn acquire_one_inner(
             .create_new(true)
             .open(&partial)?;
         record.relative_output_path = Some(paths::relative_text(partial.strip_prefix(root)?)?);
-        let sparse = !native_ntfs && platform::enable_sparse_output(&file);
+        let sparse =
+            (!native_ntfs || destination.source_sparse) && platform::enable_sparse_output(&file);
         let mut transfer = Transfer {
             file,
             root,
@@ -250,6 +266,14 @@ fn acquire_one_inner(
                 Ok(mut input) => {
                     platform::validate_open_file(&input, &source.root)?;
                     let before = source_fingerprint(&input, native_ntfs)?;
+                    #[cfg(windows)]
+                    if native_ntfs {
+                        use std::os::windows::fs::MetadataExt;
+                        if input.metadata()?.file_attributes() & 0x200 != 0 && !transfer.sparse {
+                            transfer.sparse = platform::enable_sparse_output(&transfer.file);
+                            ensure!(transfer.sparse, "Cannot preserve sparse source stream");
+                        }
+                    }
                     let limit = before.size.checked_add(1).context("Source size overflow")?;
                     io::copy(&mut Read::by_ref(&mut input).take(limit), &mut transfer)?;
                     let after = source_fingerprint(&input, native_ntfs)?;
@@ -271,7 +295,18 @@ fn acquire_one_inner(
                     let result = raw_cache
                         .get_mut(device)
                         .context("Raw provider missing")?
-                        .copy_file(&item.relative_path, item.stream.as_deref(), &mut transfer)?;
+                        .copy_file_with_attributes(
+                            &item.relative_path,
+                            item.stream.as_deref(),
+                            &mut transfer,
+                            |attributes, writer| {
+                                if native_ntfs && attributes & 0x200 != 0 && !writer.sparse {
+                                    writer.sparse = platform::enable_sparse_output(&writer.file);
+                                    ensure!(writer.sparse, "Cannot preserve sparse source stream");
+                                }
+                                Ok(())
+                            },
+                        )?;
                     ensure!(
                         result.bytes == transfer.bytes,
                         "Raw reader/writer byte count mismatch"
@@ -492,6 +527,13 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         println!();
     }
     let mut ntfs_metadata = options.ntfs_metadata.then(|| metadata::prepare(plan));
+    let sparse_sources: std::collections::HashSet<_> = ntfs_metadata
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter(|s| s.attributes.is_some_and(|a| a & 0x200 != 0))
+        .map(|s| (s.source_id.clone(), s.source_path.clone()))
+        .collect();
     let progress = ui::progress_bar(plan.files.len() as u64, options.quiet);
     let started = utc_now();
     let timer = Instant::now();
@@ -516,8 +558,14 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
                         item,
                         options.reserve_bytes,
                         raw_cache,
-                        options.ntfs_metadata,
-                        options.host_reserve.as_ref(),
+                        DestinationPolicy {
+                            native_ntfs: options.ntfs_metadata,
+                            source_sparse: sparse_sources.contains(&(
+                                source.id.clone(),
+                                item.source_path.display().to_string(),
+                            )),
+                            host_reserve: options.host_reserve.as_ref(),
+                        },
                     );
                     match journal.lock() {
                         Ok(mut j) => {

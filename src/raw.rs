@@ -152,6 +152,16 @@ impl RawVolume {
         stream: Option<&str>,
         writer: &mut impl Write,
     ) -> Result<RawResult> {
+        self.copy_file_with_attributes(relative, stream, writer, |_, _| Ok(()))
+    }
+
+    pub fn copy_file_with_attributes<W: Write>(
+        &mut self,
+        relative: &Path,
+        stream: Option<&str>,
+        writer: &mut W,
+        mut attributes: impl FnMut(u32, &mut W) -> Result<()>,
+    ) -> Result<RawResult> {
         self.device.invalidate();
         let mut file = self.ntfs.root_directory(&mut self.device)?;
         for part in relative.components() {
@@ -199,6 +209,7 @@ impl RawVolume {
             accessed_ns: filetime(info.access_time().nt_timestamp()),
             identity: Some(format!("ntfs:{entry_number}:{sequence}")),
         };
+        attributes(info.file_attributes().bits(), writer)?;
         let mut buffer = vec![0_u8; 1024 * 1024];
         let mut bytes = 0_u64;
         loop {

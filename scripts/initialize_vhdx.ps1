@@ -11,7 +11,7 @@ $disks = @($image | Get-Disk -ErrorAction Stop)
 if ($disks.Count -ne 1) { throw 'The created image must identify exactly one disk' }
 $disk = $disks[0]
 if ($disk.Number -ne $number -or $disk.IsBoot -or $disk.IsSystem -or
-    $disk.PartitionStyle -ne 'RAW' -or ([uint16]$disk.BusType) -ne 15) {
+    $disk.PartitionStyle -ne 'RAW' -or ([uint16]$disk.CimInstanceProperties['BusType'].Value) -ne 15) {
     throw 'Refusing to initialize a disk that is not the newly created RAW virtual disk'
 }
 $null = Initialize-Disk -InputObject $disk -PartitionStyle GPT -ErrorAction Stop

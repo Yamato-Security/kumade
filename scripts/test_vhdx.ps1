@@ -62,6 +62,18 @@ public static class KumadeNativeTest {
             if (!SetFileInformationByHandle(h,0,ref b,(uint)Marshal.SizeOf(typeof(Basic)))) throw new Win32Exception();
         }
     }
+
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool DeviceIoControl(SafeFileHandle h,uint code,IntPtr input,uint inputSize,IntPtr output,uint outputSize,out uint returned,IntPtr overlapped);
+    public static void MakeSparse(string path) {
+        using(SafeFileHandle h=Open(path,0xC0000000)) {
+            uint returned;
+            if(!DeviceIoControl(h,0x900C4,IntPtr.Zero,0,IntPtr.Zero,0,out returned,IntPtr.Zero))throw new Win32Exception();
+            using(FileStream stream=new FileStream(h,FileAccess.ReadWrite)) {
+                stream.SetLength(64L*1024*1024);
+                stream.WriteByte(0x41);stream.Position=stream.Length-1;stream.WriteByte(0x42);
+            }
+        }
+    }
     public static void SetEA(string path) {
         byte[] name=Encoding.ASCII.GetBytes("KUMADE"), value=Encoding.ASCII.GetBytes("evidence");
         byte[] bytes=new byte[8+name.Length+1+value.Length];
@@ -123,8 +135,11 @@ $prefetch = Join-Path $source 'Windows\Prefetch'
 $null = New-Item -ItemType Directory -Path $prefetch -Force
 $file = Join-Path $prefetch 'Capture.pf'
 $other = Join-Path $prefetch 'Other.pf'
+$sparse = Join-Path $prefetch 'Sparse.pf'
 [IO.File]::WriteAllBytes($file,[Text.Encoding]::UTF8.GetBytes('Synthetic evidence payload: 100 ns timestamps, ACLs and named streams.'))
 [IO.File]::WriteAllBytes($other,[Text.Encoding]::UTF8.GetBytes('Second payload verifies directory timestamps after all children.'))
+[IO.File]::WriteAllBytes($sparse,[byte[]]@())
+[KumadeNativeTest]::MakeSparse($sparse)
 Set-Content -LiteralPath $file -Stream 'Zone.Identifier' -Value '[ZoneTransfer] ZoneId=3' -Encoding ASCII -NoNewline
 Set-Content -LiteralPath $file -Stream 'extra.evidence' -Value 'additional bytes' -Encoding ASCII -NoNewline
 [KumadeNativeTest]::SetEA($file)
@@ -136,16 +151,17 @@ Set-Acl -LiteralPath $file -AclObject $acl
 $epoch = [DateTime]::Parse('2024-03-04T05:06:07Z').ToUniversalTime().ToFileTimeUtc() + 1234567
 [KumadeNativeTest]::Set($file,$epoch,0x23)
 [KumadeNativeTest]::Set($other,$epoch+100,0x20)
+[KumadeNativeTest]::Set($sparse,$epoch+500,0x20)
 [KumadeNativeTest]::Set($prefetch,$epoch+200,0x12)
 [KumadeNativeTest]::Set((Join-Path $source 'Windows'),$epoch+300,0x10)
 [KumadeNativeTest]::Set($source,$epoch+400,0x10)
-$paths = @($source,(Join-Path $source 'Windows'),$prefetch,$file,$other)
+$paths = @($source,(Join-Path $source 'Windows'),$prefetch,$file,$other,$sparse)
 $before = @{}
 foreach ($path in $paths) { $before[$path]=[KumadeNativeTest]::Read($path) }
 $security = (Get-Acl -LiteralPath $file -Audit).Sddl
 $ea = [KumadeNativeTest]::EA($file)
 $hashes = @{}
-foreach ($path in @($file,$other,($file+':Zone.Identifier'),($file+':extra.evidence'))) { $hashes[$path]=[KumadeNativeTest]::Hash($path) }
+foreach ($path in @($file,$other,$sparse,($file+':Zone.Identifier'),($file+':extra.evidence'))) { $hashes[$path]=[KumadeNativeTest]::Hash($path) }
 $image = Join-Path $WorkDirectory "Evidence 'quoted'.vhdx"
 $arguments = @('collect','-d',$source,'--computer','SYNTHETIC','--artifact','windows.prefetch','--vhdx',$image,'--vhdx-size-gib','1','--reserve-mib','0','-T','2')
 $code = Invoke-Collector $arguments 'collect.txt'
@@ -163,10 +179,10 @@ try {
     $verifyCode = Invoke-Collector @('verify',$run) 'verify.txt'
     if ($verifyCode -ne 0) { throw ('Integrity verification failed: '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'verify.txt'))) }
     $summary = Get-Content -Raw -LiteralPath (Join-Path $run 'Summary.json') | ConvertFrom-Json
-    if ($summary.MetadataErrors -ne 0 -or $summary.Collected -ne 4) { throw 'Unexpected acquisition/metadata counts' }
+    if ($summary.MetadataErrors -ne 0 -or $summary.Collected -ne 5) { throw 'Unexpected acquisition/metadata counts' }
     $reports = @(Get-Content -LiteralPath (Join-Path $run 'NTFS-Metadata.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     $csv = @(Import-Csv -LiteralPath (Join-Path $run 'NTFS-Metadata.csv'))
-    if ($reports.Count -ne 5 -or $csv.Count -ne $reports.Count) { throw 'Missing file/directory metadata records' }
+    if ($reports.Count -ne 6 -or $csv.Count -ne $reports.Count) { throw 'Missing file/directory metadata records' }
     foreach ($row in $reports) {
         if ($row.CaptureStatus -ne 'Captured' -or $row.RestoreStatus -ne 'Restored') { throw ('Metadata restoration incomplete: '+($row | ConvertTo-Json -Compress)) }
         $destination = Join-Path $run $row.RelativeOutputPath
@@ -197,7 +213,8 @@ try {
     $imageHash = (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash
     $noOverwriteCode = Invoke-Collector $arguments 'no-overwrite.txt'
     if ($noOverwriteCode -ne 2 -or (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne $imageHash) { throw 'Existing VHDX was changed' }
-    $result = [pscustomobject]@{Payloads=$summary.Collected;MetadataRecords=$reports.Count;NTFSTimestamps100ns='passed';OwnerGroupDaclSacl='passed';ExtendedAttributes='passed';NamedStreams='passed';IndependentHashes='passed';NoOverwrite='passed';ReadOnlyVerification='passed';Image=$image}
+    if ((Get-Item -LiteralPath $image).Length -ge 60MB) { throw 'Sparse payload expanded into allocated zero-filled output' }
+    $result = [pscustomobject]@{Payloads=$summary.Collected;MetadataRecords=$reports.Count;NTFSTimestamps100ns='passed';OwnerGroupDaclSacl='passed';ExtendedAttributes='passed';NamedStreams='passed';SparseAllocation='passed';IndependentHashes='passed';NoOverwrite='passed';ReadOnlyVerification='passed';Image=$image}
     $result | ConvertTo-Json | Tee-Object -FilePath (Join-Path $WorkDirectory 'result.json')
 } finally {
     if ($mounted) { $null = Dismount-DiskImage -ImagePath $image }
