@@ -2,6 +2,42 @@
 
 Validation date: 18 November 2026. Version: `0.1.0`.
 
+## VHDX metadata round trips (19 November 2026)
+
+The new `scripts/test_vhdx.ps1` creates synthetic NTFS files and validates a full
+container round trip with independent Windows/.NET queries:
+
+- Five payloads, including two native alternate streams and a 64 MiB sparse file.
+- Six metadata records for files and their containing directories.
+- All four NTFS basic timestamps at 100 ns precision, owner/group, protected and
+  inherited ACL state, audit SACL, extended attributes and file attributes.
+- Independent SHA-256 matches, native sparse allocation, refusal to overwrite an
+  existing image, clean detach and read-only verification.
+- An unchanged image SHA-256 after the complete read-only inspection.
+
+The round trip passed with Windows x86 and x64 collectors on Windows CI and
+with the ARM64 package on Windows 11 ARM64. The tests preserve observed source
+access times; OS source reads can update access times before metadata capture.
+
+A separate Windows 11 ARM64 live test collected the locked SYSTEM hive into a
+VHDX through `RawNTFS`: **14,942,208 bytes**, five file/directory metadata records,
+zero metadata errors, independent stored-payload hash agreement and successful
+`kumade verify`. Live payloads and their metadata remain outside this repository.
+
+On that Windows 11 VM, reading a read-only mount updated NTFS's cached access
+times. Its image SHA-256 remained unchanged; remounting showed the saved times
+again. The test therefore checks persisted timestamps before data reads and
+compares the image hash after inspection, instead of treating cached values as
+on-disk evidence modification.
+
+Additional regression checks cover CLI conflicts, capacity arithmetic/overflow,
+physical host reserves, extra sealed metadata inventories, native stream path
+validation, file-generation identity checks, sparse raw-reader context and
+existing/dangling-link image destinations. Existing directory acquisition and
+verification tests continue to pass.
+
+The following sections retain the initial release validation for context.
+
 ## Automated checks
 
 - `cargo fmt --check`: passed.
@@ -69,8 +105,9 @@ was tested with the redistributable synthetic image, not a live Windows volume.
 
 ## Outstanding qualification
 
-The available Windows VM was unreachable during this run. Test the native
-Windows executable on controlled systems before production use: privilege
+The initial validation could not reach the Windows VM. The targeted live tests
+above now cover several of those gaps. Broader controlled-system testing remains
+necessary before production use: privilege
 adjustment, device geometry, locked hives/event logs, access-denied directories,
 long names, destination ACLs and FAT/exFAT behavior all need live qualification.
 Memory, VSS and cloud providers are not implemented and are not counted as

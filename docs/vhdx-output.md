@@ -95,6 +95,16 @@ Mount-DiskImage -ImagePath E:\Evidence\HOST01.vhdx -Access ReadOnly
 Dismount-DiskImage -ImagePath E:\Evidence\HOST01.vhdx
 ```
 
+With Windows access-time updates enabled, reading a read-only mount can change
+its **cached** last-access values. In Windows 11 ARM64 testing, the image's
+SHA-256 stayed unchanged and remounting showed the saved timestamps again.
+Inspect timestamps before data reads, or use a raw NTFS reader to examine the
+stored values. This behavior is separate from a change to the image bytes.
+
+`verify` checks payload hashes and the sealed metadata reports. Native metadata
+restoration is read back during acquisition; verification does not certify the
+current mounted filesystem's metadata after later changes.
+
 Native alternate-stream verification requires Windows and an NTFS-aware mount.
 Cross-platform raw-container inspection can use an appropriate read-only VHDX
 and NTFS reader.
@@ -106,7 +116,9 @@ own MFT entries, file IDs, allocation layout, USN activity and `$FILE_NAME`
 metadata. Hard-link topology, source directory indexes and original file-record
 identities are not recreated. Original file identities are retained in the
 inventory; collect the source `$MFT`, journals and other filesystem artifacts
-when those original structures are needed.
+when those original structures are needed. Analyze those collected source
+artifacts under `Evidence`, rather than treating the container's newly created
+NTFS metadata as the source machine's filesystem history.
 
 An unset or unsupported timestamp, EFS state without the original key, an
 unsupported attribute, a reparse-backed object or unavailable metadata is

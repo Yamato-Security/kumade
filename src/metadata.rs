@@ -102,7 +102,7 @@ pub fn payload_path(root: &Path, relative: &str, stream: Option<&str>) -> Result
     Ok(PathBuf::from(format!("{}:{name}", base.display())))
 }
 
-pub fn prepare(plan: &Plan) -> Vec<Snapshot> {
+pub(crate) fn prepare(plan: &Plan) -> Vec<Snapshot> {
     // Include each collected file's containing directories exactly once. Capture
     // these before payload writes and restore deepest first after all children.
     let mut targets = BTreeMap::<(String, PathBuf), (PathBuf, PathBuf, bool)>::new();
@@ -180,7 +180,7 @@ fn same_identity(captured: Option<&str>, acquired: Option<&str>) -> bool {
     false
 }
 
-pub fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> usize {
+pub(crate) fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> usize {
     let available: BTreeSet<_> = records
         .iter()
         .filter(|r| r.verified)
@@ -279,7 +279,7 @@ pub fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> u
         .count()
 }
 
-pub fn write_inventory(root: &Path, snapshots: &[Snapshot]) -> Result<()> {
+pub(crate) fn write_inventory(root: &Path, snapshots: &[Snapshot]) -> Result<()> {
     let create = |name| {
         std::fs::OpenOptions::new()
             .write(true)

@@ -687,3 +687,36 @@ fn verifier_checks_additional_sealed_metadata_inventories() {
             .contains("Sealed metadata differs")
     );
 }
+
+#[test]
+fn raw_storage_attributes_are_available_before_payload_writes() {
+    let mut volume = RawVolume::open(&ntfs_image()).unwrap();
+    let mut output = Vec::new();
+    let mut sparse = false;
+    volume
+        .copy_file_with_attributes(
+            Path::new("sparse-file"),
+            None,
+            &mut output,
+            |attributes, writer| {
+                assert!(writer.is_empty());
+                sparse = attributes & 0x200 != 0;
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(sparse);
+    assert!(!output.is_empty());
+    let mut rejected = Vec::new();
+    assert!(
+        volume
+            .copy_file_with_attributes(
+                Path::new("sparse-file"),
+                None,
+                &mut rejected,
+                |_, _| anyhow::bail!("blocked destination")
+            )
+            .is_err()
+    );
+    assert!(rejected.is_empty());
+}

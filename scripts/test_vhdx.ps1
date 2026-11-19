@@ -167,6 +167,7 @@ $arguments = @('collect','-d',$source,'--computer','SYNTHETIC','--artifact','win
 $code = Invoke-Collector $arguments 'collect.txt'
 if ($code -ne 0) { throw ('Collection failed ('+$code+'): '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'collect.txt'))) }
 if ((Get-DiskImage -ImagePath $image).Attached) { throw 'Image remained attached after collection' }
+$imageBeforeReadOnly = (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash
 $mounted = $false
 try {
     $null = Mount-DiskImage -ImagePath $image -Access ReadOnly -NoDriveLetter
@@ -176,8 +177,6 @@ try {
     $runs = @(Get-ChildItem -LiteralPath $volumes[0].UniqueId -Directory | Where-Object Name -like 'SYNTHETIC_*')
     if ($runs.Count -ne 1) { throw 'Expected one acquisition run' }
     $run = $runs[0].FullName
-    $verifyCode = Invoke-Collector @('verify',$run) 'verify.txt'
-    if ($verifyCode -ne 0) { throw ('Integrity verification failed: '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'verify.txt'))) }
     $summary = Get-Content -Raw -LiteralPath (Join-Path $run 'Summary.json') | ConvertFrom-Json
     if ($summary.MetadataErrors -ne 0 -or $summary.Collected -ne 5) { throw 'Unexpected acquisition/metadata counts' }
     $reports = @(Get-Content -LiteralPath (Join-Path $run 'NTFS-Metadata.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
@@ -203,6 +202,10 @@ try {
     $target = Join-Path $run 'Evidence\Live\source\Windows\Prefetch\Capture.pf'
     if ((Get-Acl -LiteralPath $target -Audit).Sddl -ne $security) { throw 'Owner/group/DACL/SACL changed' }
     if ([KumadeNativeTest]::EA($target) -ne $ea) { throw 'Extended attributes changed' }
+    # Reading file data can update NTFS's cached access time even on a read-only
+    # mount. Check stored metadata first, then verify that image bytes stay fixed.
+    $verifyCode = Invoke-Collector @('verify',$run) 'verify.txt'
+    if ($verifyCode -ne 0) { throw ('Integrity verification failed: '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'verify.txt'))) }
     foreach ($row in @(Import-Csv -LiteralPath (Join-Path $run 'Manifest.csv'))) {
         $sourcePath = Get-SourceKey $row.SourcePath
         if ($row.StreamName) { $sourcePath += ':'+$row.StreamName }
@@ -215,7 +218,9 @@ try {
     if ($noOverwriteCode -ne 2 -or (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne $imageHash) { throw 'Existing VHDX was changed' }
     if ((Get-Item -LiteralPath $image).Length -ge 60MB) { throw 'Sparse payload expanded into allocated zero-filled output' }
     $result = [pscustomobject]@{Payloads=$summary.Collected;MetadataRecords=$reports.Count;NTFSTimestamps100ns='passed';OwnerGroupDaclSacl='passed';ExtendedAttributes='passed';NamedStreams='passed';SparseAllocation='passed';IndependentHashes='passed';NoOverwrite='passed';ReadOnlyVerification='passed';Image=$image}
-    $result | ConvertTo-Json | Tee-Object -FilePath (Join-Path $WorkDirectory 'result.json')
 } finally {
     if ($mounted) { $null = Dismount-DiskImage -ImagePath $image }
 }
+if ((Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne $imageBeforeReadOnly) { throw 'Read-only inspection changed image bytes' }
+$result | Add-Member -NotePropertyName ReadOnlyImageUnchanged -NotePropertyValue 'passed'
+$result | ConvertTo-Json | Tee-Object -FilePath (Join-Path $WorkDirectory 'result.json')

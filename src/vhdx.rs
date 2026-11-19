@@ -76,6 +76,25 @@ pub fn validate_volume_path(path: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_new_image_path(path: &Path) -> Result<()> {
+    ensure!(
+        path.extension()
+            .is_some_and(|s| s.eq_ignore_ascii_case("vhdx")),
+        "--vhdx requires a .vhdx filename"
+    );
+    ensure!(
+        !path
+            .file_name()
+            .is_some_and(|s| s.to_string_lossy().contains(':')),
+        "VHDX destination cannot be an alternate stream"
+    );
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => anyhow::bail!("Refusing to overwrite an existing VHDX path (including links)"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).context("Cannot inspect VHDX destination"),
+    }
+}
+
 pub fn collect(
     plan: &Plan,
     image: &Path,
@@ -166,15 +185,7 @@ mod windows {
     }
     impl Image {
         fn create(path: &Path, bytes: u64) -> Result<Self> {
-            ensure!(
-                !path.try_exists()?,
-                "Refusing to overwrite an existing VHDX"
-            );
-            ensure!(
-                path.extension()
-                    .is_some_and(|s| s.eq_ignore_ascii_case("vhdx")),
-                "--vhdx requires a .vhdx filename"
-            );
+            validate_new_image_path(path)?;
             ensure!(
                 !platform::is_remote_windows_path(&path.display().to_string()),
                 "VHDX output must be on a local volume"
@@ -416,10 +427,7 @@ mod windows {
         metadata::enable_privileges()?;
         let bytes = capacity(plan.known_bytes, plan.unknown_sizes, explicit_gib)?;
         let path = paths::resolve_future(path)?;
-        ensure!(
-            !path.try_exists()?,
-            "Refusing to overwrite an existing VHDX"
-        );
+        validate_new_image_path(&path)?;
         let parent = path.parent().context("VHDX output has no parent")?;
         fs::create_dir_all(parent)?;
         let required = plan
@@ -509,6 +517,23 @@ mod tests {
             assert!(validate_volume_path(path).is_err());
         }
     }
+    #[test]
+    fn image_destination_refuses_existing_files_and_dangling_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let image = tmp.path().join("evidence.vhdx");
+        validate_new_image_path(&image).unwrap();
+        std::fs::write(&image, b"existing evidence").unwrap();
+        assert!(validate_new_image_path(&image).is_err());
+        assert_eq!(std::fs::read(&image).unwrap(), b"existing evidence");
+        assert!(validate_new_image_path(&tmp.path().join("file:stream.vhdx")).is_err());
+        #[cfg(unix)]
+        {
+            let link = tmp.path().join("link.vhdx");
+            std::os::unix::fs::symlink(tmp.path().join("absent"), &link).unwrap();
+            assert!(validate_new_image_path(&link).is_err());
+        }
+    }
+
     #[test]
     fn formatter_uses_created_disk_identity_and_never_assigns_a_letter() {
         assert!(INITIALIZE_SCRIPT.contains("$disk.Number -ne $number"));

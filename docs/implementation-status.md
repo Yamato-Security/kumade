@@ -51,15 +51,16 @@ correctness of privilege, volume, locked-file or
 device-control operations on every Windows build. Synthetic NTFS tests exercise
 the shared read engine without mounting an image or using a driver.
 
-The available Windows VM was not reachable over SSH during this implementation.
-Live locked-file tests, security-policy qualification and memory drivers remain
-separate required validation work. No live company system or private company
-evidence is used in platform CI.
+Targeted Windows 11 ARM64 tests cover fixed/GUID volumes, Prefetch collection,
+raw metadata, a live locked SYSTEM hive and VHDX metadata round trips. Windows
+x86/x64 CI now creates, inspects read-only and detaches a synthetic NTFS image.
+These checks do not qualify every Windows build, filesystem or security policy.
+No live company system or private company evidence is used in platform CI.
 
 ## Remaining milestones
 
-1. Native Windows runtime tests; handle-based file IDs and complete lossless
-   Windows filename/ADS metadata, inaccessible-directory raw enumeration,
+1. Broader Windows runtime and filename/metadata qualification, directory-mode
+   ADS discovery, inaccessible-directory raw enumeration,
    custom event-log locations and pagefile discovery.
 2. Qualified memory-provider interface and paired acquisition with independent
    timing/range validation; no automatic untrusted helper download.

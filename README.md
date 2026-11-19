@@ -24,7 +24,8 @@ Windows examples below.
   local GPO/SYSVOL, Defender and standard paging-file locations.
 - Offline collection from Windows volume directories on Linux, macOS and Windows.
 - Windows fixed-volume/mount-point discovery, profile discovery and backup privilege
-  setup. Platform CI exercises offline acquisition; live Windows qualification is pending.
+  setup. Windows x86/x64 CI includes NTFS VHDX round trips; targeted live
+  collection and metadata tests also run on Windows 11 ARM64.
 - Read-only raw NTFS fallback for discovered locked files and hidden metadata,
   including resident/nonresident data, named streams and sparse logical content.
 - Parallel acquisition, bounded copy/hash buffers, sparse output where supported,
@@ -95,7 +96,8 @@ Raw compressed/encrypted/reparse-backed content is rejected rather than copied
 as incorrect logical bytes. Directory enumeration failures remain visible;
 raw traversal of inaccessible directories is not implemented yet. Planning keeps
 the task index in memory; million-file/disk-backed scheduling remains future work.
-Use controlled lab data until live Windows and destination-policy testing is complete.
+Use controlled lab data while broader Windows, destination-policy and coverage
+qualification continues.
 
 ## Development
 

@@ -209,7 +209,15 @@ impl RawVolume {
             accessed_ns: filetime(info.access_time().nt_timestamp()),
             identity: Some(format!("ntfs:{entry_number}:{sequence}")),
         };
-        attributes(info.file_attributes().bits(), writer)?;
+        // Sparse is also a per-DATA attribute. Qualify the write policy from
+        // that flag even when the standard-information flag is incomplete.
+        let storage_attributes = info.file_attributes().bits()
+            | if attr.flags().contains(NtfsAttributeFlags::SPARSE) {
+                0x200
+            } else {
+                0
+            };
+        attributes(storage_attributes, writer)?;
         let mut buffer = vec![0_u8; 1024 * 1024];
         let mut bytes = 0_u64;
         loop {
