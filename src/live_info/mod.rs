@@ -857,21 +857,32 @@ try {{
     #[cfg(windows)]
     #[test]
     fn deadline_terminates_provider_descendants() {
-        let mut command = Command::new(powershell().unwrap());
-        let script = r#"$c=Start-Process -FilePath ($PSHOME+'\powershell.exe') -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30' -PassThru; [Console]::WriteLine($c.Id); Start-Sleep -Seconds 30"#;
-        command.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-EncodedCommand",
-            &encoded_script(script),
-        ]);
-        let capture = execute(command, Duration::from_secs(5)).unwrap();
-        assert_eq!(capture.stop, Some("TimedOut"));
-        let id: u32 = String::from_utf8(capture.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .expect("helper PID");
+        // The provider has to start a second PowerShell and print its PID before
+        // the deadline fires. Cold starts on a loaded runner (the x86 build in
+        // particular, with other tests spawning PowerShell at the same time) have
+        // taken longer than 5 s, which left stdout empty and nothing to check.
+        // The deadline therefore grows until the PID arrives; the termination
+        // check itself is the same at every step.
+        let script = r#"$c=Start-Process -FilePath ($PSHOME+'\powershell.exe') -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 300' -PassThru; [Console]::WriteLine($c.Id); Start-Sleep -Seconds 300"#;
+        let mut reported = None;
+        for seconds in [5, 15, 45] {
+            let mut command = Command::new(powershell().unwrap());
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                &encoded_script(script),
+            ]);
+            let capture = execute(command, Duration::from_secs(seconds)).unwrap();
+            assert_eq!(capture.stop, Some("TimedOut"));
+            let stdout = String::from_utf8(capture.stdout).unwrap();
+            if !stdout.trim().is_empty() {
+                eprintln!("helper PID reported within a {seconds} s deadline");
+                reported = Some(stdout.trim().parse::<u32>().expect("helper PID"));
+                break;
+            }
+        }
+        let id = reported.expect("helper never reported its child PID within 45 s");
         use windows_sys::Win32::{Foundation::*, System::Threading::*};
         // SAFETY: querying/waiting on a process ID returned by the test's own provider.
         let handle = unsafe {
