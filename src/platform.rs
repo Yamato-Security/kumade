@@ -53,6 +53,50 @@ pub(crate) fn volume_identity(path: &Path) -> Result<Option<String>> {
     windows::volume_for_path(path)
 }
 
+/// `IsWow64Process2` reports IMAGE_FILE_MACHINE_UNKNOWN for the process machine of an
+/// x64 build running under the x64 emulation of Windows on ARM64, not only for native
+/// processes, so the native machine must match the build architecture as well.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn native_machine_matches(
+    process_machine: u16,
+    native_machine: u16,
+    build_machine: u16,
+) -> bool {
+    process_machine == 0 && native_machine == build_machine
+}
+
+/// Refuse WOW64 and ARM64 x64 emulation for features that must run as a native process:
+/// VSS requesters are unsupported there and an emulated scanner cannot see native address
+/// space. The message names the Kumade build to use on this Windows.
+#[cfg(windows)]
+pub fn require_native_build(feature: &str) -> Result<()> {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, IsWow64Process2};
+    let (mut process, mut native) = (0u16, 0u16);
+    anyhow::ensure!(
+        // SAFETY: current process pseudo-handle and two initialized writable u16 values.
+        unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) } != 0,
+        "Cannot determine the native Windows architecture: {}",
+        std::io::Error::last_os_error()
+    );
+    let build = match std::env::consts::ARCH {
+        "aarch64" => 0xaa64,
+        "x86_64" => 0x8664,
+        "x86" => 0x014c,
+        _ => bail!("{feature}: unsupported build architecture"),
+    };
+    anyhow::ensure!(
+        native_machine_matches(process, native, build),
+        "{feature} requires a native-architecture build running without WOW64 or emulation; use Kumade's {} build on this Windows",
+        match native {
+            0xaa64 => "win-aarch64",
+            0x8664 => "win-x64",
+            0x014c => "win-x86",
+            _ => "native",
+        }
+    );
+    Ok(())
+}
+
 pub fn computer_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))

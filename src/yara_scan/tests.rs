@@ -187,6 +187,7 @@ fn frequent_first_pattern_does_not_hide_later_pattern_or_xor_key() {
 
 #[test]
 fn emulated_amd64_on_arm64_is_not_native_despite_unknown_process_machine() {
+    use crate::platform::native_machine_matches;
     assert!(!native_machine_matches(0, 0xaa64, 0x8664));
     assert!(!native_machine_matches(0x014c, 0x8664, 0x014c));
     assert!(native_machine_matches(0, 0xaa64, 0xaa64));

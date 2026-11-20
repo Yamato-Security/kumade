@@ -18,7 +18,7 @@ use windows_sys::Win32::{
         ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS},
         SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
         Threading::{
-            GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, IsWow64Process2, OpenProcess,
+            GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess,
             PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, QueryFullProcessImageNameW,
         },
     },
@@ -29,25 +29,7 @@ fn handle(h: &OwnedHandle) -> windows_sys::Win32::Foundation::HANDLE {
 }
 
 pub fn require_native() -> Result<()> {
-    let (mut process, mut native) = (0, 0);
-    // SAFETY: current process pseudo-handle and two initialized writable u16 values.
-    ensure!(
-        // SAFETY: current process pseudo-handle and two initialized writable u16 values.
-        unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) } != 0,
-        "Cannot determine native architecture: {}",
-        std::io::Error::last_os_error()
-    );
-    let build_machine = match std::env::consts::ARCH {
-        "aarch64" => 0xaa64,
-        "x86_64" => 0x8664,
-        "x86" => 0x014c,
-        _ => anyhow::bail!("Unsupported process-scanning build architecture"),
-    };
-    ensure!(
-        native_machine_matches(process, native, build_machine),
-        "Process memory scans require a native-architecture build; use win-aarch64 on ARM64 or win-x64 on x64 Windows"
-    );
-    Ok(())
+    crate::platform::require_native_build("Process memory scanning")
 }
 pub fn list_processes() -> Result<Vec<(u32, String)>> {
     // SAFETY: documented snapshot flags; no external pointers.

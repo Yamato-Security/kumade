@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements.
+- Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements. VSS acquisition and process scanning share one native-architecture check, which also rejects the x64 build under the x64 emulation of Windows on ARM64 (not reported as WOW64).
 
 - Add opt-in `--vss` for live artifact collection (directory/VHDX/E01) and
   `forensic-copy`, plus `--volume` selection for live collection. Create an owned

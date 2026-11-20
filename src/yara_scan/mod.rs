@@ -26,12 +26,6 @@ const MAX_ARCHIVE: u64 = 64 * 1024 * 1024;
 const MAX_RULES: u64 = 128 * 1024 * 1024;
 const MAX_SAMPLES: usize = 16;
 
-// IsWow64Process2 reports IMAGE_FILE_MACHINE_UNKNOWN for AMD64 emulation on
-// Windows ARM64 too. Both the WOW64 state and native machine must agree.
-fn native_machine_matches(process_machine: u16, native_machine: u16, build_machine: u16) -> bool {
-    process_machine == 0 && native_machine == build_machine
-}
-
 #[derive(Clone, Copy, Debug, Default, ValueEnum, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleSet {
