@@ -191,8 +191,8 @@ pub fn detections(
             };
             (scanner.get_string_symbol(m.name), v)
         }).collect();
-        let samples: Vec<_> = r.matches.iter().flat_map(|s| s.matches.iter().map(move |m| serde_json::json!({
-            "Pattern": format!("${}", s.name), "Address": format!("0x{:X}", m.base.saturating_add(m.offset)), "Length": m.length
+        let samples: Vec<_> = r.matches.iter().flat_map(|s| s.matches.iter().take(1).map(move |m| serde_json::json!({
+            "Pattern": format!("${}", s.name), "Address": format!("0x{:X}", m.base.saturating_add(m.offset)), "Length": m.length, "XorKey": m.xor_key
         }))).take(MAX_SAMPLES).collect();
         Detection {
             computer: process.computer.clone(), pid: process.pid, process_name: process.process_name.clone(),

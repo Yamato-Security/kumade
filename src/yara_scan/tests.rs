@@ -166,3 +166,21 @@ fn windows_utf8_bom_and_console_rules_compile_without_console_output() {
     .unwrap();
     assert_eq!(scanner.scan_mem(b"").unwrap().rules.len(), 1);
 }
+
+#[test]
+fn frequent_first_pattern_does_not_hide_later_pattern_or_xor_key() {
+    let scanner = compile(
+        r#"rule test { strings: $a="alpha" $b="beta" xor condition: all of them }"#,
+        1,
+        1,
+    )
+    .unwrap();
+    let bytes = format!("{}beta", "alpha".repeat(30));
+    let mut p = ProcessResult::new(1, "fixture".into());
+    p.status = "Scanned".into();
+    let rows = detections(&scanner, scanner.scan_mem(bytes.as_bytes()).unwrap(), &p);
+    let locations: serde_json::Value = serde_json::from_str(&rows[0].match_locations).unwrap();
+    assert_eq!(locations.as_array().unwrap().len(), 2);
+    assert_eq!(locations[1]["Pattern"], "$b");
+    assert_eq!(locations[1]["XorKey"], 0);
+}

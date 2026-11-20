@@ -21,7 +21,7 @@ Kumade does not bundle or relicense Forge rules. The downloaded source retains i
 
 ## Results
 
-- `YaraDetections.csv` / `.jsonl`: one row per matching process/rule. Includes hostname, PID, verified image path, process creation time, rule/tags/metadata and up to 16 pattern/address/length locations. Raw process bytes are not saved.
+- `YaraDetections.csv` / `.jsonl`: one row per matching process/rule. Includes hostname, PID, verified image path, process creation time, rule/tags/metadata and up to 16 pattern/address/length/XOR-key locations (one first occurrence per pattern, so an early frequent pattern does not hide later patterns). XOR key 0 indicates no XOR transformation for that match. Raw process bytes are not saved.
 - `YaraProcesses.csv` / `.jsonl`: every selected/enumerated process, including failures, exits, timeouts and the collector exclusion. Read counts/bytes include module refetches, not unique memory coverage. Guard regions are explicitly counted and excluded.
 - `Summary.json`: completion marker, rule/source hashes, counts, compilation/scan/total elapsed time, collector CPU seconds and peak working set (including rule compilation). `RunStarted.json` without `Summary.json` indicates an interrupted or failed run. Tables can be empty while still containing CSV headers.
 - `Rules.yar`: exact rule source used. No sensitive process bytes are stored in it.
