@@ -241,6 +241,24 @@ pub fn prepare_sources(discovery: &mut SourceDiscovery, timeout_seconds: u64) ->
     }
 }
 
+/// Provider capability, not filesystem names, determines snapshot support.
+#[cfg(any(windows, test))]
+fn partition_volumes(volumes: Vec<(String, bool)>, skip: bool) -> Result<(Vec<String>, Vec<String>)> {
+    let mut seen = std::collections::HashSet::new();
+    let (mut supported, mut unsupported) = (Vec::new(), Vec::new());
+    for (volume, yes) in volumes {
+        ensure!(seen.insert(volume.to_ascii_lowercase()), "Duplicate VSS volume");
+        if yes {
+            supported.push(volume);
+        } else {
+            ensure!(skip, "VSS does not support {volume}; no live fallback was used");
+            unsupported.push(volume);
+        }
+    }
+    ensure!(!supported.is_empty(), "No selected volumes support VSS; no live fallback was used");
+    Ok((supported, unsupported))
+}
+
 pub fn snapshot_device_root(device: &Path) -> Result<PathBuf> {
     let text = device.to_str().context("Unsupported VSS device name")?;
     let prefix = r"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy";
@@ -316,6 +334,16 @@ mod tests {
         assert_eq!(record.bytes_read, 0);
         assert!(!record.verified);
         assert_eq!(std::fs::read_dir(&output).unwrap().count(), 0);
+    }
+    #[test]
+    fn unsupported_provider_volumes_are_explicit_and_never_become_live_fallbacks() {
+        let volumes = vec![("supported".into(), true), ("unsupported".into(), false)];
+        let (yes, no) = partition_volumes(volumes.clone(), true).unwrap();
+        assert_eq!(yes, ["supported"]);
+        assert_eq!(no, ["unsupported"]);
+        assert!(partition_volumes(volumes, false).unwrap_err().to_string().contains("no live fallback"));
+        assert!(partition_volumes(vec![("unsupported".into(), false)], true).is_err());
+        assert!(partition_volumes(vec![("same".into(), true), ("SAME".into(), false)], true).is_err());
     }
     #[test]
     fn identifiers_and_device_names_are_strict() {

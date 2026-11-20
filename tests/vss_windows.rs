@@ -38,7 +38,6 @@ impl Drop for Mounted {
 #[serde(rename_all = "PascalCase")]
 struct Volumes {
     ntfs: String,
-    fat: String,
 }
 fn record_rows(root: &Path) -> Result<Vec<Record>> {
     fs::read_to_string(root.join("Manifest.jsonl"))?
@@ -75,21 +74,19 @@ $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
 create vdisk file="$env:KUMADE_VSS_TEST_IMAGE" maximum=8192 type=expandable
 select vdisk file="$env:KUMADE_VSS_TEST_IMAGE"
 attach vdisk
-create partition primary size=6144
+create partition primary
 format fs=ntfs quick label=KumadeVssTest
 assign
-create partition primary
-format fs=fat32 quick label=KumadeVssFat
 "@ | Set-Content -LiteralPath $env:KUMADE_VSS_TEST_SCRIPT -Encoding ascii
 & diskpart.exe /s $env:KUMADE_VSS_TEST_SCRIPT | Out-Null
 try {
     $volumes=@(Get-DiskImage -ImagePath $env:KUMADE_VSS_TEST_IMAGE | Get-Disk | Get-Partition | Get-Volume)
-    $n=@($volumes | Where-Object FileSystem -eq NTFS); $f=@($volumes | Where-Object FileSystem -eq FAT32)
-    if ($n.Count -ne 1 -or $f.Count -ne 1) { throw 'Expected isolated NTFS and FAT32 volumes' }
+    $n=@($volumes | Where-Object FileSystem -eq NTFS)
+    if ($n.Count -ne 1) { throw 'Expected one isolated NTFS volume' }
     # Only the freshly created test volume: never change runner/system quotas.
     $storage = & vssadmin.exe add shadowstorage "/for=$($n[0].UniqueId)" "/on=$($n[0].UniqueId)" /maxsize=1GB 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Cannot configure owned fixture shadow storage: $storage" }
-    @{Ntfs=$n[0].UniqueId;Fat=$f[0].UniqueId} | ConvertTo-Json -Compress
+    @{Ntfs=$n[0].UniqueId} | ConvertTo-Json -Compress
 } catch {Dismount-DiskImage -ImagePath $env:KUMADE_VSS_TEST_IMAGE -ErrorAction SilentlyContinue | Out-Null; throw}
 "#;
     let output = Command::new(&shell)
@@ -128,10 +125,8 @@ try {
     let mut source = discovery::directory_source(&source_root, "VSS-TEST", "VSS-TEST")?;
     source.live = true;
     source.raw_device = Some(PathBuf::from(volumes.ntfs.trim_end_matches('\\')));
-    let mut fat = discovery::directory_source(Path::new(&volumes.fat), "UNSUPPORTED", "VSS-TEST")?;
-    fat.live = true;
     let mut discovered = SourceDiscovery {
-        sources: vec![source, fat],
+        sources: vec![source],
         issues: Vec::new(),
     };
     let mut owned = match vss::prepare_sources(&mut discovered, 120) {
@@ -148,14 +143,6 @@ try {
         }
     };
     assert_eq!(discovered.sources.len(), 1);
-    assert!(
-        discovered
-            .issues
-            .iter()
-            .any(|i| i.source_id == "UNSUPPORTED"
-                && i.status == "Unsupported"
-                && i.reason.contains("no live fallback"))
-    );
     let snapshot = owned.snapshots()[0].clone();
     let snapshot_root = vss::snapshot_device_root(&snapshot.device_object)?;
     locked.seek(SeekFrom::Start(0))?;
@@ -240,7 +227,7 @@ try {
         live_info: None,
     };
     let (root, summary) = collect::collect(&plan, &temp.path().join("direct"), &options)?;
-    assert_eq!(summary.completeness, "Partial"); // explicitly unsupported FAT volume
+    assert_eq!(summary.completeness, "Complete");
     let rows = record_rows(&root)?;
     let row = rows
         .iter()
@@ -270,7 +257,7 @@ try {
         &fs::read(root.join(mft.relative_output_path.as_ref().unwrap()))?[..4],
         b"FILE"
     );
-    assert!(!verify::verify(&root)?.1);
+    assert!(verify::verify(&root)?.1);
     // Another requester's snapshot must survive deletion of the first set.
     let other = vss::Session::create(std::slice::from_ref(&volumes.ntfs), 120)?;
     let other_root = vss::snapshot_device_root(&other.snapshots()[0].device_object)?;

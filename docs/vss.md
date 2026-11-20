@@ -18,7 +18,10 @@ is still excluded unless it is the running Windows volume. Without `--volume`,
 VSS is requested for all discovered live sources. If a selected volume does not
 support the provider, it is explicitly reported as `Unsupported` and not read live;
 other supported sources can still be acquired, with a partial result. If no
-supported sources remain, acquisition fails before output creation.
+supported sources remain, acquisition fails before output creation. Capability is
+queried from the provider rather than inferred from a filesystem name; a supported
+volume can still fail because its current shadow-storage configuration is inadequate.
+Such snapshot-set creation failures stop acquisition.
 
 Offline `--source` collection and `plan` cannot create VSS snapshots. Volume
 selection without `--vss` is also available for normal live acquisition. An

@@ -130,18 +130,11 @@ impl Session {
             snapshots: Vec::new(),
             _same_thread: PhantomData,
         };
-        let mut supported = Vec::new();
-        let mut unsupported = Vec::new();
+        let mut availability = Vec::new();
         for v in volumes {
             let root = super::volume_identifier(v)?;
             let normalized =
                 crate::platform::volume_identity(&root)?.context("VSS volume is not local")?;
-            ensure!(
-                !supported
-                    .iter()
-                    .any(|p: &String| p.eq_ignore_ascii_case(&normalized)),
-                "Duplicate VSS volume"
-            );
             let mut yes = 0;
             let name = wide(&normalized);
             check(
@@ -149,22 +142,10 @@ impl Session {
                 unsafe { kumade_vss_supported(client, name.as_ptr(), &mut yes) },
                 "Query VSS volume support",
             )?;
-            if yes == 0 {
-                ensure!(
-                    skip_unsupported,
-                    "VSS does not support {normalized}; no live fallback was used"
-                );
-                unsupported.push(normalized);
-            } else {
-                supported.push(normalized);
-            }
+            availability.push((normalized, yes != 0));
         }
-        ensure!(
-            !supported.is_empty(),
-            "No selected volumes support VSS; no live fallback was used"
-        );
-        check(
-            // SAFETY: initialized requester, called once before adding any volumes.
+        let (supported, unsupported) = super::partition_volumes(availability, skip_unsupported)?;
+        // SAFETY: initialized requester, called once before adding any volumes.
             unsafe { kumade_vss_start(client) },
             "Start VSS snapshot set",
         )?;
