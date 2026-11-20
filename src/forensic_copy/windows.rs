@@ -360,6 +360,9 @@ fn promote_image(partial: &Path, image: &Path) -> Result<()> {
 }
 
 pub(super) fn run(options: &Options) -> Result<()> {
+    if options.vss {
+        crate::vss::check_host()?;
+    }
     crate::platform::enable_backup_privilege()
         .context("forensic-copy must run from an elevated (Administrator) session")?;
     let root = source_root(&options.source)?;
@@ -400,6 +403,43 @@ pub(super) fn run(options: &Options) -> Result<()> {
         options.reserve_mib,
         &fsname,
     )?;
+    let mut snapshots = if options.vss {
+        if !options.quiet {
+            crate::ui::status("Creating a crash-consistent VSS snapshot…");
+        }
+        Some(crate::vss::Session::create(
+            std::slice::from_ref(&source.volume_name),
+            options.vss_timeout,
+        )?)
+    } else {
+        None
+    };
+    let snapshot = snapshots
+        .as_ref()
+        .and_then(|s| s.snapshots().first())
+        .cloned()
+        .map(|mut s| {
+            s.original_root = std::path::PathBuf::from(&root);
+            s
+        });
+    let source_file = if let Some(snapshot) = &snapshot {
+        open_volume(
+            snapshot
+                .device_object
+                .to_str()
+                .context("Unsupported snapshot device name")?,
+            true,
+        )?
+    } else {
+        source_file
+    };
+    if snapshot.is_some() {
+        let (snapshot_length, snapshot_sector) = crate::raw::device_geometry(&source_file)?;
+        ensure!(
+            snapshot_length == length && snapshot_sector == sector as usize,
+            "VSS partition geometry differs from the original volume; refusing a truncated image"
+        );
+    }
     // Required to include the final sectors beyond the filesystem's normal read boundary.
     ioctl(&source_file, FSCTL_ALLOW_EXTENDED_DASD_IO, &[], 0)
         .context("Cannot enable complete read-only partition access")?;
@@ -459,7 +499,12 @@ pub(super) fn run(options: &Options) -> Result<()> {
         image_sha256: None,
         readback: "None".into(),
         verified: false,
-        consistency: "Sequential raw read; no snapshot or source lock. A live writable source can change during acquisition.".into(),
+        consistency: if snapshot.is_some() {
+            "Crash-consistent VSS logical-volume view without application writers. Paging/hibernation and VSS-excluded data are not preserved as live physical media.".into()
+        } else {
+            "Sequential raw read; no snapshot or source lock. A live writable source can change during acquisition.".into()
+        },
+        snapshot,
         error: None,
     };
     write_report(&mut report_file, &report)?;
@@ -491,6 +536,8 @@ pub(super) fn run(options: &Options) -> Result<()> {
         Ok(())
     })();
     progress.finish_and_clear();
+    // Release raw snapshot handles before requester cleanup can delete the snapshot.
+    drop(source_reader);
     // Close the write handle: verification reopens the image with the file cache
     // bypassed, and the no-replace rename needs the file closed (Windows sharing rules).
     drop(image_file);
@@ -534,6 +581,9 @@ pub(super) fn run(options: &Options) -> Result<()> {
     report.verified = true;
     report.status = "Verified".into();
     write_report(&mut report_file, &report)?;
+    if let Some(s) = snapshots.as_mut() {
+        s.close().context("Image was saved and verified, but VSS cleanup failed; consult ForensicCopy.json snapshot IDs")?;
+    }
     if !options.quiet {
         crate::ui::field(
             "Bytes copied",
@@ -606,6 +656,8 @@ mod tests {
             output: output.clone(),
             reserve_mib: 0,
             quiet: true,
+            vss: false,
+            vss_timeout: 120,
         });
         let message = format!("{:#}", result.unwrap_err());
         ensure!(

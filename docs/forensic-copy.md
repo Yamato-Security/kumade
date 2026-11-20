@@ -24,9 +24,22 @@ necessary, then creates a fresh hostname/UTC-start directory. Repeating a run
 with the same name fails instead of overwriting it. There is no raw-disk
 write/format mode and no overwrite switch.
 
+To read a crash-consistent VSS view, add `--vss` (native elevated Windows):
+
+```powershell
+.\kumade.exe forensic-copy --vss -s C: -o E:\Evidence
+```
+
+The original live volume still supplies the physical source identity for destination
+checks. The receipt gains `Snapshot` provenance and states the different consistency
+scope. This is a logical snapshot image: data omitted by VSS is not reconstructed,
+and it is not an exact representation of the live physical media. See [VSS acquisition](vss.md).
+
 Other options:
 
 - `--reserve-mib <MiB>`: leave this much space free (default: 2048 MiB).
+- `--vss`: image an owned VSS snapshot instead of the changing live volume.
+- `--vss-timeout <SECONDS>`: async snapshot wait (default 120; requires `--vss`).
 - `-q, --quiet`: suppress the banner, progress and routine results; errors remain visible.
 
 The command is sequential and uses bounded buffers; it does not allocate memory
@@ -121,7 +134,7 @@ therefore represents the sequentially observed bytes, not necessarily a single
 point-in-time filesystem state. Hash verification proves that the saved image
 matches the acquired byte stream; it does not prove the live source stayed static.
 For consistent evidence, use an offline/read-only source or an appropriate
-write-blocking workflow. This command does not provide VSS acquisition.
+write-blocking workflow. `--vss` provides a crash-consistent logical snapshot instead; it does not coordinate application writers.
 
 The image reflects bytes exposed by the Windows logical-volume stack. Encryption
 filters can affect that view; it is not a guarantee of the original encrypted

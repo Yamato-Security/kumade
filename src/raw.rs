@@ -165,7 +165,7 @@ pub fn is_missing(error: &anyhow::Error) -> bool {
     })
 }
 
-fn filetime(ticks: u64) -> Option<String> {
+pub(crate) fn filetime(ticks: u64) -> Option<String> {
     // NTFS uses zero for an unset timestamp. Do not turn it into a claimed
     // observation at 1601-01-01; Windows also cannot restore that sentinel
     // through FileTimes. Original NTFS bytes remain unchanged in acquisition.

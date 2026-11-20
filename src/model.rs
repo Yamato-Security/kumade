@@ -38,6 +38,17 @@ pub struct Source {
     /// IIS or SQL Server log on a data volume is evidence too.
     #[serde(default)]
     pub metadata_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<crate::vss::Snapshot>,
+}
+
+impl Source {
+    /// The live origin stays separate from the frozen read root.
+    pub fn live_root(&self) -> &std::path::Path {
+        self.snapshot
+            .as_ref()
+            .map_or(self.root.as_path(), |s| s.original_root.as_path())
+    }
 }
 
 #[derive(Default, Debug)]

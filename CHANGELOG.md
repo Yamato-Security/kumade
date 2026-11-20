@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add opt-in `--vss` for live artifact collection (directory/VHDX/E01) and
+  `forensic-copy`, plus `--volume` selection for live collection. Create an owned
+  Microsoft Software Provider snapshot set with crash-consistent, no-writer,
+  auto-release semantics; remap both file reads and raw NTFS fallback to it.
+  Record snapshot provenance, reject unsupported/emulated requesters, report
+  unsupported volumes and VSS-excluded paging data without live fallback, and
+  delete only this run's snapshots. Source builds use a small Windows SDK C++
+  ABI bridge, statically linked into the executable; VSS is loaded on demand.
+
 - Add `forensic-copy -s C: -o E:\Evidence` to image one logical partition into a
   raw `.dd` file on a different external physical disk. Check actual volume and
   disk identities, available space and filesystem limits before output creation;

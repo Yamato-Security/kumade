@@ -31,6 +31,8 @@ pub struct Options {
     pub output: std::path::PathBuf,
     pub reserve_mib: u64,
     pub quiet: bool,
+    pub vss: bool,
+    pub vss_timeout: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,6 +84,8 @@ pub struct Report {
     pub verified: bool,
     /// Raw reads do not provide VSS or a point-in-time snapshot of a writable volume.
     pub consistency: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<crate::vss::Snapshot>,
     pub error: Option<String>,
 }
 

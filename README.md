@@ -19,6 +19,8 @@ Windows examples below.
 
 ## Implemented
 
+- Optional [VSS acquisition](docs/vss.md) with `--vss`: owned crash-consistent snapshots for locked-file collection and partition imaging, snapshot provenance and automatic cleanup. `--volume C:` selects live collection volumes.
+
 - [Raw partition imaging](docs/forensic-copy.md): `forensic-copy` reads a logical Windows partition into a `.dd` file on a different external disk, with physical-disk separation checks, SHA-256 readback verification and a JSON receipt.
 
 - [Live-response inventory](docs/live-info.md): 59 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.
@@ -68,6 +70,9 @@ On Windows, run an elevated PowerShell session for live collection:
 
 ```powershell
 .\kumade.exe -o E:\Kumade-Results
+
+# Use crash-consistent snapshots of selected live volumes for locked files:
+.\kumade.exe collect --vss --volume C: -o E:\Evidence
 
 # Or save the entire acquisition in one new NTFS VHDX:
 .\kumade.exe --vhdx E:\Evidence
@@ -151,7 +156,7 @@ uses hashes, not an authenticated signing identity.
 
 ## Not implemented yet
 
-RAM capture/paired runtime pagefile discovery, VSS acquisition, external processing,
+RAM capture/paired runtime pagefile discovery, application-writer-coordinated VSS backups, external processing,
 image-source CLI support, ZIP archive packaging, cloud upload, resume,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.

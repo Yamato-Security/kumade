@@ -346,3 +346,28 @@ fn forensic_copy_rejects_unsupported_hosts_without_creating_output() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("requires elevated Windows"));
     assert!(!output.exists());
 }
+
+#[test]
+fn vss_flags_reject_offline_plans_and_invalid_timeouts_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("no-output");
+    for extra in [
+        vec!["plan", "--vss"],
+        vec!["collect", "--vss", "-d", "offline"],
+        vec!["collect", "--vss-timeout", "30"],
+        vec!["collect", "--vss", "--vss-timeout", "0"],
+        vec!["collect", "--volume", "C:", "-d", "offline"],
+    ] {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kumade"));
+        cmd.args(&extra).arg("-o").arg(&output);
+        let result = cmd.output().unwrap();
+        assert!(!result.status.success(), "{extra:?}");
+        assert!(!output.exists());
+    }
+    let help = run(&["collect", "--help"]);
+    let text = String::from_utf8(help.stdout).unwrap();
+    assert!(text.contains("--vss"));
+    assert!(text.contains("--volume"));
+    let help = run(&["forensic-copy", "--help"]);
+    assert!(String::from_utf8(help.stdout).unwrap().contains("--vss"));
+}
