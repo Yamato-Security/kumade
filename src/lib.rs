@@ -27,3 +27,5 @@ pub mod raw;
 pub mod ui;
 pub mod verify;
 pub mod vhdx;
+
+pub mod vss;

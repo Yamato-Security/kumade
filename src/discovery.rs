@@ -120,6 +120,7 @@ pub fn scoped_directory_source(
         computer: computer.to_owned(),
         live: false,
         raw_device: None,
+        snapshot: None,
         profile_roots: profiles,
         excluded_profiles: Vec::new(),
         metadata_only,

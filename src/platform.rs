@@ -273,12 +273,22 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("Unsupported source-root name"))?;
         // Compare paths in the same volume namespace. DOS-name lookup fails
         // for an accessible recovery/EFI volume that has no drive letter.
-        let flags = if root.to_ascii_lowercase().starts_with("\\\\?\\volume{") {
+        let shadow = root
+            .to_ascii_lowercase()
+            .starts_with("\\\\?\\globalroot\\device\\harddiskvolumeshadowcopy");
+        let flags = if shadow {
+            windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_NT
+        } else if root.to_ascii_lowercase().starts_with("\\\\?\\volume{") {
             windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_GUID
         } else {
             windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_DOS
         };
         let actual = windows::final_path(file, flags)?;
+        let actual = if shadow {
+            std::path::PathBuf::from(format!("\\\\?\\GLOBALROOT{}", actual.to_string_lossy()))
+        } else {
+            actual
+        };
         let actual = actual
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Unsupported final source name"))?;

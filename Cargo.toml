@@ -9,6 +9,9 @@ description = "Windows forensic evidence collector by Yamato Security"
 repository = "https://github.com/Yamato-Security/kumade"
 readme = "README.md"
 
+[build-dependencies]
+cc = "1"
+
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"

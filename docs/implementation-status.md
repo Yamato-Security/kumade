@@ -1,6 +1,6 @@
 # Kumade implementation status
 
-Updated 19 November 2026. The architecture document is the target design;
+Updated 20 November 2026. The architecture document is the target design;
 this file distinguishes it from the code actually implemented.
 
 The first increment uses one Rust package with separate library modules for
@@ -17,6 +17,7 @@ verification. Splitting the stable modules into workspace crates remains possibl
 | `list` | List embedded or explicitly supplied acquisition definitions |
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
 | `verify` | Verify sealed metadata, observation accounting and every referenced payload |
+| `forensic-copy` | Copy a logical partition to a verified image on a separate external drive; optional VSS |
 
 `collect` also accepts `--vhdx FILE` and optional `--vhdx-size-gib GIB` on
 Windows. The new dynamic NTFS image holds the acquisition directly. Available
@@ -36,6 +37,14 @@ No other proposed commands are exposed as working functionality.
 segments. Conversion uses an owned temporary VHDX, read-only disk streaming,
 full media-hash verification and a receipt. See [E01 output](e01-output.md) for
 segment handling, temporary-space requirements and recovery limits.
+
+`collect --vss` and `forensic-copy --vss` can create owned, crash-consistent
+snapshots on native elevated Windows. Artifact collection supports repeated
+`--volume` selection. Both normal reads and raw NTFS fallback use the snapshot;
+unsupported volumes and snapshot-omitted paging files are explicit partial results,
+never a live fallback. Snapshot provenance is retained and only this requester’s
+set is cleaned up. Application writers and existing-snapshot enumeration remain
+unimplemented. See [VSS acquisition](vss.md) for prerequisites and limitations.
 
 ## Integrity and failure behavior
 
@@ -77,7 +86,7 @@ No live company system or private company evidence is used in platform CI.
    custom event-log locations and pagefile discovery.
 2. Qualified memory-provider interface and paired acquisition with independent
    timing/range validation; no automatic untrusted helper download.
-3. Existing VSS collection and optional controlled creation of owned snapshots.
+3. Existing VSS enumeration/collection and application-writer coordination.
 4. Structural validation using existing Yamato parsers without altering originals.
 5. Disk-backed planning, device-aware concurrency, durable resume/cancellation.
 6. Portable definition import, streaming archives and cloud transport.

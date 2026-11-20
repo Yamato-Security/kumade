@@ -43,7 +43,7 @@ The default is not a full forensic disk image or a recursive copy of every file 
 | Paging/hibernation | Collect discovered pagefiles, swapfile and hibernation artifacts when present; include their large sizes in preflight |
 | RAM | Opt-in because it needs a qualified memory provider and has different operational impact |
 | Existing VSS | Discover and collect applicable evidence from all accessible existing snapshots; retain each origin even when bytes match |
-| New VSS | Opt-in with `--vss create`; default collection must not create snapshots or evict existing ones |
+| New VSS | Opt-in with `--vss`; default collection must not create snapshots or evict existing ones |
 | Unavailable privileges | Report a clear requirement; an explicit `--limited` mode may run a reduced, visibly incomplete collection |
 | Processing | Acquisition validation only by default; optional processing is separately requested |
 | Destination | New run directory; no implicit deletion or reuse of an earlier result directory |
@@ -254,9 +254,13 @@ Raw reads bypass some access restrictions, not time. Read file identity/metadata
 
 ## 8. VSS policy and database consistency
 
+The current implementation supports opt-in, newly created no-writer snapshots;
+see [VSS acquisition](vss.md). Existing-snapshot enumeration and the volatile-first
+workflow below remain target-design work.
+
 Default behavior reads **existing** snapshots and live evidence as separate sources. Record snapshot GUID, set ID where available, origin volume, snapshot time and actual read interval. Cross-volume snapshots from unrelated times must not be described as one consistent machine state.
 
-`--vss create` requests a new snapshot set after the volatile phase. Use documented copy-backup semantics and qualify writer interactions. Test that the chosen implementation does not truncate application logs or disturb backups. Check diff-area capacity and refuse an operation that would require deleting existing snapshots. A created snapshot is a documented acquisition-induced change.
+`--vss` requests a new snapshot set after the volatile phase. Use documented copy-backup semantics and qualify writer interactions. Test that the chosen implementation does not truncate application logs or disturb backups. Check diff-area capacity and refuse an operation that would require deleting existing snapshots. A created snapshot is a documented acquisition-induced change.
 
 Delete only a snapshot Kumade itself created and owns, only after its dependent reads finish or a controlled cleanup path runs; never delete pre-existing snapshots. Preserve owned-resource identifiers for crash recovery, so cleanup cannot remove somebody else's snapshot or service.
 

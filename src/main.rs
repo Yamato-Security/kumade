@@ -68,6 +68,15 @@ struct CollectionArgs {
     /// Mounted Windows volume directory; repeat for additional volumes
     #[arg(short = 'd', long = "source", value_name = "DIR")]
     sources: Vec<PathBuf>,
+    /// Select a live volume such as C:; repeat (default: all discovered fixed volumes)
+    #[arg(long = "volume", value_name = "VOLUME", conflicts_with = "sources")]
+    volumes: Vec<String>,
+    /// Acquire live files from owned, crash-consistent VSS snapshots
+    #[arg(long, conflicts_with = "sources")]
+    vss: bool,
+    /// VSS snapshot creation deadline in seconds
+    #[arg(long, value_name = "SECONDS", requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    vss_timeout: Option<u64>,
     /// Output parent directory; plan writes Plan.json here
     #[arg(short, long, value_name = "DIR")]
     output: Option<PathBuf>,
@@ -129,6 +138,12 @@ struct ForensicCopyArgs {
     /// Destination directory on a different external physical drive
     #[arg(short, long, value_name = "DIR")]
     output: PathBuf,
+    /// Read from an owned, crash-consistent VSS snapshot
+    #[arg(long)]
+    vss: bool,
+    /// VSS snapshot creation deadline in seconds
+    #[arg(long, requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    vss_timeout: Option<u64>,
     /// Keep this much destination space free (MiB)
     #[arg(long, default_value_t = 2048)]
     reserve_mib: u64,
@@ -288,6 +303,8 @@ fn run() -> Result<u8> {
                 output: args.output,
                 reserve_mib: args.reserve_mib,
                 quiet: args.quiet,
+                vss: args.vss,
+                vss_timeout: args.vss_timeout.unwrap_or(120),
             })?;
             return Ok(0);
         }
@@ -359,7 +376,10 @@ fn run() -> Result<u8> {
                 },
             );
             ui::field("RAM acquisition", "Not implemented");
-            ui::field("VSS acquisition", "Not implemented");
+            ui::field(
+                "VSS acquisition",
+                "--vss; native elevated Windows, crash-consistent snapshots without application writers",
+            );
             ui::field("Cloud transport", "Not implemented");
             ui::field(
                 "VHDX output",
@@ -416,6 +436,17 @@ fn run() -> Result<u8> {
         None => (cli.options, false),
     };
     ensure!(
+        !plan_only || !options.vss,
+        "plan does not create VSS snapshots; use collect --vss"
+    );
+    if options.vss {
+        kumade::vss::check_host()?;
+    }
+    ensure!(
+        options.volumes.is_empty() || cfg!(windows),
+        "--volume requires Windows live acquisition"
+    );
+    ensure!(
         !plan_only || (options.vhdx.is_none() && options.e01.is_none()),
         "plan does not create containers; use -o DIR for a plan"
     );
@@ -448,7 +479,19 @@ fn run() -> Result<u8> {
         .unwrap_or_else(|| options.output.clone())
         .unwrap_or_else(default_results_dir);
     let destination = paths::resolve_future(&destination)?;
-    let discovered = sources(&options, &destination)?;
+    let mut discovered = sources(&options, &destination)?;
+    kumade::vss::select_sources(&mut discovered, &options.volumes)?;
+    let mut snapshots = if options.vss {
+        if !options.quiet {
+            ui::status("Creating crash-consistent VSS snapshots…");
+        }
+        Some(kumade::vss::prepare_sources(
+            &mut discovered,
+            options.vss_timeout.unwrap_or(120),
+        )?)
+    } else {
+        None
+    };
     let sources = discovered.sources;
     let output = if options.vhdx.is_some() || options.e01.is_some() {
         let computer = sources
@@ -476,7 +519,7 @@ fn run() -> Result<u8> {
     if !options.quiet
         && sources
             .iter()
-            .any(|s| s.live && output.starts_with(&s.root))
+            .any(|s| s.live && output.starts_with(s.live_root()))
     {
         ui::field(
             "Notice",
@@ -550,13 +593,29 @@ fn run() -> Result<u8> {
             None
         },
     };
-    let summary = if options.e01.is_some() {
-        e01::collect(&plan, &output, options.e01_size_gib, &collect_options)?
+    let result = if options.e01.is_some() {
+        e01::collect(&plan, &output, options.e01_size_gib, &collect_options)
     } else if options.vhdx.is_some() {
-        vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)?
+        vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)
     } else {
-        collect::collect(&plan, &output, &collect_options)?.1
+        collect::collect(&plan, &output, &collect_options).map(|(_, summary)| summary)
     };
+    let cleanup = snapshots.as_mut().map(|s| s.close()).transpose();
+    let summary = match (result, cleanup) {
+        (Ok(summary), Ok(_)) => summary,
+        (Err(error), Ok(_)) => return Err(error),
+        (Ok(_), Err(error)) => {
+            return Err(error).context(
+                "Evidence was saved, but VSS cleanup failed; consult snapshot IDs in Plan.json",
+            );
+        }
+        (Err(error), Err(cleanup)) => {
+            anyhow::bail!("Acquisition failed: {error:#}; VSS cleanup also failed: {cleanup:#}")
+        }
+    };
+    if options.vss && !options.quiet {
+        ui::field("VSS cleanup", "Owned snapshot set released");
+    }
     Ok(if summary.completeness == "Partial" {
         3
     } else {

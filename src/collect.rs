@@ -190,7 +190,12 @@ fn acquire_one_inner(
         stream_name: item.stream.clone(),
         artifact_ids: item.artifacts.join(";"),
         relative_output_path: None,
-        method: "NativeRead".into(),
+        method: if source.snapshot.is_some() {
+            "VssNativeRead"
+        } else {
+            "NativeRead"
+        }
+        .into(),
         status: "Failed".into(),
         reason: String::new(),
         started_utc: utc_now(),
@@ -205,6 +210,36 @@ fn acquire_one_inner(
         accessed_utc: None,
         source_file_id: None,
     };
+    if source.snapshot.is_some() && crate::vss::omitted_paging_file(&item.relative_path) {
+        // Summary, Coverage.csv, Errors.csv and `verify` know Acquired, Partial,
+        // Failed and NotPresent. A paging file that exists in the snapshot is a
+        // planned file that was not acquired, so the run is Partial; a raw
+        // candidate that does not exist on this volume stays a legitimate absence.
+        let missing_candidate = item.before.is_none()
+            && source
+                .root
+                .join(&item.relative_path)
+                .symlink_metadata()
+                .is_err_and(|e| e.kind() == io::ErrorKind::NotFound);
+        // A vanished/unreadable snapshot makes every child look missing. That
+        // does not establish that this particular file was absent.
+        if missing_candidate && !source.root.is_dir() {
+            record.status = "Failed".into();
+            record.reason =
+                "Cannot establish paging-file absence: VSS snapshot root is unavailable or unreadable"
+                    .into();
+        } else if missing_candidate {
+            record.status = "NotPresent".into();
+            record.reason = "Not present in the VSS snapshot".into();
+        } else {
+            record.status = "Failed".into();
+            record.reason =
+                "VSS omits paging/hibernation contents; no live-file or raw-live fallback was used"
+                    .into();
+        }
+        record.finished_utc = utc_now();
+        return record;
+    }
     let outcome = (|| -> Result<()> {
         let relative = if native_ntfs {
             metadata::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
@@ -291,7 +326,12 @@ fn acquire_one_inner(
                         return Err(native_error)
                             .context("Native read failed; source has no raw NTFS provider");
                     };
-                    record.method = "RawNTFS".into();
+                    record.method = if source.snapshot.is_some() {
+                        "VssRawNTFS"
+                    } else {
+                        "RawNTFS"
+                    }
+                    .into();
                     if !raw_cache.contains_key(device) {
                         raw_cache.insert(device.clone(), RawVolume::open(device)?);
                     }
@@ -381,7 +421,18 @@ fn acquire_one_inner(
             Err(error) => {
                 record.relative_output_path =
                     Some(paths::relative_text(partial.strip_prefix(root)?)?);
-                if item.before.is_none() && crate::raw::is_missing(&error) && record.bytes_read == 0
+                // Opening a missing raw device also returns NotFound. Only a
+                // successfully opened provider can establish a missing NTFS
+                // object/stream; never count provider failure as artifact absence.
+                let raw_available = source
+                    .raw_device
+                    .as_ref()
+                    .is_none_or(|device| raw_cache.contains_key(device));
+                if item.before.is_none()
+                    && crate::raw::is_missing(&error)
+                    && record.bytes_read == 0
+                    && raw_available
+                    && source.root.is_dir()
                 {
                     record.status = "NotPresent".into();
                     record.reason = format!("{error:#}");
@@ -518,7 +569,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     )?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     // Capture volatile state before potentially lengthy file copying. Explicit offline
     // collection never supplies this option; container backends carry it unchanged.
