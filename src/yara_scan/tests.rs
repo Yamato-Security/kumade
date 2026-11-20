@@ -155,3 +155,14 @@ impl boreal::memory::FragmentedMemory for TestMemory {
         })
     }
 }
+
+#[test]
+fn windows_utf8_bom_and_console_rules_compile_without_console_output() {
+    let scanner = compile(
+        "\u{feff}import \"console\" rule control { condition: console.log(\"inert\") }",
+        1,
+        1,
+    )
+    .unwrap();
+    assert_eq!(scanner.scan_mem(b"").unwrap().rules.len(), 1);
+}

@@ -11,7 +11,6 @@ use boreal::{
 use clap::{Args, ValueEnum};
 use rayon::prelude::*;
 use serde::Serialize;
-
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -156,9 +155,11 @@ fn compile_with_warnings(
         .add_module(boreal::module::Console::with_callback(|_| {}))
         .build();
     compiler.set_params(CompilerParams::default().disable_includes(true));
-    let status = compiler.add_rules_str(source).map_err(|e| {
-        anyhow::anyhow!("YARA compilation failed; no rules were silently discarded: {e}")
-    })?;
+    let status = compiler
+        .add_rules_str(source.strip_prefix('\u{feff}').unwrap_or(source))
+        .map_err(|e| {
+            anyhow::anyhow!("YARA compilation failed; no rules were silently discarded: {e}")
+        })?;
     let warnings = status.warnings().map(ToString::to_string).collect();
     let mut scanner = compiler.finalize();
     ensure!(
@@ -248,6 +249,7 @@ fn load_rules(options: &Options) -> Result<(String, String)> {
     } else {
         let url = rule_url(options.ruleset, &options.rules_release)?;
         let agent: ureq::Agent = ureq::Agent::config_builder()
+            .https_only(true)
             .timeout_global(Some(Duration::from_secs(120)))
             .build()
             .into();
@@ -496,8 +498,8 @@ fn run_with(
     let summary = serde_json::json!({
         "Status": if incomplete == 0 {"Finished"} else {"Partial"},
         "SeDebugPrivilege":privilege,"CompilationWarnings":warnings.len(),"Engine":"boreal", "EngineVersion":"1.4.0", "KumadeVersion":env!("CARGO_PKG_VERSION"),
-        "RuleSet": if options.rules.is_some() {"local"} else {options.ruleset.name()}, "RulesRelease":options.rules_release,
-        "RuleSource":provenance,"RulesSHA256":source_hash,"Rules":rules,"PublicRules":public_rules,
+        "RuleSet": if options.rules.is_some() {"local"} else {options.ruleset.name()}, "RulesRelease":if options.rules.is_some() {None} else {Some(&options.rules_release)},
+        "RuleSource":provenance,"RulesSHA256":source_hash,"Rules":rules,"PublicRules":public_rules,"MaxMatchesPerPattern":1000,
         "Processes":process_rows.len(),"Scanned":succeeded,"Incomplete":incomplete,
         "Skipped":process_rows.iter().filter(|p| p.status=="Skipped").count(),
         "MatchedProcesses":process_rows.iter().filter(|p|p.matches>0).count(),"Detections":detection_rows.len(),
