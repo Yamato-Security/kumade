@@ -294,10 +294,13 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The running Windows volume has full catalog scope; other local NTFS volumes
-/// have metadata-only scope. `destination` is the directory or container path this run
-/// will write to: a volume that merely holds the output is not evidence and is
-/// excluded, unless it is the running Windows volume, which is always acquired.
+/// Every local fixed or removable volume, lettered or not, with the catalog
+/// scope: logs, profiles and Recycle Bins live on data volumes too, so every
+/// volume is checked for every selected artifact. NTFS volumes add their raw
+/// metadata files. `destination` is the directory or container path this run
+/// will write to: the volume that merely holds the output is not evidence and
+/// is excluded by identity, unless it is the running Windows volume, which is
+/// always acquired.
 #[cfg(not(windows))]
 pub fn live_sources(_destination: Option<&Path>) -> Result<SourceDiscovery> {
     bail!(
@@ -751,23 +754,15 @@ mod windows {
                         }
                         let end = fsname.iter().position(|&c| c == 0).unwrap_or(fsname.len());
                         let ntfs = String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS");
-                        if !system && !ntfs {
-                            report.issues.push(Issue {
-                                source_id: id, path: mount, status: "Excluded".into(),
-                                reason: "Secondary volume is not NTFS; metadata-only collection does not apply".into(),
-                            });
-                            return Ok(None);
-                        }
-                        let mut source = crate::discovery::scoped_directory_source(
+                        let mut source = crate::discovery::directory_source(
                             Path::new(&mount),
                             &id,
                             &computer_name(),
-                            !system,
                         )?;
                         if ntfs {
                             source.raw_device = Some(guid.trim_end_matches('\\').into());
                         }
-                        for profile in profiles.iter().filter(|_| system) {
+                        for profile in &profiles {
                             if !profile.is_absolute()
                                 || is_remote_windows_path(&profile.to_string_lossy())
                             {
@@ -851,14 +846,8 @@ mod tests {
         let system = windows::windows_volume_name().unwrap();
         let sources = live_sources(None).unwrap().sources;
         assert_eq!(sources.iter().filter(|s| is_system(&system, s)).count(), 1);
-        for source in &sources {
-            assert!(source.live);
-            assert_eq!(source.metadata_only, !is_system(&system, source));
-            if source.metadata_only {
-                assert!(source.raw_device.is_some());
-                assert!(source.profile_roots.is_empty());
-            }
-        }
+        // Every local volume keeps the catalog scope; nothing is metadata-only by default.
+        assert!(sources.iter().all(|s| s.live && !s.metadata_only));
         // Output on the Windows volume never removes that volume from scope.
         let windows_root = sources
             .iter()
@@ -871,14 +860,14 @@ mod tests {
         assert!(report.sources.iter().any(|s| is_system(&system, s)));
         // A secondary volume that holds the output is excluded with a durable reason.
         if let Some(secondary) = sources.iter().find(|s| !is_system(&system, s)) {
-            let aliases = [
+            let mut aliases = vec![
                 secondary.root.clone(),
-                PathBuf::from(format!(
-                    "{}\\",
-                    secondary.raw_device.as_ref().unwrap().display()
-                )),
                 PathBuf::from(secondary.root.to_string_lossy().to_ascii_lowercase()),
             ];
+            // Non-NTFS volumes are sources too but have no raw device to alias.
+            if let Some(device) = &secondary.raw_device {
+                aliases.push(PathBuf::from(format!("{}\\", device.display())));
+            }
             for alias in aliases {
                 let report = live_sources(Some(&alias.join("Kumade-Results"))).unwrap();
                 assert!(

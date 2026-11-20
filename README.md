@@ -104,20 +104,21 @@ HOST01_2026-11-20_15-23-12/
   ...
 ```
 
-For live collection, the running Windows volume receives the full catalog.
-Other local NTFS volumes (fixed or removable) receive NTFS metadata only:
-`$MFT`, `$LogFile`, USN `$J`/`$Max`, `$Secure:$SDS`, `$Boot` and `$Bitmap`.
-Their documents, user profiles, IIS and SQL Server logs are not acquired by this
-default secondary-volume scope. Non-NTFS data volumes are recorded as excluded.
-Unlettered NTFS volumes use a stable `Volume-<id>` folder.
+For live collection, every local fixed or removable volume receives the same
+catalog scope: each selected artifact family is checked on every volume, so
+profiles that `ProfileList` places on a data volume, `$Recycle.Bin`, IIS and
+SQL Server logs are acquired wherever they are. NTFS volumes additionally
+receive their NTFS metadata files: `$MFT`, `$LogFile`, USN `$J`/`$Max`,
+`$Secure:$SDS`, `$Boot` and `$Bitmap`. Unlettered volumes use a stable
+`Volume-<id>` folder.
 
 The volume that holds the destination is excluded, except for the running
 Windows volume, which is always acquired and noted as a live destination.
 Destination matching uses the volume identity, including GUID paths and mount
 aliases. Volumes without a readable filesystem (unformatted, locked or empty
 removable readers) are recorded as excluded rather than failing the run.
-`--artifact` can narrow either scope; explicit offline `--source` inputs retain
-full selected artifact scope.
+`--artifact` can narrow the scope; explicit offline `--source` inputs keep the
+full selected scope.
 
 `--vhdx E:\Evidence` and `--e01 E:\Evidence` create hostname/date-named
 containers in that directory. With no value, they use the `Kumade-Results`
