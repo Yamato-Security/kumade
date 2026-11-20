@@ -182,7 +182,7 @@ try {
     $scope = Get-Content -Raw -LiteralPath (Join-Path $scopeDirectory 'Plan.json') | ConvertFrom-Json
     $volumeName = $volumes[0].UniqueId.TrimEnd('\')
     $dataSource = @($scope.Sources | Where-Object { $_.RawDevice -and $_.RawDevice.TrimEnd('\') -eq $volumeName })
-    if ($dataSource.Count -ne 1 -or $dataSource[0].MetadataOnly) { throw 'Additional NTFS volume was not discovered with the catalog scope' }
+    if ($dataSource.Count -ne 1 -or -not $dataSource[0].MetadataOnly) { throw 'Additional NTFS volume was not discovered with metadata-only scope' }
     $dataFiles = @($scope.Files | Where-Object SourceId -eq $dataSource[0].Id)
     if ($dataFiles.Count -ne 1 -or $dataFiles[0].RelativePath -ne '$MFT') { throw 'Additional NTFS volume did not retain its raw MFT task' }
     $runs = @(Get-ChildItem -LiteralPath $volumes[0].UniqueId -Directory | Where-Object Name -like 'SYNTHETIC_*')

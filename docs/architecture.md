@@ -453,7 +453,7 @@ HOST01_2026-11-20_15-23-12/
     Users/...
     $MFT
     $Extend/$UsnJrnl/$J
-  D/                          other local volumes: same catalog scope, NTFS metadata
+  D/                          secondary NTFS volumes: metadata only
     $MFT
     $Extend/$UsnJrnl/$J
   Volume-<Id>/                local NTFS volume without a drive letter

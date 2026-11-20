@@ -6,8 +6,9 @@ The default image name is `<Hostname>_YYYY-MM-DD_HH-MM-SS.vhdx` in UTC. Pass
 an output directory to generate it, or omit the value to use the `Kumade-Results`
 directory beside the executable (the `-o` default). A full `.vhdx` filename
 remains an explicit override. The image contains that same run directory, with
-`C/`, `D/`, etc. directly below it. Every local volume has the catalog scope;
-NTFS volumes also contain their filesystem metadata files.
+`C/`, `D/`, etc. directly below it. The running Windows volume has full catalog
+scope; other local NTFS volumes contain filesystem metadata only. The physical
+volume holding the output is excluded unless it is the running Windows volume.
 
 ```powershell
 .\kumade.exe --vhdx E:\Evidence
