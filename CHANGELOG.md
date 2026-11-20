@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements.
+
 - Add opt-in `--vss` for live artifact collection (directory/VHDX/E01) and
   `forensic-copy`, plus `--volume` selection for live collection. Create an owned
   Microsoft Software Provider snapshot set with crash-consistent, no-writer,

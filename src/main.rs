@@ -59,6 +59,8 @@ enum Command {
     },
     /// Discover files and write a plan without copying evidence
     Plan(CollectionArgs),
+    /// Scan running Windows processes with YARA Forge or local YARA rules
+    ScanProcesses(kumade::yara_scan::Options),
     /// Verify the seal and every stored payload; never reads original sources
     Verify { directory: PathBuf },
 }
@@ -297,6 +299,7 @@ fn run() -> Result<u8> {
         Err(error) => error.exit(),
     };
     let (options, plan_only) = match cli.command {
+        Some(Command::ScanProcesses(args)) => return kumade::yara_scan::run(&args),
         Some(Command::ForensicCopy(args)) => {
             kumade::forensic_copy::run(&kumade::forensic_copy::Options {
                 source: args.source,
