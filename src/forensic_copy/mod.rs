@@ -82,7 +82,7 @@ pub struct Report {
     /// (destination sector size does not divide the image; cached reads).
     pub readback: String,
     pub verified: bool,
-    /// Raw reads do not provide VSS or a point-in-time snapshot of a writable volume.
+    /// Whether acquisition used a VSS logical-volume view or a sequential live read.
     pub consistency: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<crate::vss::Snapshot>,

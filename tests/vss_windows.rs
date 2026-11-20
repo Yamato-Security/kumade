@@ -144,6 +144,17 @@ try {
         fs::read(snapshot_root.join("Windows/Prefetch/LOCKED.pf"))?,
         b"before snapshot"
     );
+    // Raw NTFS must use the same frozen content, never fall back to live bytes.
+    let mut raw = kumade::raw::RawVolume::open(&snapshot.device_object)?;
+    let mut raw_bytes = Vec::new();
+    raw.copy_file_with_attributes(
+        Path::new("Windows/Prefetch/LOCKED.pf"),
+        None,
+        &mut raw_bytes,
+        |_, _| Ok(()),
+    )?;
+    assert_eq!(raw_bytes, b"before snapshot");
+    drop(raw);
     let rules = Rules::load(DEFAULT_CATALOG)?;
     let mut plan = discovery::build_plan(
         discovered.sources,
@@ -194,14 +205,14 @@ try {
     );
     assert!(!verify::verify(&root)?.1);
     // Another requester's snapshot must survive deletion of the first set.
-    let mut other = vss::Session::create(std::slice::from_ref(&volumes.ntfs), 120)?;
+    let other = vss::Session::create(std::slice::from_ref(&volumes.ntfs), 120)?;
     let other_root = vss::snapshot_device_root(&other.snapshots()[0].device_object)?;
     owned.close()?;
     assert_eq!(
         fs::read(other_root.join("Windows/Prefetch/LOCKED.pf"))?,
         b"after snapshot!"
     );
-    other.close()?;
+    drop(other); // error/unwind paths use the same owned-session RAII cleanup
     ensure!(
         !snapshot_root.exists() && !other_root.exists(),
         "Owned snapshot roots remain readable after cleanup"

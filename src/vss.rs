@@ -12,8 +12,6 @@
 // PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
 // and limitations under the RPL.
 
-//! Read-only NTFS access through the MIT/Apache-2.0 `ntfs` library.
-
 //! Owned, auto-release VSS snapshots. No application writers and no live-read fallback.
 #[cfg(windows)]
 use crate::model::Issue;
