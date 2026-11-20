@@ -318,3 +318,31 @@ fn offline_source_directories_cannot_shadow_collection_metadata() {
     assert!(!root.join("LiveInfo").exists());
     assert!(run(&["verify", arg(&root)]).status.success());
 }
+
+#[test]
+fn forensic_copy_help_and_required_arguments() {
+    let help = run(&["forensic-copy", "--help"]);
+    assert!(help.status.success());
+    let text = String::from_utf8(help.stdout).unwrap();
+    assert!(text.contains("--source <VOLUME>"));
+    assert!(text.contains("--output <DIR>"));
+    assert!(text.contains("external physical drive"));
+    for args in [
+        vec!["forensic-copy"],
+        vec!["forensic-copy", "-s", "C:"],
+        vec!["forensic-copy", "-o", "E:\\Evidence"],
+    ] {
+        assert_eq!(run(&args).status.code(), Some(2));
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn forensic_copy_rejects_unsupported_hosts_without_creating_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("not-created");
+    let result = run(&["forensic-copy", "-s", "C:", "-o", arg(&output)]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("requires elevated Windows"));
+    assert!(!output.exists());
+}
