@@ -251,7 +251,7 @@ fn container_directories_generate_names_and_explicit_filenames_are_preserved() {
 }
 
 #[test]
-fn secondary_volumes_collect_metadata_without_payloads_or_profile_enumeration() {
+fn metadata_only_sources_collect_metadata_without_payloads_or_profile_enumeration() {
     let (temp, c) = fixture();
     let mut sources = vec![c];
     for drive in ["D", "E"] {
@@ -291,7 +291,7 @@ fn secondary_volumes_collect_metadata_without_payloads_or_profile_enumeration() 
 }
 
 #[test]
-fn live_metadata_only_volumes_plan_raw_candidates_without_walking_payloads() {
+fn metadata_only_live_sources_plan_raw_candidates_without_walking_payloads() {
     let (temp, _) = fixture();
     let root = temp.path().join("D");
     fs::create_dir_all(root.join("Windows/Prefetch")).unwrap();
@@ -312,6 +312,26 @@ fn live_metadata_only_volumes_plan_raw_candidates_without_walking_payloads() {
                 && f.stream.as_deref() == Some("$J"))
     );
 }
+#[test]
+fn reserved_collection_names_cannot_become_source_directories() {
+    for name in kumade::metadata::FILES {
+        assert!(paths::is_run_root_name(name));
+    }
+    assert!(paths::is_run_root_name("liveinfo"));
+    assert!(paths::is_run_root_name("PLAN.JSON"));
+    assert!(!paths::is_run_root_name("C"));
+    assert!(!paths::is_run_root_name("LiveInfo-1"));
+    let (temp, source) = fixture();
+    let mut p = plan(source);
+    p.sources[0].id = "LiveInfo".into();
+    for file in &mut p.files {
+        file.source_id = "LiveInfo".into();
+    }
+    let error = collect::collect(&p, &temp.path().join("results"), &options()).unwrap_err();
+    assert!(error.to_string().contains("collides"), "{error:#}");
+    assert!(!temp.path().join("results").exists());
+}
+
 #[test]
 fn fresh_relative_output_has_an_existing_ancestor() {
     let p = paths::resolve_future(Path::new("kumade-test-nonexistent/child")).unwrap();

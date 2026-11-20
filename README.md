@@ -104,17 +104,22 @@ HOST01_2026-11-20_15-23-12/
   ...
 ```
 
-For live collection, the running Windows volume receives the full catalog.
-Other local NTFS volumes (fixed or removable) receive NTFS metadata only:
-`$MFT`, `$LogFile`, USN `$J`/`$Max`, `$Secure:$SDS`, `$Boot` and `$Bitmap`.
-Their documents, programs and user profiles are not traversed. Non-NTFS data
-volumes are listed as excluded. Unlettered volumes use a stable `Volume-<id>`
-folder. `--artifact` can further narrow either scope; explicit offline `--source`
-inputs keep the full selected scope.
+For live collection, every local fixed or removable volume receives the same
+catalog scope: the selected artifact families, including profiles that
+`ProfileList` places on a data volume, `$Recycle.Bin`, IIS and SQL Server logs.
+NTFS volumes additionally receive their NTFS metadata files: `$MFT`, `$LogFile`,
+USN `$J`/`$Max`, `$Secure:$SDS`, `$Boot` and `$Bitmap`. Unlettered volumes use a
+stable `Volume-<id>` folder. The volume that holds the destination is excluded
+(it would otherwise acquire this and earlier collections), except for the running
+Windows volume, which is always acquired and noted as a live destination.
+Volumes without a readable file system (unformatted, BitLocker-locked, empty card
+readers) are recorded as excluded rather than failing the run. `--artifact` can
+narrow the scope; explicit offline `--source` inputs keep the full selected scope.
 
 `--vhdx E:\Evidence` and `--e01 E:\Evidence` create hostname/date-named
-containers in that directory. With no value, they use the current directory.
-A full filename remains an explicit override. Both containers contain the same
+containers in that directory. With no value, they use the `Kumade-Results`
+directory beside the executable, the same default as `-o`; the shell's current
+directory is never used. A full filename remains an explicit override. Both containers contain the same
 hostname/date run directory and drive-based layout. A sealed `client_info.json`
 host marker lets Juntei group all of the run’s drive folders as one computer.
 Windows-incompatible names are reversibly encoded; exact source paths remain

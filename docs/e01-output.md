@@ -1,8 +1,8 @@
 # E01 evidence containers
 
 Pass a destination directory to use `<Hostname>_YYYY-MM-DD_HH-MM-SS.E01`
-(UTC), or omit the value for the current directory. A full `.E01` filename
-remains an override. The embedded NTFS filesystem uses the same named run
+(UTC), or omit the value for the `Kumade-Results` directory beside the
+executable (the `-o` default). A full `.E01` filename remains an override. The embedded NTFS filesystem uses the same named run
 folder and direct drive-letter layout as directory and VHDX collections.
 
 ```powershell

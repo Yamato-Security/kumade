@@ -93,6 +93,31 @@ pub fn encode_component(name: &str) -> String {
     }
 }
 
+/// Files and directories Kumade itself writes at the root of a collection.
+/// Drive directories sit beside them, so no source may take one of these names.
+pub const RUN_ROOT_NAMES: [&str; 13] = [
+    "Plan.json",
+    "client_info.json",
+    "Run.json",
+    "Manifest.jsonl",
+    "Manifest.csv",
+    "Coverage.csv",
+    "DiscoveryIssues.csv",
+    "Errors.csv",
+    "Summary.json",
+    "Seal.json",
+    "LiveInfo",
+    "NTFS-Metadata.jsonl",
+    "NTFS-Metadata.csv",
+];
+
+/// Windows filesystems are case-insensitive, so the comparison is too.
+pub fn is_run_root_name(name: &str) -> bool {
+    RUN_ROOT_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+}
+
 /// One stable name for the folder and auto-named containers, in UTC.
 pub fn run_name(computer: &str, started_utc: &str) -> Result<String> {
     let started = chrono::DateTime::parse_from_rfc3339(started_utc)

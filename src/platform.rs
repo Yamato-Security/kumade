@@ -42,7 +42,7 @@ fn record_source(report: &mut SourceDiscovery, id: String, path: &Path, result: 
             source_id: id,
             path: path.display().to_string(),
             status: "Failed".into(),
-            reason: format!("Fixed volume could not be prepared: {error:#}"),
+            reason: format!("Volume could not be prepared: {error:#}"),
         }),
     }
 }
@@ -294,16 +294,20 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Every local fixed or removable volume, lettered or not, with the catalog
+/// scope. `destination` is the resolved directory or container path this run
+/// will write to: a volume that merely holds the output is not evidence and is
+/// excluded, unless it is the running Windows volume, which is always acquired.
 #[cfg(not(windows))]
-pub fn live_sources() -> Result<SourceDiscovery> {
+pub fn live_sources(_destination: Option<&Path>) -> Result<SourceDiscovery> {
     bail!(
         "Live acquisition requires Windows. Use --source <WINDOWS-VOLUME-DIRECTORY> for offline collection."
     )
 }
 
 #[cfg(windows)]
-pub fn live_sources() -> Result<SourceDiscovery> {
-    windows::live_sources()
+pub fn live_sources(destination: Option<&Path>) -> Result<SourceDiscovery> {
+    windows::live_sources(destination)
 }
 
 #[cfg(not(windows))]
@@ -555,7 +559,7 @@ mod windows {
         let mut directory = vec![0u16; 32768];
         // SAFETY: writable buffer with its actual UTF-16 capacity.
         let length = unsafe {
-            windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
+            windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW(
                 directory.as_mut_ptr(),
                 directory.len() as u32,
             )
@@ -595,7 +599,7 @@ mod windows {
         Ok(String::from_utf16(&volume[..end])?)
     }
 
-    pub fn live_sources() -> Result<SourceDiscovery> {
+    pub fn live_sources(destination: Option<&Path>) -> Result<SourceDiscovery> {
         enable_backup_privilege()?;
         let system_volume = windows_volume_name()?;
         let profiles = profile_paths()?;
@@ -664,41 +668,66 @@ mod windows {
                         } else {
                             format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12])
                         };
-                        let metadata_only = !guid.eq_ignore_ascii_case(&system_volume);
+                        let system = guid.eq_ignore_ascii_case(&system_volume);
                         let mut fsname = vec![0u16; 64];
-                        ensure!(
-                            // SAFETY: optional outputs are null; fsname is a valid writable buffer.
-                            unsafe {
-                                GetVolumeInformationW(
-                                    volume.as_ptr(),
-                                    ptr::null_mut(),
-                                    0,
-                                    ptr::null_mut(),
-                                    ptr::null_mut(),
-                                    ptr::null_mut(),
-                                    fsname.as_mut_ptr(),
-                                    fsname.len() as u32,
-                                )
-                            } != 0,
-                            "Cannot inspect filesystem type"
-                        );
+                        // SAFETY: optional outputs are null; fsname is a valid writable buffer.
+                        let inspected = unsafe {
+                            GetVolumeInformationW(
+                                volume.as_ptr(),
+                                ptr::null_mut(),
+                                0,
+                                ptr::null_mut(),
+                                ptr::null_mut(),
+                                ptr::null_mut(),
+                                fsname.as_mut_ptr(),
+                                fsname.len() as u32,
+                            )
+                        };
+                        if inspected == 0 {
+                            let error = std::io::Error::last_os_error();
+                            // Unformatted, BitLocker-locked and empty removable
+                            // volumes hold nothing a live collection can read;
+                            // they are recorded without failing the run.
+                            let unreadable = [
+                                ERROR_NOT_READY,
+                                ERROR_UNRECOGNIZED_VOLUME,
+                                ERROR_NO_MEDIA_IN_DRIVE,
+                            ]
+                            .iter()
+                            .any(|&code| error.raw_os_error() == Some(code as i32));
+                            if !system && unreadable {
+                                report.issues.push(Issue {
+                                    source_id: id,
+                                    path: mount,
+                                    status: "Excluded".into(),
+                                    reason: format!(
+                                        "Volume has no readable file system (unformatted, locked or no media): {error}"
+                                    ),
+                                });
+                                return Ok(None);
+                            }
+                            bail!("Cannot inspect filesystem type: {error}");
+                        }
                         let end = fsname.iter().position(|&c| c == 0).unwrap_or(fsname.len());
                         let ntfs = String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS");
-                        if metadata_only && !ntfs {
-                            report.issues.push(Issue { source_id: id.clone(), path: mount,
-                                status: "Excluded".into(), reason: "Secondary volume is not NTFS; metadata-only collection does not apply".into() });
-                            return Ok(None);
-                        }
-                        let mut source = crate::discovery::scoped_directory_source(
+                        let mut source = crate::discovery::directory_source(
                             Path::new(&mount),
                             &id,
                             &computer_name(),
-                            metadata_only,
                         )?;
+                        if !system && destination.is_some_and(|d| d.starts_with(&source.root)) {
+                            report.issues.push(Issue {
+                                source_id: id,
+                                path: mount,
+                                status: "Excluded".into(),
+                                reason: "Destination volume: this run writes its output here, so the volume is not acquired (only the running Windows volume is acquired regardless)".into(),
+                            });
+                            return Ok(None);
+                        }
                         if ntfs {
                             source.raw_device = Some(guid.trim_end_matches('\\').into());
                         }
-                        for profile in profiles.iter().filter(|_| !metadata_only) {
+                        for profile in &profiles {
                             if !profile.is_absolute()
                                 || is_remote_windows_path(&profile.to_string_lossy())
                             {
@@ -769,25 +798,38 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn live_sources_keep_full_scope_only_on_the_running_windows_volume() {
-        let system = windows::windows_volume_name().unwrap();
-        let sources = live_sources().unwrap().sources;
-        let mut full = 0;
-        for source in sources {
-            if source.raw_device.as_ref().is_some_and(|device| {
+    fn live_sources_keep_the_windows_volume_and_exclude_only_a_secondary_destination_volume() {
+        fn is_system(system: &str, source: &Source) -> bool {
+            source.raw_device.as_ref().is_some_and(|device| {
                 device
                     .to_string_lossy()
                     .eq_ignore_ascii_case(system.trim_end_matches('\\'))
-            }) {
-                assert!(!source.metadata_only);
-                full += 1;
-            } else {
-                assert!(source.metadata_only);
-                assert!(source.raw_device.is_some());
-                assert!(source.profile_roots.is_empty());
-            }
+            })
         }
-        assert_eq!(full, 1);
+        let system = windows::windows_volume_name().unwrap();
+        let sources = live_sources(None).unwrap().sources;
+        assert_eq!(sources.iter().filter(|s| is_system(&system, s)).count(), 1);
+        // Every local volume keeps the catalog scope; nothing is metadata-only by default.
+        assert!(sources.iter().all(|s| s.live && !s.metadata_only));
+        // Output on the Windows volume never removes that volume from scope.
+        let windows_root = sources
+            .iter()
+            .find(|s| is_system(&system, s))
+            .unwrap()
+            .root
+            .clone();
+        let report = live_sources(Some(&windows_root.join("Kumade-Results"))).unwrap();
+        assert_eq!(report.sources.len(), sources.len());
+        assert!(report.sources.iter().any(|s| is_system(&system, s)));
+        // A secondary volume that holds the output is excluded with a durable reason.
+        if let Some(secondary) = sources.iter().find(|s| !is_system(&system, s)) {
+            let report = live_sources(Some(&secondary.root.join("Kumade-Results"))).unwrap();
+            assert!(report.sources.iter().all(|s| s.id != secondary.id));
+            assert!(report.sources.iter().any(|s| is_system(&system, s)));
+            assert!(report.issues.iter().any(|i| i.source_id == secondary.id
+                && i.status == "Excluded"
+                && i.reason.starts_with("Destination volume")));
+        }
     }
 
     #[test]

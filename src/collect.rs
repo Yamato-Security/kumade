@@ -442,6 +442,11 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             !s.id.is_empty() && source_ids.insert(&s.id),
             "Duplicate or empty planned source ID"
         );
+        ensure!(
+            !paths::is_run_root_name(&s.id),
+            "Source ID {} collides with a collection metadata name",
+            s.id
+        );
     }
     let mut file_ids = std::collections::HashSet::new();
     for f in &plan.files {

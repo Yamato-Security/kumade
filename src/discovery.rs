@@ -385,7 +385,7 @@ pub fn build_plan(
                 (
                     "Excluded",
                     if source.metadata_only {
-                        "Secondary volume: NTFS metadata-only scope (also subject to artifact selection)"
+                        "Source has metadata-only scope: NTFS metadata families only (also subject to artifact selection)"
                     } else {
                         "Artifact selection explicitly narrowed scope"
                     },

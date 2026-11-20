@@ -3,11 +3,11 @@
 Run Kumade as an administrator on Windows and choose a fresh image filename:
 
 The default image name is `<Hostname>_YYYY-MM-DD_HH-MM-SS.vhdx` in UTC. Pass
-an output directory to generate it, or omit the value to use the current
-directory. A full `.vhdx` filename remains an explicit override. The image
-contains that same run directory, with `C/`, `D/`, etc. directly below it.
-Only the running Windows volume has full artifact scope by default; other
-local NTFS volumes contain filesystem metadata only.
+an output directory to generate it, or omit the value to use the `Kumade-Results`
+directory beside the executable (the `-o` default). A full `.vhdx` filename
+remains an explicit override. The image contains that same run directory, with
+`C/`, `D/`, etc. directly below it. Every local volume has the catalog scope;
+NTFS volumes also contain their filesystem metadata files.
 
 ```powershell
 .\kumade.exe --vhdx E:\Evidence
@@ -31,8 +31,10 @@ Windows PowerShell and the Storage cmdlets must be available; no third-party
 mounting software is required.
 
 The source plan is frozen before attachment, so the new volume cannot become a
-source during that acquisition. The image's host volume may still be a live
-source: creating the image changes that volume, as any local collection does.
+source during that acquisition. The volume that holds the image is left out of
+scope, as a directory destination is, unless it is the running Windows volume:
+that volume is always acquired, and creating the image there changes it, as any
+local collection does.
 `Run.json` records `PhysicalHostDestination` and accounts for that path in
 `DestinationOnLiveSource`, alongside the inner evidence destination.
 
