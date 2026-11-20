@@ -68,13 +68,13 @@ On Windows, run an elevated PowerShell session for live collection:
 .\kumade.exe -o E:\Kumade-Results
 
 # Or save the entire acquisition in one new NTFS VHDX:
-.\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
+.\kumade.exe --vhdx E:\Evidence
 
 # Or package the NTFS collection into compressed E01 segments:
-.\kumade.exe --e01 E:\Evidence\HOST01.e01
+.\kumade.exe --e01 E:\Evidence
 
 # List each copied file instead of displaying progress:
-.\kumade.exe --vhdx E:\Evidence\HOST01-verbose.vhdx -v
+.\kumade.exe --vhdx E:\Evidence -v
 ```
 
 Without `--source`, only Windows live mode is accepted. Offline mode never
@@ -85,7 +85,36 @@ The default reserves 2 GiB of destination space; `--reserve-mib` changes it.
 
 Each run creates `Plan.json`, `Run.json`, `Manifest.jsonl`, `Manifest.csv`,
 `Coverage.csv`, `DiscoveryIssues.csv`, `Errors.csv`, `Summary.json` and `Seal.json`.
-Payloads retain recognizable paths beneath `Evidence/Live/<SourceId>/`.
+Each run directory is named `<Hostname>_YYYY-MM-DD_HH-MM-SS`, using the UTC
+start time; there is no random suffix. A repeated host/start time refuses to
+overwrite an existing collection. Payloads preserve their original paths directly
+beneath their drive letter, with no acquisition-method wrapper directories:
+
+```text
+HOST01_2026-11-20_15-23-12/
+  C/Windows/System32/config/SYSTEM
+  C/Windows/System32/drivers/etc/hosts
+  C/$MFT
+  C/$Extend/$UsnJrnl/$J
+  D/$MFT
+  E/$MFT
+  LiveInfo/...
+  Manifest.csv
+  ...
+```
+
+For live collection, the running Windows volume receives the full catalog.
+Other local NTFS volumes (fixed or removable) receive NTFS metadata only:
+`$MFT`, `$LogFile`, USN `$J`/`$Max`, `$Secure:$SDS`, `$Boot` and `$Bitmap`.
+Their documents, programs and user profiles are not traversed. Non-NTFS data
+volumes are listed as excluded. Unlettered volumes use a stable `Volume-<id>`
+folder. `--artifact` can further narrow either scope; explicit offline `--source`
+inputs keep the full selected scope.
+
+`--vhdx E:\Evidence` and `--e01 E:\Evidence` create hostname/date-named
+containers in that directory. With no value, they use the current directory.
+A full filename remains an explicit override. Both containers contain the same
+hostname/date run directory and drive-based layout.
 Windows-incompatible names are reversibly encoded; exact source paths remain
 in the manifest. Very long names in directory mode use a manifest-mapped hash path.
 For the VHDX layout, metadata fields and fidelity limits, see

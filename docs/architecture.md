@@ -73,10 +73,10 @@ kumade.exe plan -o E:\Kumade-Results --memory
 kumade.exe collect -o E:\Kumade-Results --profile quick
 
 # Verify a completed or interrupted collection without changing its evidence.
-kumade.exe verify E:\Kumade-Results\HOST01_20261118T040000Z_RUNID
+kumade.exe verify E:\Kumade-Results\HOST01_2026-11-18_04-00-00
 
 # Resume work; live unsealed files are reacquired, not byte-appended.
-kumade.exe resume E:\Kumade-Results\HOST01_20261118T040000Z_RUNID
+kumade.exe resume E:\Kumade-Results\HOST01_2026-11-18_04-00-00
 ```
 
 Running `kumade.exe` without a subcommand aliases `collect`. With no `-o`, use a new `Kumade-Results` directory beside the executable if writable. If not writable, fail with a useful `-o` example instead of choosing an undocumented temporary location. Warn prominently when the chosen destination is on an acquired source volume.
@@ -438,7 +438,7 @@ Each release must describe its implemented and qualified subset of these goals.
 Start with an ordinary directory layout for easy analysis. Preserve selected original paths under a volume root, without recreating every object listed in `$MFT`.
 
 ```text
-HOST01_<UTC>_<RunId>/
+HOST01_2026-11-20_15-23-12/
   Run.json
   Volumes.csv
   Profiles.csv
@@ -448,13 +448,15 @@ HOST01_<UTC>_<RunId>/
   Errors.csv
   Footprint.jsonl
   Collection.txt
-  Evidence/
-    Live/
-      C/Windows/...
-      C/Users/...
-      Volume-<Guid>/...
-    Snapshots/
-      <SnapshotId>/C/Windows/...
+  C/
+    Windows/...
+    Users/...
+    $MFT
+    $Extend/$UsnJrnl/$J
+  D/                          secondary NTFS volumes: metadata only
+    $MFT
+    $Extend/$UsnJrnl/$J
+  Volume-<Id>/                local NTFS volume without a drive letter
   Memory/
   NTFS-Indexes/
     <VolumeId>/DirectoryIndexes.bin
@@ -470,7 +472,7 @@ HOST01_<UTC>_<RunId>/
 
 Named streams need portable encoded payload paths plus an exact source-stream mapping. Do not rely on an analyst's destination filesystem supporting Windows ADS. Preserve original owner/ACL information as metadata; do not apply a hostile source DACL to the analyst's evidence directory.
 
-`Derived` must never overwrite `Evidence`. For example, `EvtExportLog` creates a usable event export; it is not a byte-identical copy of the original EVTX. `RegSaveKeyEx` creates a logical hive save and does not preserve every forensic property of a physical hive. Label both accordingly. [EvtExportLog](https://learn.microsoft.com/en-us/windows/win32/api/winevt/nf-winevt-evtexportlog), [RegSaveKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regsavekeyexw).
+`Derived` must never overwrite the collected drive directories. For example, `EvtExportLog` creates a usable event export; it is not a byte-identical copy of the original EVTX. `RegSaveKeyEx` creates a logical hive save and does not preserve every forensic property of a physical hive. Label both accordingly. [EvtExportLog](https://learn.microsoft.com/en-us/windows/win32/api/winevt/nf-winevt-evtexportlog), [RegSaveKeyEx](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regsavekeyexw).
 
 ### Minimum manifest fields
 
@@ -584,7 +586,7 @@ The first version should expose recognizable Windows directory roots and origina
 Current Juntei supports this verified command form:
 
 ```powershell
-juntei auto-parse -d E:\Kumade-Results\<Run>\Evidence\Live -o E:\Parsed\<Run>-Live
+juntei auto-parse -d E:\Kumade-Results\<Run> -o E:\Parsed\<Run>
 ```
 
 Process snapshots separately until a tested Kumade-manifest adapter propagates each `SnapshotId`/origin into analysis output. Do not assume today's Juntei already reads Kumade's proposed metadata contract. [Current Juntei auto-parse documentation](https://github.com/Yamato-Security/juntei/blob/044ba8996ae1cc21f8565fa95868a836edce1c0b/website/docs/commands/auto-parse.md).

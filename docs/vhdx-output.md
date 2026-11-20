@@ -2,7 +2,15 @@
 
 Run Kumade as an administrator on Windows and choose a fresh image filename:
 
+The default image name is `<Hostname>_YYYY-MM-DD_HH-MM-SS.vhdx` in UTC. Pass
+an output directory to generate it, or omit the value to use the current
+directory. A full `.vhdx` filename remains an explicit override. The image
+contains that same run directory, with `C/`, `D/`, etc. directly below it.
+Only the running Windows volume has full artifact scope by default; other
+local NTFS volumes contain filesystem metadata only.
+
 ```powershell
+.\kumade.exe --vhdx E:\Evidence
 .\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
 .\kumade.exe --vhdx E:\Evidence\HOST01.vhdx --vhdx-size-gib 32
 .\kumade.exe -d C:\OfflineVolume --computer HOST01 --vhdx E:\Evidence\HOST01.vhdx
@@ -124,7 +132,7 @@ values.
 Native source ACLs can restrict browsing the copied files. Elevated backup access
 can be required when inspecting or verifying them; Kumade does not replace these
 ACLs with broad analyst access. Restored attributes include Hidden and System, so
-the `Evidence\Live\<SourceId>` copy of a volume root is not listed by Explorer or
+the `<SourceId>` copy of a volume root is not listed by Explorer or
 by `dir` without `/a`; use `Get-ChildItem -Force` or show protected operating
 system files.
 

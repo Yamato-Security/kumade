@@ -61,8 +61,9 @@ fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
     for i in 0..24 {
         fs::write(source.join(format!("Windows/Prefetch/TEST-{i:02}.pf")), [i]).unwrap();
     }
-    let output = temp.path().join("results");
+    let parent = temp.path().join("results");
     for verbose in ["-v", "--verbose"] {
+        let output = parent.join(verbose.trim_start_matches('-'));
         let out = run(&[
             "collect",
             "-d",
@@ -102,13 +103,13 @@ fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
         // carriage returns, while allowing ordinary Windows line endings.
         assert!(!stdout.replace("\r\n", "\n").contains('\r'));
         assert!(!stdout.contains('\x1b'));
-    }
-    for root in fs::read_dir(output).unwrap() {
-        assert!(
-            run(&["verify", arg(&root.unwrap().path())])
-                .status
-                .success()
-        );
+        for root in fs::read_dir(output).unwrap() {
+            assert!(
+                run(&["verify", arg(&root.unwrap().path())])
+                    .status
+                    .success()
+            );
+        }
     }
 }
 

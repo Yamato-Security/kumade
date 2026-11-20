@@ -69,6 +69,15 @@ pub fn same_version(a: &Fingerprint, b: &Fingerprint) -> bool {
 }
 
 pub fn directory_source(root: &Path, id: &str, computer: &str) -> Result<Source> {
+    scoped_directory_source(root, id, computer, false)
+}
+
+pub fn scoped_directory_source(
+    root: &Path,
+    id: &str,
+    computer: &str,
+    metadata_only: bool,
+) -> Result<Source> {
     let root = crate::platform::canonicalize(root)
         .with_context(|| format!("Cannot resolve source {}", root.display()))?;
     if !root.is_dir() {
@@ -79,6 +88,9 @@ pub fn directory_source(root: &Path, id: &str, computer: &str) -> Result<Source>
     }
     let mut profiles = Vec::new();
     for base in ["Users", "Documents and Settings", "Windows/ServiceProfiles"] {
+        if metadata_only {
+            break;
+        }
         let Some(parent) = find_case_path(&root, Path::new(base))? else {
             continue;
         };
@@ -93,6 +105,9 @@ pub fn directory_source(root: &Path, id: &str, computer: &str) -> Result<Source>
         "Windows/System32/config/systemprofile",
         "Windows/SysWOW64/config/systemprofile",
     ] {
+        if metadata_only {
+            break;
+        }
         if let Some(path) = find_case_path(&root, Path::new(path))? {
             profiles.push(path);
         }
@@ -107,6 +122,7 @@ pub fn directory_source(root: &Path, id: &str, computer: &str) -> Result<Source>
         raw_device: None,
         profile_roots: profiles,
         excluded_profiles: Vec::new(),
+        metadata_only,
     })
 }
 
@@ -165,18 +181,12 @@ pub fn build_plan(
             bail!("Unknown artifact ID: {id}");
         }
     }
-    let enabled = |i: usize| only.is_empty() || only.contains(&rules.catalog.artifacts[i].id);
     let mut source_ids = std::collections::HashSet::new();
     for s in &sources {
         if s.id.is_empty() || !source_ids.insert(&s.id) {
             bail!("Source identifiers must be non-empty and unique");
         }
     }
-    let profiles_enabled = rules
-        .profiles
-        .iter()
-        .enumerate()
-        .any(|(i, p)| enabled(i) && !p.is_empty());
     let mut plan = Plan {
         schema_version: SCHEMA_VERSION,
         created_utc: utc_now(),
@@ -191,6 +201,24 @@ pub fn build_plan(
     };
     let mut files: BTreeMap<(String, PathBuf, Option<String>), PlannedFile> = BTreeMap::new();
     for source in &plan.sources {
+        let enabled = |i: usize| {
+            (only.is_empty() || only.contains(&rules.catalog.artifacts[i].id))
+                && (!source.metadata_only
+                    || rules.catalog.artifacts[i].id.starts_with("windows.ntfs."))
+        };
+        let profiles_enabled = rules
+            .profiles
+            .iter()
+            .enumerate()
+            .any(|(i, p)| enabled(i) && !p.is_empty());
+        let source_selection: Vec<_> = rules
+            .catalog
+            .artifacts
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| enabled(*i))
+            .map(|(_, d)| d.id.clone())
+            .collect();
         let mut counts = vec![0_u64; rules.catalog.artifacts.len()];
         let profile_relative = |path: &Path| -> Option<String> {
             source.profile_roots.iter().find_map(|p| {
@@ -204,6 +232,12 @@ pub fn build_plan(
             .sort_by_file_name()
             .into_iter()
             .filter_entry(|e| {
+                // NTFS system files on a live data volume are requested by raw
+                // path below. Do not enumerate unrelated payloads or locked
+                // system directories merely to rediscover those candidates.
+                if source.metadata_only && source.raw_device.is_some() {
+                    return false;
+                }
                 if !e.file_type().is_dir() || e.depth() == 0 {
                     return true;
                 }
@@ -218,7 +252,8 @@ pub fn build_plan(
                 };
                 let p = profile_relative(e.path());
                 (profiles_enabled && source.profile_roots.iter().any(|r| r.starts_with(e.path())))
-                    || rules.can_descend_selected(&text, p.as_deref(), only)
+                    || (!source_selection.is_empty()
+                        && rules.can_descend_selected(&text, p.as_deref(), &source_selection))
             });
         for entry in walker {
             let entry = match entry {
@@ -347,7 +382,14 @@ pub fn build_plan(
         });
         for (i, d) in rules.catalog.artifacts.iter().enumerate() {
             let (status, reason) = if !enabled(i) {
-                ("Excluded", "Artifact selection explicitly narrowed scope")
+                (
+                    "Excluded",
+                    if source.metadata_only {
+                        "Secondary volume: NTFS metadata-only scope (also subject to artifact selection)"
+                    } else {
+                        "Artifact selection explicitly narrowed scope"
+                    },
+                )
             } else if counts[i] > 0 {
                 (
                     "Planned",

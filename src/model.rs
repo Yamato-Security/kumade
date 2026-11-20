@@ -32,6 +32,9 @@ pub struct Source {
     pub profile_roots: Vec<PathBuf>,
     #[serde(default)]
     pub excluded_profiles: Vec<String>,
+    /// Default live data-volume scope; the running Windows volume remains full.
+    #[serde(default)]
+    pub metadata_only: bool,
 }
 
 #[derive(Default, Debug)]

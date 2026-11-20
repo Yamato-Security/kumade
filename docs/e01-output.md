@@ -1,6 +1,12 @@
 # E01 evidence containers
 
+Pass a destination directory to use `<Hostname>_YYYY-MM-DD_HH-MM-SS.E01`
+(UTC), or omit the value for the current directory. A full `.E01` filename
+remains an override. The embedded NTFS filesystem uses the same named run
+folder and direct drive-letter layout as directory and VHDX collections.
+
 ```powershell
+.\kumade.exe --e01 E:\Evidence
 .\kumade.exe --e01 E:\Evidence\HOST01.e01
 .\kumade.exe --e01 E:\Evidence\HOST01.e01 --e01-size-gib 8
 .\kumade.exe --e01 E:\Evidence\HOST01.e01 -v

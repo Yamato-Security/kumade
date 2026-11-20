@@ -69,14 +69,14 @@ struct CollectionArgs {
     /// Output parent directory; plan writes Plan.json here
     #[arg(short, long, value_name = "DIR")]
     output: Option<PathBuf>,
-    /// Save evidence in a new NTFS VHDX container (Windows, administrator)
-    #[arg(long, value_name = "FILE", conflicts_with = "output")]
+    /// Save to an NTFS VHDX; a directory uses the hostname and UTC start time
+    #[arg(long, value_name = "FILE_OR_DIR", num_args = 0..=1, default_missing_value = ".", conflicts_with = "output")]
     vhdx: Option<PathBuf>,
     /// Virtual capacity in GiB (default: automatic, dynamically allocated)
     #[arg(long, value_name = "GIB", requires = "vhdx", value_parser = clap::value_parser!(u64).range(1..=65536))]
     vhdx_size_gib: Option<u64>,
-    /// Save evidence in a compressed E01 segment set (Windows, administrator)
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["output", "vhdx"])]
+    /// Save to compressed E01 segments; a directory uses the hostname and UTC start time
+    #[arg(long, value_name = "FILE_OR_DIR", num_args = 0..=1, default_missing_value = ".", conflicts_with_all = ["output", "vhdx"])]
     e01: Option<PathBuf>,
     /// NTFS capacity in GiB before E01 compression (default: automatic)
     #[arg(long, value_name = "GIB", requires = "e01", value_parser = clap::value_parser!(u64).range(1..=65536))]
@@ -188,8 +188,11 @@ fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("Volume");
-        let label = if basename.eq_ignore_ascii_case("C%3A") {
-            "C".to_owned()
+        let label = if basename.len() == 4
+            && basename.as_bytes()[0].is_ascii_alphabetic()
+            && basename[1..].eq_ignore_ascii_case("%3A")
+        {
+            basename[..1].to_ascii_uppercase()
         } else {
             paths::encode_component(basename)
         };
@@ -232,6 +235,7 @@ fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
 }
 
 fn run() -> Result<u8> {
+    let started_utc = kumade::model::utc_now();
     if std::env::args_os().len() == 1 {
         ui::banner();
         Cli::command().print_help()?;
@@ -401,6 +405,23 @@ fn run() -> Result<u8> {
                 .and_then(|p| p.parent().map(|p| p.join("Kumade-Results")))
                 .unwrap_or_else(|| PathBuf::from("Kumade-Results"))
         });
+    let output = if options.vhdx.is_some() || options.e01.is_some() {
+        let computer = sources
+            .first()
+            .map(|s| s.computer.as_str())
+            .unwrap_or("UnknownComputer");
+        paths::image_destination(
+            &output,
+            &paths::run_name(computer, &started_utc)?,
+            if options.vhdx.is_some() {
+                "vhdx"
+            } else {
+                "E01"
+            },
+        )?
+    } else {
+        output
+    };
     let output = paths::resolve_future(&output)?;
     for source in &sources {
         ensure!(
@@ -419,6 +440,7 @@ fn run() -> Result<u8> {
         );
     }
     let mut plan = discovery::build_plan(sources, &rules, &options.artifacts, options.memory)?;
+    plan.created_utc = started_utc;
     if !options.quiet {
         for issue in &discovered.issues {
             eprintln!("Source unavailable: {} ({})", issue.path, issue.reason);
@@ -517,5 +539,15 @@ mod tests {
             panic!("expected collect");
         };
         assert_eq!(options.threads, 2);
+    }
+
+    #[test]
+    fn containers_accept_automatic_names_and_destination_directories() {
+        let cli = Cli::try_parse_from(["kumade", "--vhdx"]).unwrap();
+        assert_eq!(cli.options.vhdx.as_deref(), Some(Path::new(".")));
+        let cli = Cli::try_parse_from(["kumade", "--e01", "output"]).unwrap();
+        assert_eq!(cli.options.e01.as_deref(), Some(Path::new("output")));
+        let cli = Cli::try_parse_from(["kumade", "--vhdx", "--vhdx-size-gib", "4"]).unwrap();
+        assert_eq!(cli.options.vhdx_size_gib, Some(4));
     }
 }

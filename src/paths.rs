@@ -93,12 +93,45 @@ pub fn encode_component(name: &str) -> String {
     }
 }
 
+/// One stable name for the folder and auto-named containers, in UTC.
+pub fn run_name(computer: &str, started_utc: &str) -> Result<String> {
+    let started = chrono::DateTime::parse_from_rfc3339(started_utc)
+        .context("Invalid collection start time")?
+        .with_timezone(&chrono::Utc);
+    Ok(format!(
+        "{}_{}",
+        encode_component(computer),
+        started.format("%Y-%m-%d_%H-%M-%S")
+    ))
+}
+
+/// A directory (including a not-yet-created one) selects the automatic name;
+/// a full filename remains an explicit override.
+pub fn image_destination(input: &Path, run: &str, extension: &str) -> Result<PathBuf> {
+    if input.is_dir() || input.extension().is_none() {
+        Ok(input.join(format!("{run}.{extension}")))
+    } else if input
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case(extension))
+    {
+        Ok(input.to_owned())
+    } else {
+        bail!("Expected a directory or a .{extension} filename");
+    }
+}
+
 pub fn output_relative(source: &str, relative: &Path, stream: Option<&str>) -> Result<PathBuf> {
-    let mut result = PathBuf::from("Evidence")
-        .join("Live")
-        .join(encode_component(source));
-    for part in relative_text(relative)?.split('/') {
-        result.push(encode_component(part));
+    let mut result = PathBuf::from(encode_component(source));
+    for (index, part) in relative_text(relative)?.split('/').enumerate() {
+        // Reserve a namespace for unrepresentably long exported names.
+        result.push(
+            if index == 0 && part.eq_ignore_ascii_case("_KumadeLongPaths") {
+                format!("%5F{}", &part[1..])
+            } else {
+                encode_component(part)
+            },
+        );
     }
     if let Some(stream) = stream {
         result.push(encode_component(stream));
@@ -109,9 +142,8 @@ pub fn output_relative(source: &str, relative: &Path, stream: Option<&str>) -> R
         let id = crate::model::sha256(
             format!("{source}\0{original}\0{}", stream.unwrap_or_default()).as_bytes(),
         );
-        result = PathBuf::from("Evidence")
-            .join("LongPaths")
-            .join(encode_component(source))
+        result = PathBuf::from(encode_component(source))
+            .join("_KumadeLongPaths")
             .join(id);
     }
     Ok(result)

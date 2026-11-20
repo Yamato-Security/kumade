@@ -487,13 +487,13 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         .first()
         .map(|s| s.computer.as_str())
         .unwrap_or("UnknownComputer");
-    let root = parent.join(format!(
-        "{}_{}_{}",
-        paths::encode_component(computer),
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
-        &run_id[..8]
-    ));
-    fs::create_dir(&root)?;
+    let root = parent.join(paths::run_name(computer, &plan.created_utc)?);
+    fs::create_dir(&root).with_context(|| {
+        format!(
+            "Cannot create collection directory {}; each host/start-time name must be new",
+            root.display()
+        )
+    })?;
     let destination_acl = platform::protect_output_root(&root)?;
     if destination_acl == "FilesystemHasNoPersistentACLs" && !options.quiet {
         ui::field(
@@ -504,7 +504,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     write_json_new(&root.join("Plan.json"), plan)?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     // Capture volatile state before potentially lengthy file copying. Explicit offline
     // collection never supplies this option; container backends carry it unchanged.

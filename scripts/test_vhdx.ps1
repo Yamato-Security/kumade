@@ -174,6 +174,17 @@ try {
     $mounted = $true
     $volumes = @(Get-DiskImage -ImagePath $image | Get-Disk | Get-Partition | Get-Volume | Where-Object FileSystem -eq 'NTFS')
     if ($volumes.Count -ne 1) { throw 'Expected one read-only NTFS volume' }
+    # Discover this real, unlettered NTFS image through the default live path.
+    # Planning reads source state but does not run live inventory or acquire files.
+    $scopeDirectory = Join-Path $WorkDirectory 'live-volume-plan'
+    $scopeCode = Invoke-Collector @('plan','-o',$scopeDirectory,'--artifact','windows.ntfs.mft','--reserve-mib','0') 'live-volume-plan.txt'
+    if ($scopeCode -notin @(0,3)) { throw ('Live volume planning failed: '+$scopeCode) }
+    $scope = Get-Content -Raw -LiteralPath (Join-Path $scopeDirectory 'Plan.json') | ConvertFrom-Json
+    $volumeName = $volumes[0].UniqueId.TrimEnd('\')
+    $dataSource = @($scope.Sources | Where-Object { $_.RawDevice -and $_.RawDevice.TrimEnd('\') -eq $volumeName })
+    if ($dataSource.Count -ne 1 -or -not $dataSource[0].MetadataOnly) { throw 'Additional NTFS volume was not discovered with metadata-only scope' }
+    $dataFiles = @($scope.Files | Where-Object SourceId -eq $dataSource[0].Id)
+    if ($dataFiles.Count -ne 1 -or $dataFiles[0].RelativePath -ne '$MFT') { throw 'Additional NTFS volume did not retain its raw MFT task' }
     $runs = @(Get-ChildItem -LiteralPath $volumes[0].UniqueId -Directory | Where-Object Name -like 'SYNTHETIC_*')
     if ($runs.Count -ne 1) { throw 'Expected one acquisition run' }
     $run = $runs[0].FullName
@@ -199,7 +210,7 @@ try {
             if ($actual.$name -ne $expected.$name) { throw ('Configured source metadata changed: '+$name+' on '+$sourceKey) }
         }
     }
-    $target = Join-Path $run 'Evidence\Live\source\Windows\Prefetch\Capture.pf'
+    $target = Join-Path $run 'source\Windows\Prefetch\Capture.pf'
     if ((Get-Acl -LiteralPath $target -Audit).Sddl -ne $security) { throw 'Owner/group/DACL/SACL changed' }
     if ([KumadeNativeTest]::EA($target) -ne $ea) { throw 'Extended attributes changed' }
     # Reading file data can update NTFS's cached access time even on a read-only

@@ -324,7 +324,11 @@ mod windows {
         Foundation::*,
         Security::*,
         Storage::FileSystem::*,
-        System::{Registry::*, Threading::*, WindowsProgramming::DRIVE_FIXED},
+        System::{
+            Registry::*,
+            Threading::*,
+            WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOVABLE},
+        },
     };
 
     pub(super) fn final_path(file: &File, flags: u32) -> std::io::Result<std::path::PathBuf> {
@@ -547,8 +551,53 @@ mod windows {
         result
     }
 
+    pub(super) fn windows_volume_name() -> Result<String> {
+        let mut directory = vec![0u16; 32768];
+        // SAFETY: writable buffer with its actual UTF-16 capacity.
+        let length = unsafe {
+            windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
+                directory.as_mut_ptr(),
+                directory.len() as u32,
+            )
+        } as usize;
+        ensure!(
+            length > 0 && length < directory.len(),
+            "Cannot resolve the Windows directory"
+        );
+        let mut mount = vec![0u16; 32768];
+        // SAFETY: the API supplied terminated path and an owned output buffer.
+        ensure!(
+            // SAFETY: terminated directory and a writable buffer of the given capacity.
+            unsafe {
+                GetVolumePathNameW(directory.as_ptr(), mount.as_mut_ptr(), mount.len() as u32)
+            } != 0,
+            "Cannot resolve the running Windows volume: {}",
+            std::io::Error::last_os_error()
+        );
+        let mut volume = vec![0u16; 1024];
+        // SAFETY: terminated mount point and owned writable output buffer.
+        ensure!(
+            // SAFETY: terminated mount point and a writable buffer of the given capacity.
+            unsafe {
+                GetVolumeNameForVolumeMountPointW(
+                    mount.as_ptr(),
+                    volume.as_mut_ptr(),
+                    volume.len() as u32,
+                )
+            } != 0,
+            "Cannot resolve the running Windows volume identity: {}",
+            std::io::Error::last_os_error()
+        );
+        let end = volume
+            .iter()
+            .position(|&c| c == 0)
+            .context("Invalid Windows volume name")?;
+        Ok(String::from_utf16(&volume[..end])?)
+    }
+
     pub fn live_sources() -> Result<SourceDiscovery> {
         enable_backup_privilege()?;
+        let system_volume = windows_volume_name()?;
         let profiles = profile_paths()?;
         let mut report = SourceDiscovery::default();
         let mut volume = vec![0u16; 1024];
@@ -567,10 +616,14 @@ mod windows {
                     .context("Invalid volume name")?;
                 let guid = String::from_utf16(&volume[..n])?;
                 // SAFETY: volume contains the API-supplied NUL-terminated volume path.
-                if unsafe { GetDriveTypeW(volume.as_ptr()) } == DRIVE_FIXED {
+                if matches!(
+                    // SAFETY: API-supplied terminated volume path remains live.
+                    unsafe { GetDriveTypeW(volume.as_ptr()) },
+                    DRIVE_FIXED | DRIVE_REMOVABLE
+                ) {
                     let unavailable_id =
                         format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12]);
-                    let attempted = (|| -> Result<Source> {
+                    let attempted = (|| -> Result<Option<Source>> {
                         let mut needed = 0;
                         // SAFETY: null buffer is a documented size query.
                         unsafe {
@@ -611,11 +664,7 @@ mod windows {
                         } else {
                             format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12])
                         };
-                        let mut source = crate::discovery::directory_source(
-                            Path::new(&mount),
-                            &id,
-                            &computer_name(),
-                        )?;
+                        let metadata_only = !guid.eq_ignore_ascii_case(&system_volume);
                         let mut fsname = vec![0u16; 64];
                         ensure!(
                             // SAFETY: optional outputs are null; fsname is a valid writable buffer.
@@ -634,10 +683,22 @@ mod windows {
                             "Cannot inspect filesystem type"
                         );
                         let end = fsname.iter().position(|&c| c == 0).unwrap_or(fsname.len());
-                        if String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS") {
+                        let ntfs = String::from_utf16(&fsname[..end])?.eq_ignore_ascii_case("NTFS");
+                        if metadata_only && !ntfs {
+                            report.issues.push(Issue { source_id: id.clone(), path: mount,
+                                status: "Excluded".into(), reason: "Secondary volume is not NTFS; metadata-only collection does not apply".into() });
+                            return Ok(None);
+                        }
+                        let mut source = crate::discovery::scoped_directory_source(
+                            Path::new(&mount),
+                            &id,
+                            &computer_name(),
+                            metadata_only,
+                        )?;
+                        if ntfs {
                             source.raw_device = Some(guid.trim_end_matches('\\').into());
                         }
-                        for profile in &profiles {
+                        for profile in profiles.iter().filter(|_| !metadata_only) {
                             if !profile.is_absolute()
                                 || is_remote_windows_path(&profile.to_string_lossy())
                             {
@@ -653,9 +714,17 @@ mod windows {
                         source.profile_roots.sort();
                         source.profile_roots.dedup();
                         source.live = true;
-                        Ok(source)
+                        Ok(Some(source))
                     })();
-                    record_source(&mut report, unavailable_id, Path::new(&guid), attempted);
+                    match attempted {
+                        Ok(Some(source)) => {
+                            record_source(&mut report, unavailable_id, Path::new(&guid), Ok(source))
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            record_source(&mut report, unavailable_id, Path::new(&guid), Err(error))
+                        }
+                    }
                 }
                 // SAFETY: handle is live and the buffer is writable.
                 if unsafe { FindNextVolumeW(handle, volume.as_mut_ptr(), volume.len() as u32) } == 0
@@ -697,6 +766,29 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn live_sources_keep_full_scope_only_on_the_running_windows_volume() {
+        let system = windows::windows_volume_name().unwrap();
+        let sources = live_sources().unwrap().sources;
+        let mut full = 0;
+        for source in sources {
+            if source.raw_device.as_ref().is_some_and(|device| {
+                device
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(system.trim_end_matches('\\'))
+            }) {
+                assert!(!source.metadata_only);
+                full += 1;
+            } else {
+                assert!(source.metadata_only);
+                assert!(source.raw_device.is_some());
+                assert!(source.profile_roots.is_empty());
+            }
+        }
+        assert_eq!(full, 1);
+    }
 
     #[test]
     fn unavailable_volume_does_not_discard_an_accessible_source() {
