@@ -6,8 +6,11 @@
   raw `.dd` file on a different external physical disk. Check actual volume and
   disk identities, available space and filesystem limits before output creation;
   use read-only sector-aligned reads, bounded memory, SHA-256 readback verification
-  with the file cache bypassed, no-clobber finalization and PascalCase JSON receipts. Preserve failed output as
-  `.dd.partial` and document live-volume consistency and unsupported storage limits.
+  with the file cache bypassed where sector geometry permits. Recheck the reopened
+  image's true length before bounded verification; preserve no-clobber finalization,
+  PascalCase JSON receipts and failed output as `.dd.partial`. Hardware-RAID sources
+  are supported; unresolved network/pool/file-backed source storage stays refused.
+  Document live-volume consistency and unsupported storage limits.
 
 - Name collections and automatically named VHDX/E01 files with the hostname and UTC run start time; store evidence directly under drive-letter directories. A bare `--vhdx`/`--e01` uses the `Kumade-Results` directory beside the executable, like `-o`. Live collection keeps the catalog scope on every local fixed volume; the volume holding the destination is excluded by volume identity (the running Windows volume is always acquired), and volumes without a readable file system are recorded as excluded instead of failing the run. Offline source directories cannot take a collection metadata name such as `LiveInfo`.
 

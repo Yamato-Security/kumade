@@ -136,15 +136,13 @@ fn validate_destination(source: &Volume, destination: &Volume) -> Result<()> {
             .any(|d| s.disk_number == d.disk_number)),
         "Destination is on the same physical disk as the source, even if the drive letters differ"
     );
-    // Windows STORAGE_BUS_TYPE. The destination must be a plain, separately
-    // identifiable disk: RAID (8), iSCSI (9), virtual (14), file-backed virtual
-    // (15) and Storage Spaces (16) destinations may be backed by the source
-    // disk. A source only needs a known identity that is not itself a virtual or
-    // file-backed device, so hardware-RAID system disks, iSCSI and Storage
-    // Spaces volumes can be imaged to an external disk.
+    // Only a local hardware-RAID source is added to the plain-disk policy.
+    // iSCSI and Storage Spaces can themselves have virtual/file-backed storage:
+    // their exported disk numbers do not establish independent backing disks.
+    // Keep those blocked until their complete backing storage can be resolved.
     for disk in &source.disks {
         ensure!(
-            (1..=19).contains(&disk.bus_type) && !matches!(disk.bus_type, 14 | 15),
+            (1..=19).contains(&disk.bus_type) && !matches!(disk.bus_type, 9 | 14 | 15 | 16),
             "Unsupported or unknown storage topology for source disk {} (bus type {})",
             disk.disk_number,
             disk.bus_type
@@ -262,6 +260,30 @@ fn verify_image(
     Ok(digest)
 }
 
+/// Verify the reopened file's real length before a bounded device reader can
+/// hide trailing data. The Windows caller denies write/delete sharing while
+/// this handle is open, keeping that file stable during verification.
+#[cfg(any(windows, test))]
+fn prepare_readback(
+    file: std::fs::File,
+    length: u64,
+    unbuffered_sector: Option<usize>,
+) -> Result<Box<dyn Read>> {
+    ensure!(
+        file.metadata()
+            .context("Cannot inspect the reopened image")?
+            .len()
+            == length,
+        "Reopened image length differs from the source partition"
+    );
+    match unbuffered_sector {
+        Some(sector) => Ok(Box::new(crate::raw::DeviceReader::new(
+            file, length, sector,
+        )?)),
+        None => Ok(Box::new(file)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,21 +328,16 @@ mod tests {
             target.disks[0].hotplug = true;
             assert!(validate_destination(&source, &target).is_err(), "{bus}");
         }
-        // Unknown, virtual and file-backed sources stay refused; hardware RAID,
-        // iSCSI and Storage Spaces system volumes can be imaged to a USB disk.
-        for bus in [0, 14, 15, 20, 127, -1] {
+        // A distinct exported number on iSCSI/Spaces is not proof of distinct
+        // backing storage. Hardware RAID remains a supported source.
+        for bus in [0, 9, 14, 15, 16, 20, 127, -1] {
             assert!(
                 validate_destination(&volume("virtual source", 0, bus), &volume("usb", 1, 7))
                     .is_err(),
                 "{bus}"
             );
         }
-        for bus in [8, 9, 16] {
-            assert!(
-                validate_destination(&volume("raid source", 0, bus), &volume("usb", 1, 7)).is_ok(),
-                "{bus}"
-            );
-        }
+        assert!(validate_destination(&volume("raid source", 0, 8), &volume("usb", 1, 7)).is_ok());
         let mut target = volume("external eSATA", 1, 11);
         target.disks[0].hotplug = true;
         assert!(validate_destination(&source, &target).is_ok());
@@ -381,6 +398,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reopened_image_length_is_checked_before_bounding_the_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image.dd.partial");
+        let expected = vec![0x42u8; 512];
+        let hash = crate::model::sha256(&expected);
+        for actual_length in [1024, 513, 511, 0, 512] {
+            std::fs::write(&path, vec![0x42u8; actual_length]).unwrap();
+            for sector in [None, Some(512)] {
+                let result = prepare_readback(std::fs::File::open(&path).unwrap(), 512, sector);
+                if actual_length == 512 {
+                    let mut reader = result.unwrap();
+                    assert!(verify_image(&mut reader, 512, &hash, |_| {}).is_ok());
+                } else {
+                    assert!(
+                        result.is_err(),
+                        "file size {actual_length}, sector {sector:?}"
+                    );
+                }
+            }
+        }
+    }
     struct BrokenWriter {
         bytes: Vec<u8>,
         limit: usize,

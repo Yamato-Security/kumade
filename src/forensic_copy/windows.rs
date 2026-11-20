@@ -288,22 +288,20 @@ fn destination_sector(volume_name: &str) -> Result<u32> {
 fn open_readback(path: &Path, length: u64, sector: u32) -> Result<(Box<dyn Read>, &'static str)> {
     let mut opts = OpenOptions::new();
     opts.read(true).share_mode(FILE_SHARE_READ);
-    if length.is_multiple_of(u64::from(sector)) {
-        opts.custom_flags(
-            FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT,
-        );
-        let file = opts
-            .open(path)
-            .context("Cannot reopen the image for verification")?;
-        let reader = crate::raw::DeviceReader::new(file, length, sector as usize)?;
-        Ok((Box::new(reader), "Unbuffered"))
-    } else {
-        opts.custom_flags(FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT);
-        let file = opts
-            .open(path)
-            .context("Cannot reopen the image for verification")?;
-        Ok((Box::new(file), "Buffered"))
-    }
+    let unbuffered = length.is_multiple_of(u64::from(sector));
+    let flags = FILE_FLAG_SEQUENTIAL_SCAN
+        | FILE_FLAG_OPEN_REPARSE_POINT
+        | if unbuffered {
+            FILE_FLAG_NO_BUFFERING
+        } else {
+            0
+        };
+    opts.custom_flags(flags);
+    let file = opts
+        .open(path)
+        .context("Cannot reopen the image for verification")?;
+    let reader = prepare_readback(file, length, unbuffered.then_some(sector as usize))?;
+    Ok((reader, if unbuffered { "Unbuffered" } else { "Buffered" }))
 }
 
 fn handle_volume(file: &File) -> Result<Volume> {
@@ -741,6 +739,37 @@ try {
         drop(saved);
         promote_image(&partial, &final_image)?;
         assert_eq!(crate::collect::hash_file(&final_image)?, (length, hash));
+        Ok(())
+    }
+
+    #[test]
+    fn native_readback_rejects_trailing_bytes_in_both_modes() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("image.dd.partial");
+        let actual = vec![0x42u8; 1024];
+        fs::write(&path, &actual)?;
+        for sector in [512, 4096] {
+            let error = open_readback(&path, 512, sector)
+                .err()
+                .context("An oversized image passed readback setup")?;
+            ensure!(
+                error.to_string().contains("length differs"),
+                "Unexpected error: {error:#}"
+            );
+        }
+        // Also exercise the buffered fallback with the correct 512-byte length.
+        fs::write(&path, &actual[..512])?;
+        let (mut reader, mode) = open_readback(&path, 512, 4096)?;
+        assert_eq!(mode, "Buffered");
+        assert!(
+            verify_image(
+                &mut reader,
+                512,
+                &crate::model::sha256(&actual[..512]),
+                |_| {}
+            )
+            .is_ok()
+        );
         Ok(())
     }
     #[test]

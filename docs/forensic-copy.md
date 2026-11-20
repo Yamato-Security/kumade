@@ -51,11 +51,13 @@ During acquisition the file is `C.dd.partial`. After copying, Kumade flushes the
 image to the storage device, closes it and reads it back through a fresh handle
 with the Windows file cache bypassed, so the compared bytes come from the
 destination device rather than from pages still resident from the write. It
-compares the length and SHA-256 against the bytes acquired from the source. Only
+checks the actual reopened file length before bounding reads and compares its
+SHA-256 against the bytes acquired from the source. Only
 then is it renamed to `C.dd` without replacing any existing path. The receipt's
 `Readback` field says `Unbuffered` for that path; it says `Buffered` only when
 the destination's sector size does not divide the image length (a 4K-sector
-destination with a 512-byte-sector source), where cached reads are the fallback. The command returns success only after
+destination with a 512-byte-sector source), where cached reads are the fallback.
+`Readback` is `None` before verification starts. The command returns success only after
 writing the final `Verified` receipt.
 
 A read, write, flush, verification or finalization error stops acquisition and
@@ -101,9 +103,11 @@ file's volume is checked again before copying bytes.
 This first implementation supports single-extent source partitions. The
 destination must be a plain disk: RAID, iSCSI, Storage Spaces, file-backed and
 other virtual destinations are refused because their backing storage may overlap
-the source. Sources may live on hardware RAID, iSCSI or Storage Spaces volumes;
-only file-backed and virtual source disks (a mounted VHD, for instance) are
-refused, because their backing file could sit on the destination.
+the source. Hardware-RAID sources are supported. iSCSI, Storage Spaces, file-backed and
+other virtual sources remain refused: exported disk numbers alone cannot prove
+that their backing storage is independent of the destination. Supporting them
+requires resolving that backing storage, rather than assuming separate exported
+numbers identify separate physical media.
 It does not currently support splitting output, compression, resume or continuing
 past unreadable sectors. Windows must expose the source volume through its local
 volume APIs; this is not a recovery tool for unrecognized partition tables.
