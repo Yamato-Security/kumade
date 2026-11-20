@@ -145,7 +145,8 @@ impl Session {
             availability.push((normalized, yes != 0));
         }
         let (supported, unsupported) = super::partition_volumes(availability, skip_unsupported)?;
-        // SAFETY: initialized requester, called once before adding any volumes.
+        check(
+            // SAFETY: initialized requester, called once before adding any volumes.
             unsafe { kumade_vss_start(client) },
             "Start VSS snapshot set",
         )?;
