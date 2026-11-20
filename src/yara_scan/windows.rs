@@ -37,8 +37,14 @@ pub fn require_native() -> Result<()> {
         "Cannot determine native architecture: {}",
         std::io::Error::last_os_error()
     );
+    let build_machine = match std::env::consts::ARCH {
+        "aarch64" => 0xaa64,
+        "x86_64" => 0x8664,
+        "x86" => 0x014c,
+        _ => anyhow::bail!("Unsupported process-scanning build architecture"),
+    };
     ensure!(
-        process == 0,
+        native_machine_matches(process, native, build_machine),
         "Process memory scans require a native-architecture build; use win-aarch64 on ARM64 or win-x64 on x64 Windows"
     );
     Ok(())
