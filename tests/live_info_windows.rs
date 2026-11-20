@@ -88,6 +88,58 @@ fn all_builtin_providers_run_on_a_live_windows_host_and_seal_their_results() {
             assert!(row["Computer"].as_str().is_some_and(|s| !s.is_empty()));
             assert!(row["CollectedUtc"].as_str().unwrap().ends_with('Z'));
             assert_eq!(row["Provider"], entry.provider);
+            let text = |key: &str| row[key].as_str().map(str::to_owned);
+            match entry.provider.as_str() {
+                // Enumerations are exported by name, never as bare integers.
+                "FirewallRules" | "FirewallProfiles" => {
+                    assert!(
+                        matches!(text("Enabled").as_deref(), Some("True" | "False")),
+                        "{row}"
+                    )
+                }
+                "IpAddresses" => assert!(text("PrefixOrigin").is_some(), "{row}"),
+                "DnsCache" => assert!(
+                    text("RecordName").is_some() && text("RecordType").is_some(),
+                    "{row}"
+                ),
+                "Hotfixes" => assert!(
+                    row["InstalledOn"].is_null()
+                        || text("InstalledOn").is_some_and(|d| {
+                            d.len() == 10 && d.as_bytes()[4] == b'-' && d.as_bytes()[7] == b'-'
+                        }),
+                    "{row}"
+                ),
+                "WindowsPackages" => assert!(
+                    !text("InstallTimeUtc").is_some_and(|t| t.starts_with("0001-")),
+                    "{row}"
+                ),
+                "ScheduledTasks" => {
+                    // A task without triggers has an empty list, not one null trigger.
+                    for trigger in row["Triggers"].as_array().unwrap() {
+                        assert!(trigger["TriggerType"].as_str().is_some(), "{row}");
+                    }
+                    for action in row["Actions"].as_array().unwrap() {
+                        assert!(
+                            action["Execute"].is_string() || action["ClassId"].is_string(),
+                            "{row}"
+                        );
+                    }
+                }
+                "WmiEventConsumers" | "WmiEventFilters" => {
+                    if entry.provider == "WmiEventConsumers" {
+                        assert!(
+                            text("ConsumerClass").is_some_and(|c| !c.is_empty()),
+                            "{row}"
+                        );
+                    }
+                    assert!(
+                        row["CreatorSID"].is_null()
+                            || text("CreatorSID").is_some_and(|s| s.starts_with("S-1-")),
+                        "{row}"
+                    );
+                }
+                _ => {}
+            }
         }
     }
     let mut locale_buffer = [0_u16; 85];
@@ -137,6 +189,16 @@ fn all_builtin_providers_run_on_a_live_windows_host_and_seal_their_results() {
             }
         }
     }
+    assert_eq!(
+        result.failures(),
+        0,
+        "{:?}",
+        result
+            .entries
+            .iter()
+            .filter(|e| !matches!(e.status.as_str(), "Success" | "Empty"))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(
         live_info::verify(temp.path()).unwrap(),
         (result.entries.len(), result.failures())

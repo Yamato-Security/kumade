@@ -46,7 +46,7 @@ Each provider writes one CSV, JSON array or JSONL file. All exported field names
 | `CollectedUtc` | UTC observation time for that row, RFC 3339 with fractional seconds. |
 | `Provider` | The embedded provider name. |
 
-Provider-specific timestamps ending in `Utc` are converted to UTC. Some source fields, such as the uninstall registry's `InstallDate` and QFE's `InstalledOn`, are retained as source date strings because they do not establish an exact UTC instant. CSV represents null as an empty cell and arrays/objects as JSON text in one cell. JSON/JSONL preserve nulls, arrays, objects, numbers and booleans. A blank/null property does not prove the underlying information does not exist: OS versions and access restrictions can affect individual fields.
+Provider-specific timestamps ending in `Utc` are converted to UTC. Some source fields, such as the uninstall registry's `InstallDate` (as stored) and QFE's `InstalledOn` (`yyyy-MM-dd`), are retained as dates without a time because they do not establish an exact UTC instant. Enumerated settings, such as firewall rule `Enabled` or DNS cache `RecordType`, are exported by name; a zero `InstallTimeUtc` is reported as null. CSV represents null as an empty cell and arrays/objects as JSON text in one cell. JSON/JSONL preserve nulls, arrays, objects, numbers and booleans. A blank/null property does not prove the underlying information does not exist: OS versions and access restrictions can affect individual fields.
 
 `LiveInfo/Manifest.json` and `Manifest.csv` describe every requested provider, including zero-row results, with start/end UTC times, elapsed seconds, row count, relative output path, size, SHA-256 and diagnostic message. Statuses are:
 
@@ -72,7 +72,7 @@ Optional unsupported features remain visible in the manifest without forcing par
 - Software uninstall inventories include machine 64/32-bit views and **loaded** user hives. Appx packages are a separate table. Portable applications, unloaded profiles and removed packages may be absent. Hotfix/QFE and servicing package tables represent different inventories, not a guarantee that every vulnerability is patched.
 - Defender and Security Center availability differs on servers and systems using third-party protection. A missing provider is not evidence that antivirus was disabled.
 - Firewall rules and their port/application/address filters are separate tables. Preserve their instance identifiers when correlating them; this is configuration inventory, not proof that traffic was allowed or blocked.
-- PowerShell/CIM queries create their own processes, log activity and system load. Capture times and the collector's own command lines can appear in the results. File acquisition follows inventory, so it may collect those new logs too.
+- PowerShell/CIM queries create their own processes, log activity and system load. Capture times and the collector's own command lines can appear in the results. `WindowsPackages` uses the DISM API, which appends to `%SystemRoot%\Logs\DISM\dism.log`. File acquisition follows inventory, so it may collect those new logs too.
 - This feature does not add memory acquisition, process dumps, handle enumeration, packet capture, historical deleted-state recovery or automated maliciousness verdicts.
 
 ## Language, locale and keyboard interpretation
@@ -240,7 +240,7 @@ The following field lists omit the three common provenance fields above.
 
 ### WmiEventConsumers
 
-`WmiEventConsumers.<csv|json|jsonl>`: `Name`, `CreatorSID`, `CommandLineTemplate`, `ExecutablePath`, `ScriptingEngine`, `ScriptText`.
+`WmiEventConsumers.<csv|json|jsonl>`: `ConsumerClass`, `Name`, `CreatorSID`, `CommandLineTemplate`, `ExecutablePath`, `ScriptingEngine`, `ScriptText`. `ConsumerClass` names the consumer type (for example `CommandLineEventConsumer` or `ActiveScriptEventConsumer`); `CreatorSID` is the SID string.
 
 ### WmiBindings
 

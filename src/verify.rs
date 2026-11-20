@@ -28,14 +28,21 @@ use std::{
 
 pub fn verify(root: &Path) -> Result<(usize, bool)> {
     let root = crate::platform::canonicalize(root)?;
-    if !root.join("Seal.json").exists() && root.join("LiveInfo/Seal.json").is_file() {
+    // Inventory-only output from `live-info` has no Run.json. A collection that
+    // stopped before writing its outer seal must not pass on the inner seal alone.
+    if !root.join("Run.json").exists()
+        && !root.join("Seal.json").exists()
+        && root.join("LiveInfo/Seal.json").is_file()
+    {
         let (datasets, failed) = crate::live_info::verify(&root)?;
         return Ok((datasets, failed == 0));
     }
-    let seal: serde_json::Value = serde_json::from_reader(
-        File::open(paths::safe_join(&root, "Seal.json")?)
-            .context("Collection has no completed seal")?,
-    )?;
+    ensure!(
+        root.join("Seal.json").is_file(),
+        "Collection has no completed seal"
+    );
+    let seal: serde_json::Value =
+        serde_json::from_reader(File::open(paths::safe_join(&root, "Seal.json")?)?)?;
     ensure!(
         seal["SchemaVersion"] == SCHEMA_VERSION,
         "Unsupported seal schema"

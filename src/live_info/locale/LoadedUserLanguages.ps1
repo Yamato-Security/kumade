@@ -4,7 +4,7 @@ foreach($hive in (Loaded-LocaleHives)){
     $localeProfile=Optional-LocaleKey ($hive.Root+'\Control Panel\International\User Profile')
     if($null -eq $localeProfile){continue}
     $order=0
-    foreach($language in @(LocaleValue $localeProfile 'Languages')){
+    foreach($language in @(LocaleList $localeProfile 'Languages')){
         if([string]::IsNullOrEmpty($language)){continue};$order++
         # Treat registry language tags as data, never as arbitrary subpaths.
         $key=$null

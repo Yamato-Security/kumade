@@ -94,7 +94,7 @@
       "InstalledBy",
       "InstalledOn"
     ],
-    "Query": "Get-CimInstance -Namespace 'root/cimv2' -ClassName Win32_QuickFixEngineering | ForEach-Object { [ordered]@{ HotFixID=$_.HotFixID; Description=$_.Description; Caption=$_.Caption; InstalledBy=$_.InstalledBy; InstalledOn=$_.InstalledOn } }",
+    "Query": "Get-CimInstance -Namespace 'root/cimv2' -ClassName Win32_QuickFixEngineering | ForEach-Object { [ordered]@{ HotFixID=$_.HotFixID; Description=$_.Description; Caption=$_.Caption; InstalledBy=$_.InstalledBy; InstalledOn=if($_.InstalledOn -is [DateTime]){$_.InstalledOn.ToString('yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)}else{(Str $_.InstalledOn)} } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.system.wmiquery/"
   },
   {
@@ -154,7 +154,7 @@
       "AddressState",
       "SkipAsSource"
     ],
-    "Query": "Get-NetIPAddress | ForEach-Object { [ordered]@{ InterfaceIndex=$_.InterfaceIndex; InterfaceAlias=$_.InterfaceAlias; AddressFamily=[string]$_.AddressFamily; IPAddress=$_.IPAddress; PrefixLength=$_.PrefixLength; PrefixOrigin=$_.PrefixOrigin; SuffixOrigin=$_.SuffixOrigin; AddressState=[string]$_.AddressState; SkipAsSource=$_.SkipAsSource } }",
+    "Query": "Get-NetIPAddress | ForEach-Object { [ordered]@{ InterfaceIndex=$_.InterfaceIndex; InterfaceAlias=$_.InterfaceAlias; AddressFamily=[string]$_.AddressFamily; IPAddress=$_.IPAddress; PrefixLength=$_.PrefixLength; PrefixOrigin=(Str $_.PrefixOrigin); SuffixOrigin=(Str $_.SuffixOrigin); AddressState=[string]$_.AddressState; SkipAsSource=$_.SkipAsSource } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.sys.interfaces/"
   },
   {
@@ -171,7 +171,7 @@
       "State",
       "Publish"
     ],
-    "Query": "Get-NetRoute | ForEach-Object { [ordered]@{ InterfaceIndex=$_.InterfaceIndex; InterfaceAlias=$_.InterfaceAlias; AddressFamily=[string]$_.AddressFamily; DestinationPrefix=$_.DestinationPrefix; NextHop=$_.NextHop; RouteMetric=$_.RouteMetric; InterfaceMetric=$_.InterfaceMetric; Protocol=[string]$_.Protocol; State=[string]$_.State; Publish=$_.Publish } }",
+    "Query": "Get-NetRoute | ForEach-Object { [ordered]@{ InterfaceIndex=$_.InterfaceIndex; InterfaceAlias=$_.InterfaceAlias; AddressFamily=[string]$_.AddressFamily; DestinationPrefix=$_.DestinationPrefix; NextHop=$_.NextHop; RouteMetric=$_.RouteMetric; InterfaceMetric=$_.InterfaceMetric; Protocol=[string]$_.Protocol; State=[string]$_.State; Publish=(Str $_.Publish) } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.sys.interfaces/"
   },
   {
@@ -198,7 +198,7 @@
       "TimeToLive",
       "Data"
     ],
-    "Query": "Get-DnsClientCache | ForEach-Object { [ordered]@{ Entry=$_.Entry; RecordName=$_.RecordName; RecordType=$_.RecordType; Status=$_.Status; Section=$_.Section; TimeToLive=$_.TimeToLive; Data=$_.Data } }",
+    "Query": "$types=@{1='A';2='NS';5='CNAME';6='SOA';12='PTR';15='MX';16='TXT';28='AAAA';33='SRV'};$statuses=@{0='Success';9003='NotExist';9501='NoRecords'};$sections=@{1='Answer';2='Authority';3='Additional'};Get-DnsClientCache | ForEach-Object { [ordered]@{ Entry=$_.Entry; RecordName=$_.Name; RecordType=(Label $types $_.Type); Status=(Label $statuses $_.Status); Section=(Label $sections $_.Section); TimeToLive=$_.TimeToLive; Data=$_.Data } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.system.dnscache/"
   },
   {
@@ -228,7 +228,7 @@
       "LogBlocked",
       "LogFileName"
     ],
-    "Query": "Get-NetFirewallProfile | ForEach-Object { [ordered]@{ Name=$_.Name; Enabled=$_.Enabled; DefaultInboundAction=[string]$_.DefaultInboundAction; DefaultOutboundAction=[string]$_.DefaultOutboundAction; AllowInboundRules=$_.AllowInboundRules; AllowLocalFirewallRules=$_.AllowLocalFirewallRules; AllowLocalIPsecRules=$_.AllowLocalIPsecRules; LogAllowed=$_.LogAllowed; LogBlocked=$_.LogBlocked; LogFileName=$_.LogFileName } }",
+    "Query": "Get-NetFirewallProfile | ForEach-Object { [ordered]@{ Name=$_.Name; Enabled=(Str $_.Enabled); DefaultInboundAction=[string]$_.DefaultInboundAction; DefaultOutboundAction=[string]$_.DefaultOutboundAction; AllowInboundRules=(Str $_.AllowInboundRules); AllowLocalFirewallRules=(Str $_.AllowLocalFirewallRules); AllowLocalIPsecRules=(Str $_.AllowLocalIPsecRules); LogAllowed=(Str $_.LogAllowed); LogBlocked=(Str $_.LogBlocked); LogFileName=$_.LogFileName } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.sys.firewallrules/"
   },
   {
@@ -247,7 +247,7 @@
       "PrimaryStatus",
       "Status"
     ],
-    "Query": "Get-NetFirewallRule -PolicyStore ActiveStore | ForEach-Object { [ordered]@{ Name=$_.Name; DisplayName=$_.DisplayName; Description=$_.Description; Enabled=$_.Enabled; Direction=[string]$_.Direction; Action=[string]$_.Action; Profile=[string]$_.Profile; Owner=$_.Owner; PolicyStoreSourceType=$_.PolicyStoreSourceType; PolicyStoreSource=$_.PolicyStoreSource; PrimaryStatus=$_.PrimaryStatus; Status=$_.Status } }",
+    "Query": "Get-NetFirewallRule -PolicyStore ActiveStore | ForEach-Object { [ordered]@{ Name=$_.Name; DisplayName=$_.DisplayName; Description=$_.Description; Enabled=(Str $_.Enabled); Direction=[string]$_.Direction; Action=[string]$_.Action; Profile=[string]$_.Profile; Owner=$_.Owner; PolicyStoreSourceType=(Str $_.PolicyStoreSourceType); PolicyStoreSource=$_.PolicyStoreSource; PrimaryStatus=(Str $_.PrimaryStatus); Status=$_.Status } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.sys.firewallrules/"
   },
   {
@@ -331,7 +331,7 @@
       "ProcessCreationTimeUtc",
       "ProcessOwner"
     ],
-    "Query": "$processes=@{}; Get-CimInstance Win32_Process | ForEach-Object { $processes[[int]$_.ProcessId]=$_ }; $owners=@{}; Get-NetTCPConnection | ForEach-Object { $p=$processes[[int]$_.OwningProcess]; if($p -and !$owners.ContainsKey([int]$p.ProcessId)){$owners[[int]$p.ProcessId]=ProcessOwner $p}; [ordered]@{ LocalAddress=$_.LocalAddress; LocalPort=$_.LocalPort; RemoteAddress=$_.RemoteAddress; RemotePort=$_.RemotePort; State=[string]$_.State; OwningProcess=$_.OwningProcess; AppliedSetting=$_.AppliedSetting; OffloadState=[string]$_.OffloadState;ProcessName=$p.Name; ExecutablePath=$p.ExecutablePath; CommandLine=$p.CommandLine; ProcessCreationTimeUtc=(Utc $p.CreationDate); ProcessOwner=$owners[[int]$_.OwningProcess] } }",
+    "Query": "$processes=@{}; Get-CimInstance Win32_Process | ForEach-Object { $processes[[int]$_.ProcessId]=$_ }; $owners=@{}; Get-NetTCPConnection | ForEach-Object { $p=$processes[[int]$_.OwningProcess]; if($p -and !$owners.ContainsKey([int]$p.ProcessId)){$owners[[int]$p.ProcessId]=ProcessOwner $p}; [ordered]@{ LocalAddress=$_.LocalAddress; LocalPort=$_.LocalPort; RemoteAddress=$_.RemoteAddress; RemotePort=$_.RemotePort; State=[string]$_.State; OwningProcess=$_.OwningProcess; AppliedSetting=(Str $_.AppliedSetting); OffloadState=[string]$_.OffloadState;ProcessName=$p.Name; ExecutablePath=$p.ExecutablePath; CommandLine=$p.CommandLine; ProcessCreationTimeUtc=(Utc $p.CreationDate); ProcessOwner=$owners[[int]$_.OwningProcess] } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.network.netstatenriched/"
   },
   {
@@ -563,7 +563,7 @@
       "LastTaskResult",
       "NumberOfMissedRuns"
     ],
-    "Query": "Get-ScheduledTask | ForEach-Object {$t=$_; $i=Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath; [ordered]@{TaskName=$t.TaskName;TaskPath=$t.TaskPath;State=[string]$t.State;Description=$t.Description;Author=$t.Author;UserId=$t.Principal.UserId;LogonType=[string]$t.Principal.LogonType;RunLevel=[string]$t.Principal.RunLevel;Actions=@($t.Actions | ForEach-Object {[ordered]@{Execute=$_.Execute;Arguments=$_.Arguments;WorkingDirectory=$_.WorkingDirectory;ClassId=$_.ClassId}});Triggers=@($t.Triggers | ForEach-Object {[ordered]@{TriggerType=$_.CimClass.CimClassName;Enabled=$_.Enabled;StartBoundary=$_.StartBoundary;EndBoundary=$_.EndBoundary;UserId=$_.UserId}});LastRunTimeUtc=(Utc $i.LastRunTime);NextRunTimeUtc=(Utc $i.NextRunTime);LastTaskResult=$i.LastTaskResult;NumberOfMissedRuns=$i.NumberOfMissedRuns}}",
+    "Query": "Get-ScheduledTask | ForEach-Object {$t=$_; $i=Get-ScheduledTaskInfo -TaskName $t.TaskName -TaskPath $t.TaskPath; [ordered]@{TaskName=$t.TaskName;TaskPath=$t.TaskPath;State=[string]$t.State;Description=$t.Description;Author=$t.Author;UserId=$t.Principal.UserId;LogonType=[string]$t.Principal.LogonType;RunLevel=[string]$t.Principal.RunLevel;Actions=@(foreach($a in $t.Actions){[ordered]@{Execute=$a.Execute;Arguments=$a.Arguments;WorkingDirectory=$a.WorkingDirectory;ClassId=$a.ClassId}});Triggers=@(foreach($r in $t.Triggers){[ordered]@{TriggerType=$r.CimClass.CimClassName;Enabled=$r.Enabled;StartBoundary=$r.StartBoundary;EndBoundary=$r.EndBoundary;UserId=$r.UserId}});LastRunTimeUtc=(Utc $i.LastRunTime);NextRunTimeUtc=(Utc $i.NextRunTime);LastTaskResult=$i.LastTaskResult;NumberOfMissedRuns=$i.NumberOfMissedRuns}}",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.system.taskscheduler/"
   },
   {
@@ -575,12 +575,13 @@
       "Query",
       "CreatorSID"
     ],
-    "Query": "Get-CimInstance -Namespace 'root/subscription' -ClassName __EventFilter | ForEach-Object { [ordered]@{ Name=$_.Name; EventNamespace=$_.EventNamespace; QueryLanguage=$_.QueryLanguage; Query=$_.Query; CreatorSID=$_.CreatorSID } }",
+    "Query": "Get-CimInstance -Namespace 'root/subscription' -ClassName __EventFilter | ForEach-Object { [ordered]@{ Name=$_.Name; EventNamespace=$_.EventNamespace; QueryLanguage=$_.QueryLanguage; Query=$_.Query; CreatorSID=(Sid $_.CreatorSID) } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.persistence.permanentwmievents/"
   },
   {
     "Name": "WmiEventConsumers",
     "Fields": [
+      "ConsumerClass",
       "Name",
       "CreatorSID",
       "CommandLineTemplate",
@@ -588,7 +589,7 @@
       "ScriptingEngine",
       "ScriptText"
     ],
-    "Query": "Get-CimInstance -Namespace 'root/subscription' -ClassName __EventConsumer | ForEach-Object { [ordered]@{ Name=$_.Name; CreatorSID=$_.CreatorSID; CommandLineTemplate=$_.CommandLineTemplate; ExecutablePath=$_.ExecutablePath; ScriptingEngine=$_.ScriptingEngine; ScriptText=$_.ScriptText } }",
+    "Query": "Get-CimInstance -Namespace 'root/subscription' -ClassName __EventConsumer | ForEach-Object { [ordered]@{ ConsumerClass=$_.CimClass.CimClassName; Name=$_.Name; CreatorSID=(Sid $_.CreatorSID); CommandLineTemplate=$_.CommandLineTemplate; ExecutablePath=$_.ExecutablePath; ScriptingEngine=$_.ScriptingEngine; ScriptText=$_.ScriptText } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.persistence.permanentwmievents/"
   },
   {
@@ -691,7 +692,7 @@
       "HasPrivateKey",
       "DnsNames"
     ],
-    "Query": "foreach($store in @('Cert:\\LocalMachine\\Root','Cert:\\LocalMachine\\My')){Get-ChildItem -LiteralPath $store | ForEach-Object {[ordered]@{Store=$store;Subject=$_.Subject;Issuer=$_.Issuer;Thumbprint=$_.Thumbprint;SerialNumber=$_.SerialNumber;NotBeforeUtc=(Utc $_.NotBefore);NotAfterUtc=(Utc $_.NotAfter);HasPrivateKey=$_.HasPrivateKey;DnsNames=@($_.DnsNameList | ForEach-Object {$_.Unicode})}}}",
+    "Query": "foreach($store in @('Cert:\\LocalMachine\\Root','Cert:\\LocalMachine\\My')){Get-ChildItem -LiteralPath $store | ForEach-Object {[ordered]@{Store=$store;Subject=$_.Subject;Issuer=$_.Issuer;Thumbprint=$_.Thumbprint;SerialNumber=$_.SerialNumber;NotBeforeUtc=(Utc $_.NotBefore);NotAfterUtc=(Utc $_.NotAfter);HasPrivateKey=$_.HasPrivateKey;DnsNames=@(foreach($n in $_.DnsNameList){$n.Unicode})}}}",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.system.wmiquery/"
   },
   {
@@ -720,7 +721,7 @@
       "ReleaseType",
       "InstallTimeUtc"
     ],
-    "Query": "Get-WindowsPackage -Online | ForEach-Object { [ordered]@{ PackageName=$_.PackageName; PackageState=[string]$_.PackageState; ReleaseType=$_.ReleaseType; InstallTimeUtc=(Utc $_.InstallTime) } }",
+    "Query": "Get-WindowsPackage -Online | ForEach-Object { [ordered]@{ PackageName=$_.PackageName; PackageState=[string]$_.PackageState; ReleaseType=(Str $_.ReleaseType); InstallTimeUtc=(Utc $_.InstallTime) } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.system.wmiquery/"
   },
   {
@@ -733,7 +734,7 @@
       "IcmpType",
       "DynamicTarget"
     ],
-    "Query": "Get-NetFirewallPortFilter -PolicyStore ActiveStore | ForEach-Object { [ordered]@{ InstanceId=$_.InstanceID; Protocol=[string]$_.Protocol; LocalPort=$_.LocalPort; RemotePort=$_.RemotePort; IcmpType=$_.IcmpType; DynamicTarget=$_.DynamicTarget } }",
+    "Query": "Get-NetFirewallPortFilter -PolicyStore ActiveStore | ForEach-Object { [ordered]@{ InstanceId=$_.InstanceID; Protocol=[string]$_.Protocol; LocalPort=$_.LocalPort; RemotePort=$_.RemotePort; IcmpType=$_.IcmpType; DynamicTarget=(Str $_.DynamicTarget) } }",
     "Reference": "https://docs.velociraptor.app/artifact_references/pages/windows.sys.firewallrules/"
   },
   {

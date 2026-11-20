@@ -22,6 +22,12 @@ function LocaleValue($key,[string]$name) {
     # No environment expansion, indirect resource loading or command evaluation.
     return $key.GetValue($name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 }
+function LocaleList($key,[string]$name) {
+    # Emits the value(s) or nothing: @(LocaleList …) is then an empty list for an
+    # absent value, whereas @($null) would be a one-element list.
+    $value=LocaleValue $key $name
+    if($null -ne $value){$value}
+}
 function LocaleCulture([string]$name) {
     if([string]::IsNullOrEmpty($name)){return $null}
     try {return [Globalization.CultureInfo]::GetCultureInfo($name).Name} catch {return $null}

@@ -261,6 +261,8 @@ fn run() -> Result<u8> {
                 return Ok(0);
             }
             ensure!(cfg!(windows), "Live response inventory requires Windows");
+            // Reject unknown names before the output directory exists.
+            kumade::live_info::select(&args.datasets)?;
             let output =
                 paths::resolve_future(args.output.as_deref().context("Missing output directory")?)?;
             if let Some(parent) = output.parent() {

@@ -485,6 +485,21 @@ fn powershell() -> Result<PathBuf> {
     anyhow::bail!("Live response inventory requires Windows")
 }
 
+/// The embedded providers named by `selected` (case-insensitive), or all of them.
+pub fn select(selected: &[String]) -> Result<Vec<Dataset>> {
+    let mut specs = datasets();
+    for name in selected {
+        ensure!(
+            specs.iter().any(|s| s.name.eq_ignore_ascii_case(name)),
+            "Unknown live-info dataset: {name}"
+        );
+    }
+    if !selected.is_empty() {
+        specs.retain(|s| selected.iter().any(|n| s.name.eq_ignore_ascii_case(n)));
+    }
+    Ok(specs)
+}
+
 /// Write a new LiveInfo directory into an already protected collection root.
 pub fn collect_into(root: &Path, options: &Options) -> Result<Outcome> {
     ensure!(cfg!(windows), "Live response inventory requires Windows");
@@ -496,21 +511,7 @@ pub fn collect_into(root: &Path, options: &Options) -> Result<Outcome> {
         (1..=3600).contains(&options.timeout_seconds),
         "Live-info timeout must be in 1..=3600 seconds"
     );
-    let mut specs = datasets();
-    for name in &options.selected {
-        ensure!(
-            specs.iter().any(|s| s.name.eq_ignore_ascii_case(name)),
-            "Unknown live-info dataset: {name}"
-        );
-    }
-    if !options.selected.is_empty() {
-        specs.retain(|s| {
-            options
-                .selected
-                .iter()
-                .any(|n| s.name.eq_ignore_ascii_case(n))
-        });
-    }
+    let specs = select(&options.selected)?;
     let exe = powershell();
     let directory = root.join("LiveInfo");
     fs::create_dir(&directory)?;
@@ -722,6 +723,16 @@ mod tests {
             // Windows' CreateProcess command-line limit includes base64 and arguments.
             assert!(encoded_script(&script).len() < 30_000);
         }
+    }
+    #[test]
+    fn selection_is_case_insensitive_and_rejects_unknown_names() {
+        assert_eq!(select(&[]).unwrap().len(), datasets().len());
+        let picked = select(&["hostinfo".into(), "TCPConnections".into()]).unwrap();
+        assert_eq!(
+            picked.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["HostInfo", "TcpConnections"]
+        );
+        assert!(select(&["Nope".into()]).is_err());
     }
     #[test]
     fn missing_completion_invalid_json_and_provider_errors_never_look_empty() {
