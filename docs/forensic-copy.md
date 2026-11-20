@@ -48,9 +48,14 @@ Raw filesystem bytes retain their embedded timestamps, security descriptors and
 other metadata; they are not reconstructed files with newly assigned metadata.
 
 During acquisition the file is `C.dd.partial`. After copying, Kumade flushes the
-image to the storage device and reads it back, comparing its length and SHA-256
-against the bytes acquired from the source. Only then is it renamed to `C.dd`
-without replacing any existing path. The command returns success only after
+image to the storage device, closes it and reads it back through a fresh handle
+with the Windows file cache bypassed, so the compared bytes come from the
+destination device rather than from pages still resident from the write. It
+compares the length and SHA-256 against the bytes acquired from the source. Only
+then is it renamed to `C.dd` without replacing any existing path. The receipt's
+`Readback` field says `Unbuffered` for that path; it says `Buffered` only when
+the destination's sector size does not divide the image length (a 4K-sector
+destination with a 512-byte-sector source), where cached reads are the fallback. The command returns success only after
 writing the final `Verified` receipt.
 
 A read, write, flush, verification or finalization error stops acquisition and
@@ -87,12 +92,18 @@ storage descriptors instead of comparing path strings. It rejects:
 
 External detection uses Windows-reported USB, FireWire, SD/MMC, removable or
 hotplug characteristics. A misreported device can be refused; hardware reporting
-is not proof of where an enclosure is physically located. There is no bypass flag.
-The actual opened output file's volume is checked again before copying bytes.
+is not proof of where an enclosure is physically located. The reverse also
+applies: an internal SATA disk on a hot-plug capable port can be reported as
+hotplug and accepted, in which case the physical-disk separation check is what
+still protects the source. There is no bypass flag. The actual opened output
+file's volume is checked again before copying bytes.
 
-This first implementation supports single-extent source partitions. RAID,
-iSCSI, Storage Spaces, file-backed virtual disks and unknown/virtual storage
-buses are refused where their backing-disk separation cannot be established.
+This first implementation supports single-extent source partitions. The
+destination must be a plain disk: RAID, iSCSI, Storage Spaces, file-backed and
+other virtual destinations are refused because their backing storage may overlap
+the source. Sources may live on hardware RAID, iSCSI or Storage Spaces volumes;
+only file-backed and virtual source disks (a mounted VHD, for instance) are
+refused, because their backing file could sit on the destination.
 It does not currently support splitting output, compression, resume or continuing
 past unreadable sectors. Windows must expose the source volume through its local
 volume APIs; this is not a recovery tool for unrecognized partition tables.
@@ -120,7 +131,7 @@ All JSON keys use PascalCase. `Source` and `Destination` include `VolumeName`,
 
 Other fields are `SchemaVersion`, `Version`, `Computer`, `StartedUtc`, `FinishedUtc`,
 `Status`, `ExpectedBytes`, `BytesCopied`, `LogicalSectorSize`, `Image`,
-`AcquiredSha256`, `ImageSha256`, `Verified`, `Consistency` and `Error`. `Image` is
+`AcquiredSha256`, `ImageSha256`, `Readback`, `Verified`, `Consistency` and `Error`. `Image` is
 relative to the run directory. `StartedUtc`/`FinishedUtc` are UTC timestamps.
 `Verified` describes stored-byte integrity, not acquisition consistency or authenticity.
 

@@ -12,7 +12,8 @@
 // PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
 // and limitations under the RPL.
 
-//! Read-only NTFS access through the MIT/Apache-2.0 `ntfs` library.
+//! Windows implementation: volume and disk identity, read-only raw partition
+//! reads and verified image output.
 
 use super::*;
 use anyhow::{Context, bail};
@@ -254,6 +255,57 @@ fn filesystem(name: &str) -> Result<String> {
     )?)
 }
 
+/// Logical sector size of the destination volume; unbuffered reads of the saved
+/// image must be aligned to it.
+fn destination_sector(volume_name: &str) -> Result<u32> {
+    let root = wide(Path::new(volume_name));
+    let (mut per_cluster, mut per_sector, mut free, mut total) = (0u32, 0u32, 0u32, 0u32);
+    ensure!(
+        // SAFETY: terminated volume root and four writable output words.
+        unsafe {
+            GetDiskFreeSpaceW(
+                root.as_ptr(),
+                &mut per_cluster,
+                &mut per_sector,
+                &mut free,
+                &mut total,
+            )
+        } != 0,
+        "Cannot read the destination sector size: {}",
+        std::io::Error::last_os_error()
+    );
+    ensure!(
+        per_sector.is_power_of_two() && (512..=4096).contains(&per_sector),
+        "Unsupported destination sector size {per_sector}"
+    );
+    Ok(per_sector)
+}
+
+/// Reopen the saved image for verification. With the file cache bypassed the
+/// bytes come from the destination device rather than from pages still resident
+/// from the write; that needs sector-aligned reads, so an image whose length the
+/// destination sector size does not divide falls back to cached reads.
+fn open_readback(path: &Path, length: u64, sector: u32) -> Result<(Box<dyn Read>, &'static str)> {
+    let mut opts = OpenOptions::new();
+    opts.read(true).share_mode(FILE_SHARE_READ);
+    if length.is_multiple_of(u64::from(sector)) {
+        opts.custom_flags(
+            FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT,
+        );
+        let file = opts
+            .open(path)
+            .context("Cannot reopen the image for verification")?;
+        let reader = crate::raw::DeviceReader::new(file, length, sector as usize)?;
+        Ok((Box::new(reader), "Unbuffered"))
+    } else {
+        opts.custom_flags(FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = opts
+            .open(path)
+            .context("Cannot reopen the image for verification")?;
+        Ok((Box::new(file), "Buffered"))
+    }
+}
+
 fn handle_volume(file: &File) -> Result<Volume> {
     let mut buffer = vec![0u16; 32768];
     // SAFETY: open file handle and a writable buffer with the advertised UTF-16 capacity.
@@ -310,7 +362,8 @@ fn promote_image(partial: &Path, image: &Path) -> Result<()> {
 }
 
 pub(super) fn run(options: &Options) -> Result<()> {
-    crate::platform::enable_backup_privilege()?;
+    crate::platform::enable_backup_privilege()
+        .context("forensic-copy must run from an elevated (Administrator) session")?;
     let root = source_root(&options.source)?;
     let name = crate::platform::volume_identity(Path::new(&root))?
         .context("Source must be a local logical volume")?;
@@ -342,6 +395,7 @@ pub(super) fn run(options: &Options) -> Result<()> {
         "Source extent and reported partition length disagree"
     );
     let fsname = filesystem(&destination.volume_name)?;
+    let readback_sector = destination_sector(&destination.volume_name)?;
     validate_capacity(
         length,
         fs2::available_space(Path::new(&destination.volume_name))?,
@@ -354,12 +408,8 @@ pub(super) fn run(options: &Options) -> Result<()> {
     let mut source_reader = crate::raw::DeviceReader::new(source_file, length, sector as usize)?;
     fs::create_dir_all(&parent)?;
     let computer = crate::platform::computer_name();
-    let start = chrono::Utc::now();
-    let output = parent.join(format!(
-        "{}_{}",
-        crate::paths::encode_component(&computer),
-        start.format("%Y-%m-%d_%H-%M-%S")
-    ));
+    let started_utc = crate::model::utc_now();
+    let output = parent.join(crate::paths::run_name(&computer, &started_utc)?);
     fs::create_dir(&output).context("Output run already exists; no files were overwritten")?;
     crate::platform::protect_output_root(&output)?;
     let label = if root.len() == 3 {
@@ -373,20 +423,32 @@ pub(super) fn run(options: &Options) -> Result<()> {
     let image = output.join(&image_name);
     let mut image_file = new_output(&partial)?;
     // Revalidate the volume of the file actually opened, guarding mount-point/path aliases.
-    let actual_destination = handle_volume(&image_file)?;
-    validate_destination(&source, &actual_destination)?;
-    ensure!(
-        actual_destination
-            .volume_name
-            .eq_ignore_ascii_case(&destination.volume_name),
-        "Destination volume changed during setup"
-    );
-    let mut report_file = new_output(&output.join("ForensicCopy.json"))?;
+    let prepared = (|| -> Result<(Volume, File)> {
+        let actual = handle_volume(&image_file)?;
+        validate_destination(&source, &actual)?;
+        ensure!(
+            actual
+                .volume_name
+                .eq_ignore_ascii_case(&destination.volume_name),
+            "Destination volume changed during setup"
+        );
+        Ok((actual, new_output(&output.join("ForensicCopy.json"))?))
+    })();
+    let (actual_destination, mut report_file) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            // Nothing was imaged yet: do not leave an empty .partial behind.
+            drop(image_file);
+            let _ = fs::remove_file(&partial);
+            let _ = fs::remove_dir(&output);
+            return Err(error);
+        }
+    };
     let mut report = Report {
         schema_version: 1,
         version: env!("CARGO_PKG_VERSION").into(),
         computer,
-        started_utc: start.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        started_utc,
         finished_utc: None,
         status: "InProgress".into(),
         source,
@@ -397,6 +459,7 @@ pub(super) fn run(options: &Options) -> Result<()> {
         image: partial_name,
         acquired_sha256: None,
         image_sha256: None,
+        readback: "None".into(),
         verified: false,
         consistency: "Sequential raw read; no snapshot or source lock. A live writable source can change during acquisition.".into(),
         error: None,
@@ -412,7 +475,7 @@ pub(super) fn run(options: &Options) -> Result<()> {
         crate::ui::heading("Copying partition. Please wait.");
     }
     let progress = crate::ui::progress_bar(length, options.quiet);
-    let result = (|| -> Result<()> {
+    let copied = (|| -> Result<()> {
         report.acquired_sha256 = Some(copy_exact(
             &mut source_reader,
             &mut image_file,
@@ -427,29 +490,34 @@ pub(super) fn run(options: &Options) -> Result<()> {
             image_file.metadata()?.len() == length,
             "Saved image length differs from source partition"
         );
-        progress.finish_and_clear();
+        Ok(())
+    })();
+    progress.finish_and_clear();
+    // Close the write handle: verification reopens the image with the file cache
+    // bypassed, and the no-replace rename needs the file closed (Windows sharing rules).
+    drop(image_file);
+    let result = copied.and_then(|()| {
         if !options.quiet {
             crate::ui::heading("Verifying partition image. Please wait.");
         }
         let verify_progress = crate::ui::progress_bar(length, options.quiet);
-        image_file.seek(SeekFrom::Start(0))?;
-        let verified = verify_image(
-            &mut image_file,
-            length,
-            report
-                .acquired_sha256
-                .as_deref()
-                .context("Missing acquisition hash")?,
-            |n| verify_progress.set_position(n),
-        );
+        let verified =
+            open_readback(&partial, length, readback_sector).and_then(|(mut reader, mode)| {
+                report.readback = mode.into();
+                verify_image(
+                    &mut reader,
+                    length,
+                    report
+                        .acquired_sha256
+                        .as_deref()
+                        .context("Missing acquisition hash")?,
+                    |n| verify_progress.set_position(n),
+                )
+            });
         verify_progress.finish_and_clear();
         report.image_sha256 = Some(verified?);
-        Ok(())
-    })();
-    progress.finish_and_clear();
-    // Close the output before its no-replace rename (Windows sharing rules).
-    drop(image_file);
-    let result = result.and_then(|()| promote_image(&partial, &image));
+        promote_image(&partial, &image)
+    });
     report.finished_utc = Some(crate::model::utc_now());
     if let Err(error) = result {
         report.status = "Failed".into();
@@ -477,7 +545,10 @@ pub(super) fn run(options: &Options) -> Result<()> {
             "SHA-256",
             report.image_sha256.as_deref().unwrap_or_default(),
         );
-        crate::ui::field("Verification", "Passed");
+        crate::ui::field(
+            "Verification",
+            format!("Passed ({} readback)", report.readback.to_lowercase()),
+        );
         crate::ui::field("Results saved", output.display());
     }
     Ok(())
@@ -646,8 +717,14 @@ try {
         saved.sync_all()?;
         assert_eq!(saved.metadata()?.len(), length);
         assert_eq!(copied, length);
-        saved.seek(SeekFrom::Start(0))?;
-        assert_eq!(verify_image(&mut saved, length, &hash, |_| {})?, hash);
+        drop(saved);
+        let volume = crate::platform::volume_identity(temp.path())?
+            .context("Temporary directory is not on a local volume")?;
+        let (mut readback, mode) = open_readback(&partial, length, destination_sector(&volume)?)?;
+        assert_eq!(mode, "Unbuffered");
+        assert_eq!(verify_image(&mut readback, length, &hash, |_| {})?, hash);
+        drop(readback);
+        let mut saved = OpenOptions::new().read(true).open(&partial)?;
         // Independently compare every sector with the now-read-only volume, including its tail.
         reader.seek(SeekFrom::Start(0))?;
         saved.seek(SeekFrom::Start(0))?;

@@ -12,8 +12,6 @@
 // PURPOSE, QUIET ENJOYMENT, OR NON-INFRINGEMENT. See the RPL for specific language governing rights
 // and limitations under the RPL.
 
-//! Read-only NTFS access through the MIT/Apache-2.0 `ntfs` library.
-
 //! Raw logical-volume imaging. The destination is an ordinary file, never a disk device.
 use anyhow::Result;
 #[cfg(any(windows, test))]
@@ -77,6 +75,10 @@ pub struct Report {
     pub image: String,
     pub acquired_sha256: Option<String>,
     pub image_sha256: Option<String>,
+    /// How the saved image was read back for verification: `Unbuffered` (file
+    /// cache bypassed, bytes came from the destination device) or `Buffered`
+    /// (destination sector size does not divide the image; cached reads).
+    pub readback: String,
     pub verified: bool,
     /// Raw reads do not provide VSS or a point-in-time snapshot of a writable volume.
     pub consistency: String,
@@ -134,11 +136,24 @@ fn validate_destination(source: &Volume, destination: &Volume) -> Result<()> {
             .any(|d| s.disk_number == d.disk_number)),
         "Destination is on the same physical disk as the source, even if the drive letters differ"
     );
-    // Windows STORAGE_BUS_TYPE: virtual, file-backed virtual, Storage Spaces, unknown, RAID, iSCSI.
-    for disk in source.disks.iter().chain(&destination.disks) {
+    // Windows STORAGE_BUS_TYPE. The destination must be a plain, separately
+    // identifiable disk: RAID (8), iSCSI (9), virtual (14), file-backed virtual
+    // (15) and Storage Spaces (16) destinations may be backed by the source
+    // disk. A source only needs a known identity that is not itself a virtual or
+    // file-backed device, so hardware-RAID system disks, iSCSI and Storage
+    // Spaces volumes can be imaged to an external disk.
+    for disk in &source.disks {
+        ensure!(
+            (1..=19).contains(&disk.bus_type) && !matches!(disk.bus_type, 14 | 15),
+            "Unsupported or unknown storage topology for source disk {} (bus type {})",
+            disk.disk_number,
+            disk.bus_type
+        );
+    }
+    for disk in &destination.disks {
         ensure!(
             (1..=19).contains(&disk.bus_type) && !matches!(disk.bus_type, 8 | 9 | 14 | 15 | 16),
-            "Unsupported or unknown storage topology for disk {} (bus type {})",
+            "Unsupported or unknown storage topology for destination disk {} (bus type {})",
             disk.disk_number,
             disk.bus_type
         );
@@ -289,10 +304,21 @@ mod tests {
         for bus in [0, 8, 9, 14, 15, 16, 20, 127, -1] {
             let mut target = volume("unknown", 1, bus);
             target.disks[0].hotplug = true;
-            assert!(validate_destination(&source, &target).is_err());
+            assert!(validate_destination(&source, &target).is_err(), "{bus}");
+        }
+        // Unknown, virtual and file-backed sources stay refused; hardware RAID,
+        // iSCSI and Storage Spaces system volumes can be imaged to a USB disk.
+        for bus in [0, 14, 15, 20, 127, -1] {
             assert!(
                 validate_destination(&volume("virtual source", 0, bus), &volume("usb", 1, 7))
-                    .is_err()
+                    .is_err(),
+                "{bus}"
+            );
+        }
+        for bus in [8, 9, 16] {
+            assert!(
+                validate_destination(&volume("raid source", 0, bus), &volume("usb", 1, 7)).is_ok(),
+                "{bus}"
             );
         }
         let mut target = volume("external eSATA", 1, 11);
