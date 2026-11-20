@@ -77,6 +77,7 @@ select vdisk file="$env:KUMADE_VSS_TEST_IMAGE"
 attach vdisk
 create partition primary size=6144
 format fs=ntfs quick label=KumadeVssTest
+assign
 create partition primary
 format fs=fat32 quick label=KumadeVssFat
 "@ | Set-Content -LiteralPath $env:KUMADE_VSS_TEST_SCRIPT -Encoding ascii
@@ -85,6 +86,9 @@ try {
     $volumes=@(Get-DiskImage -ImagePath $env:KUMADE_VSS_TEST_IMAGE | Get-Disk | Get-Partition | Get-Volume)
     $n=@($volumes | Where-Object FileSystem -eq NTFS); $f=@($volumes | Where-Object FileSystem -eq FAT32)
     if ($n.Count -ne 1 -or $f.Count -ne 1) { throw 'Expected isolated NTFS and FAT32 volumes' }
+    # Only the freshly created test volume: never change runner/system quotas.
+    $storage = & vssadmin.exe add shadowstorage "/for=$($n[0].UniqueId)" "/on=$($n[0].UniqueId)" /maxsize=1GB 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Cannot configure owned fixture shadow storage: $storage" }
     @{Ntfs=$n[0].UniqueId;Fat=$f[0].UniqueId} | ConvertTo-Json -Compress
 } catch {Dismount-DiskImage -ImagePath $env:KUMADE_VSS_TEST_IMAGE -ErrorAction SilentlyContinue | Out-Null; throw}
 "#;
@@ -99,7 +103,10 @@ try {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let _mounted = Mounted { image, shell };
+    let _mounted = Mounted {
+        image,
+        shell: shell.clone(),
+    };
     let text = String::from_utf8(output.stdout)?;
     let volumes: Volumes = serde_json::from_str(text.trim().trim_start_matches('﻿'))?;
     let source_root = platform::canonicalize(Path::new(&volumes.ntfs))?;
@@ -127,7 +134,19 @@ try {
         sources: vec![source, fat],
         issues: Vec::new(),
     };
-    let mut owned = vss::prepare_sources(&mut discovered, 120)?;
+    let mut owned = match vss::prepare_sources(&mut discovered, 120) {
+        Ok(session) => session,
+        Err(error) => {
+            let diagnostics = Command::new(&shell)
+                .args(["-NoProfile", "-NonInteractive", "-Command", "Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='VSS';StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction SilentlyContinue | Select-Object -First 5 TimeCreated,Id,Message | Format-List | Out-String -Width 180"])
+                .output()?;
+            anyhow::bail!(
+                "{error:#}\nVSS diagnostics: {}{}",
+                String::from_utf8_lossy(&diagnostics.stdout),
+                String::from_utf8_lossy(&diagnostics.stderr)
+            );
+        }
+    };
     assert_eq!(discovered.sources.len(), 1);
     assert!(
         discovered
