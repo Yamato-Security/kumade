@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add `forensic-copy -s C: -o E:\Evidence` to image one logical partition into a
+  raw `.dd` file on a different external physical disk. Check actual volume and
+  disk identities, available space and filesystem limits before output creation;
+  use read-only sector-aligned reads, bounded memory, SHA-256 readback verification,
+  no-clobber finalization and PascalCase JSON receipts. Preserve failed output as
+  `.dd.partial` and document live-volume consistency and unsupported storage limits.
+
 - Name collections and automatically named VHDX/E01 files with the hostname and UTC run start time; store evidence directly under drive-letter directories. A bare `--vhdx`/`--e01` uses the `Kumade-Results` directory beside the executable, like `-o`. Live collection keeps the catalog scope on every local fixed volume; the volume holding the destination is excluded by volume identity (the running Windows volume is always acquired), and volumes without a readable file system are recorded as excluded instead of failing the run. Offline source directories cannot take a collection metadata name such as `LiveInfo`.
 
 - Add live-response inventory with 59 read-only Windows providers, PascalCase CSV/JSON/JSONL, bounded concurrency/deadlines/output, provider diagnostics and integrity seals. Capture volatile state before live file collection, including VHDX/E01 output. Add inventory-only `live-info`, provider selection, format selection and `--no-live-info`; offline scans never query the analyst host.

@@ -19,6 +19,8 @@ Windows examples below.
 
 ## Implemented
 
+- [Raw partition imaging](docs/forensic-copy.md): `forensic-copy` reads a logical Windows partition into a `.dd` file on a different external disk, with physical-disk separation checks, SHA-256 readback verification and a JSON receipt.
+
 - [Live-response inventory](docs/live-info.md): 59 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.
 
 - Embedded acquisition catalog with 43 artifact families, including event logs,
@@ -82,6 +84,17 @@ automatically reads the analyst's own Windows directories. Repeat `--source`
 for disjoint volume directories; use `--profile-root` for nonstandard profiles.
 `--artifact <ID>` explicitly narrows acquisition and records excluded families.
 The default reserves 2 GiB of destination space; `--reserve-mib` changes it.
+
+For a bit-for-bit logical partition image instead of selected artifact collection,
+run from an elevated PowerShell session, with `E:` on a different external disk:
+
+```powershell
+.\kumade.exe forensic-copy -s C: -o E:\Evidence
+```
+
+This creates `<Hostname>_<UTC>/C.dd` and `ForensicCopy.json`. It does not overwrite
+the external disk's partition table or existing files. See [forensic-copy](docs/forensic-copy.md)
+for storage restrictions and the consistency limits of live-volume reads.
 
 Each run creates `Plan.json`, `Run.json`, `Manifest.jsonl`, `Manifest.csv`,
 `Coverage.csv`, `DiscoveryIssues.csv`, `Errors.csv`, `Summary.json` and `Seal.json`.

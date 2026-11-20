@@ -47,6 +47,12 @@ fn record_source(report: &mut SourceDiscovery, id: String, path: &Path, result: 
     }
 }
 
+/// Resolve a path's actual local volume, following mount points and path aliases.
+#[cfg(windows)]
+pub(crate) fn volume_identity(path: &Path) -> Result<Option<String>> {
+    windows::volume_for_path(path)
+}
+
 pub fn computer_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))

@@ -48,6 +48,8 @@ enum Command {
     Collect(CollectionArgs),
     /// Inspect platform support and acquisition prerequisites
     Doctor,
+    /// Image a logical partition to a raw file on a different external drive
+    ForensicCopy(ForensicCopyArgs),
     /// Capture live Windows response inventory without copying forensic artifacts
     LiveInfo(LiveInfoArgs),
     /// List the embedded or explicitly selected acquisition catalog
@@ -117,6 +119,22 @@ struct CollectionArgs {
     /// List each file being copied instead of displaying a progress bar
     #[arg(short = 'v', long, conflicts_with = "quiet")]
     verbose: bool,
+}
+
+#[derive(Args)]
+struct ForensicCopyArgs {
+    /// Logical volume to read, for example C: or a volume GUID
+    #[arg(short = 's', long, value_name = "VOLUME")]
+    source: String,
+    /// Destination directory on a different external physical drive
+    #[arg(short, long, value_name = "DIR")]
+    output: PathBuf,
+    /// Keep this much destination space free (MiB)
+    #[arg(long, default_value_t = 2048)]
+    reserve_mib: u64,
+    /// Suppress progress and routine console messages
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 #[derive(Args)]
@@ -264,6 +282,15 @@ fn run() -> Result<u8> {
         Err(error) => error.exit(),
     };
     let (options, plan_only) = match cli.command {
+        Some(Command::ForensicCopy(args)) => {
+            kumade::forensic_copy::run(&kumade::forensic_copy::Options {
+                source: args.source,
+                output: args.output,
+                reserve_mib: args.reserve_mib,
+                quiet: args.quiet,
+            })?;
+            return Ok(0);
+        }
         Some(Command::LiveInfo(args)) => {
             if args.list {
                 ui::banner();
@@ -323,6 +350,14 @@ fn run() -> Result<u8> {
                 },
             );
             ui::field("Raw NTFS acquisition", "Available");
+            ui::field(
+                "Partition imaging",
+                if cfg!(windows) {
+                    "forensic-copy; external destination and elevation required"
+                } else {
+                    "Requires Windows"
+                },
+            );
             ui::field("RAM acquisition", "Not implemented");
             ui::field("VSS acquisition", "Not implemented");
             ui::field("Cloud transport", "Not implemented");
