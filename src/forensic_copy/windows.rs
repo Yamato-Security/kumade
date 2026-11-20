@@ -382,7 +382,25 @@ pub(super) fn run(options: &Options) -> Result<()> {
         "Destination volume changed during setup"
     );
     let mut report_file = new_output(&output.join("ForensicCopy.json"))?;
-    let mut report=Report {schema_version:1,version:env!("CARGO_PKG_VERSION").into(),computer,started_utc:start.to_rfc3339_opts(chrono::SecondsFormat::Nanos,true),finished_utc:None,status:"InProgress".into(),source,destination:actual_destination,expected_bytes:length,bytes_copied:0,logical_sector_size:sector,image:partial_name,acquired_sha256:None,image_sha256:None,verified:false,consistency:"Sequential raw read; no snapshot or source lock. A live writable source can change during acquisition.".into(),error:None};
+    let mut report = Report {
+        schema_version: 1,
+        version: env!("CARGO_PKG_VERSION").into(),
+        computer,
+        started_utc: start.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        finished_utc: None,
+        status: "InProgress".into(),
+        source,
+        destination: actual_destination,
+        expected_bytes: length,
+        bytes_copied: 0,
+        logical_sector_size: sector,
+        image: partial_name,
+        acquired_sha256: None,
+        image_sha256: None,
+        verified: false,
+        consistency: "Sequential raw read; no snapshot or source lock. A live writable source can change during acquisition.".into(),
+        error: None,
+    };
     write_report(&mut report_file, &report)?;
     if !options.quiet {
         crate::ui::banner();
@@ -535,10 +553,27 @@ mod tests {
     #[test]
     fn raw_partition_roundtrip_reads_the_last_sector_and_verifies_every_byte() -> Result<()> {
         use std::process::Command;
-        struct Mounted(PathBuf);
+        // Storage cmdlets require native PowerShell, also for the WOW64 x86 test binary.
+        let windows =
+            PathBuf::from(std::env::var_os("SystemRoot").context("SystemRoot is unavailable")?);
+        let shell = ["Sysnative", "System32"]
+            .into_iter()
+            .map(|dir| {
+                windows
+                    .join(dir)
+                    .join("WindowsPowerShell/v1.0/powershell.exe")
+            })
+            .find(|path| path.is_file())
+            .context("Native Windows PowerShell is unavailable")?;
+        struct Mounted {
+            image: PathBuf,
+            shell: PathBuf,
+        }
         impl Drop for Mounted {
             fn drop(&mut self) {
-                let _=Command::new("powershell.exe").args(["-NoProfile","-NonInteractive","-Command","Dismount-DiskImage -ImagePath $env:KUMADE_TEST_IMAGE -ErrorAction Stop | Out-Null"]).env("KUMADE_TEST_IMAGE",&self.0).output();
+                let _ = Command::new(&self.shell)
+                    .args(["-NoProfile", "-NonInteractive", "-Command", "Dismount-DiskImage -ImagePath $env:KUMADE_TEST_IMAGE -ErrorAction Stop | Out-Null"])
+                    .env("KUMADE_TEST_IMAGE", &self.image).output();
             }
         }
         let temp = tempfile::tempdir()?;
@@ -567,7 +602,7 @@ try {
     throw
 }
 "#;
-        let output = Command::new("powershell.exe")
+        let output = Command::new(&shell)
             .args(["-NoProfile", "-NonInteractive", "-Command", setup])
             .env("KUMADE_TEST_IMAGE", &image)
             .env("KUMADE_TEST_SCRIPT", &script)
@@ -578,7 +613,7 @@ try {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let _mounted = Mounted(image);
+        let _mounted = Mounted { image, shell };
         let name = String::from_utf8(output.stdout)?
             .trim()
             .trim_start_matches('﻿')
