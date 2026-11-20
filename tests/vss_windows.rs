@@ -66,14 +66,16 @@ fn locked_file_snapshot_content_raw_ntfs_cleanup_and_cli_backends() -> Result<()
     let image = temp.path().join("vss-test.vhdx");
     let script = temp.path().join("diskpart.txt");
     let shell = native_shell()?;
+    // The provider’s default diff-area quota must exceed its minimum allocation.
+    // A tiny NTFS volume can report VSS support yet fail with insufficient storage.
     let setup = r#"
 $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
 [Console]::OutputEncoding=New-Object System.Text.UTF8Encoding($false)
 @"
-create vdisk file="$env:KUMADE_VSS_TEST_IMAGE" maximum=2048 type=expandable
+create vdisk file="$env:KUMADE_VSS_TEST_IMAGE" maximum=8192 type=expandable
 select vdisk file="$env:KUMADE_VSS_TEST_IMAGE"
 attach vdisk
-create partition primary size=1024
+create partition primary size=6144
 format fs=ntfs quick label=KumadeVssTest
 create partition primary
 format fs=fat32 quick label=KumadeVssFat

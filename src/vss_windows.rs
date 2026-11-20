@@ -47,9 +47,16 @@ unsafe extern "C" {
     fn kumade_vss_snapshot_size() -> usize;
 }
 fn check(code: i32, operation: &str) -> Result<()> {
+    let detail = match code as u32 {
+        0x8004231f => "Insufficient shadow-copy storage",
+        0x80042316 => "Another snapshot set is already in progress",
+        0x80070005 => "Access denied: run from an elevated Administrator session",
+        0x800705b4 => "Snapshot creation timed out",
+        _ => "VSS request did not complete",
+    };
     ensure!(
         code >= 0,
-        "{operation} failed (HRESULT 0x{:08X}); check VSS services, volume support, free shadow storage and Windows Application/VSS logs",
+        "{operation} failed: {detail} (HRESULT 0x{:08X}); check VSS services, volume support, free shadow storage and Windows Application/VSS logs",
         code as u32
     );
     Ok(())
