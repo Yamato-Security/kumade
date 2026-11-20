@@ -62,6 +62,7 @@ fn options() -> Options {
         verbose: false,
         ntfs_metadata: false,
         host_reserve: None,
+        live_info: None,
     }
 }
 fn read_records(root: &Path) -> Vec<Record> {

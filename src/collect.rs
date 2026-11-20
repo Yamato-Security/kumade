@@ -33,6 +33,7 @@ use std::{
 };
 
 const BUFFER: usize = 1024 * 1024;
+#[derive(Clone, Debug)]
 pub struct HostReserve {
     pub path: PathBuf,
     pub bytes: u64,
@@ -45,6 +46,7 @@ pub struct Options {
     pub verbose: bool,
     pub ntfs_metadata: bool,
     pub host_reserve: Option<HostReserve>,
+    pub live_info: Option<crate::live_info::Options>,
 }
 
 pub fn hash_file(path: &Path) -> Result<(u64, String)> {
@@ -502,8 +504,15 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     write_json_new(&root.join("Plan.json"), plan)?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":utc_now(),"FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
+    // Capture volatile state before potentially lengthy file copying. Explicit offline
+    // collection never supplies this option; container backends carry it unchanged.
+    let live_info = options
+        .live_info
+        .as_ref()
+        .map(|config| crate::live_info::collect_into(&root, config))
+        .transpose()?;
     let new_file = |name: &str| -> Result<File> {
         Ok(OpenOptions::new()
             .write(true)
@@ -640,6 +649,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         bytes_acquired: 0,
         catalog_sha256: plan.catalog_sha256.clone(),
         metadata_errors: 0,
+        live_info_failed_providers: live_info.as_ref().map_or(0, |r| r.failures()),
     };
     for record in records.iter() {
         match record.status.as_str() {
@@ -653,7 +663,11 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             .checked_add(record.bytes_read)
             .context("Summary size overflow")?;
     }
-    if summary.failed > 0 || summary.partial > 0 || summary.discovery_errors > 0 {
+    if summary.failed > 0
+        || summary.partial > 0
+        || summary.discovery_errors > 0
+        || summary.live_info_failed_providers > 0
+    {
         summary.completeness = "Partial".into();
     }
     ensure!(
@@ -746,11 +760,16 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         "Errors.csv",
         "Summary.json",
     ] {
-        metadata.insert(name, hash_file(&root.join(name))?.1);
+        metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
     }
     if options.ntfs_metadata {
         for name in metadata::FILES {
-            metadata.insert(name, hash_file(&root.join(name))?.1);
+            metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
+        }
+    }
+    if let Some(info) = &live_info {
+        for name in &info.files {
+            metadata.insert(name.clone(), hash_file(&root.join(name))?.1);
         }
     }
     write_json_new(
@@ -777,6 +796,13 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         ui::field("Partial", ui::count(summary.partial));
         ui::field("Failed", ui::count(summary.failed));
         ui::field("Discovery errors", ui::count(summary.discovery_errors));
+        if let Some(info) = &live_info {
+            ui::field("Live-info datasets", ui::count(info.entries.len() as u64));
+            ui::field(
+                "Live-info failures",
+                ui::count(summary.live_info_failed_providers),
+            );
+        }
         if options.ntfs_metadata {
             ui::field("Metadata errors", ui::count(summary.metadata_errors));
         }

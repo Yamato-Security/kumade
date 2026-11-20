@@ -643,6 +643,14 @@ mod windows {
             quiet: options.quiet,
             verbose: options.verbose,
             ntfs_metadata: true,
+            live_info: options.live_info.clone().map(|mut config| {
+                config.reserve_bytes = reserve;
+                config.host_reserve = Some(HostReserve {
+                    path: parent.to_owned(),
+                    bytes: options.reserve_bytes,
+                });
+                config
+            }),
             host_reserve: Some(HostReserve {
                 path: parent.to_owned(),
                 // Each active worker can write up to 16 MiB between checks.

@@ -48,6 +48,8 @@ enum Command {
     Collect(CollectionArgs),
     /// Inspect platform support and acquisition prerequisites
     Doctor,
+    /// Capture live Windows response inventory without copying forensic artifacts
+    LiveInfo(LiveInfoArgs),
     /// List the embedded or explicitly selected acquisition catalog
     List {
         #[arg(long)]
@@ -79,6 +81,15 @@ struct CollectionArgs {
     /// NTFS capacity in GiB before E01 compression (default: automatic)
     #[arg(long, value_name = "GIB", requires = "e01", value_parser = clap::value_parser!(u64).range(1..=65536))]
     e01_size_gib: Option<u64>,
+    /// Skip the automatic live-response inventory (offline sources always skip it)
+    #[arg(long)]
+    no_live_info: bool,
+    /// Live-response inventory output format
+    #[arg(long, value_enum, default_value = "csv")]
+    live_info_format: kumade::live_info::Format,
+    /// Per-provider live-response deadline in seconds
+    #[arg(long,default_value_t=90,value_parser=clap::value_parser!(u64).range(1..=3600))]
+    live_info_timeout: u64,
     /// Computer name for offline evidence
     #[arg(long)]
     computer: Option<String>,
@@ -106,6 +117,31 @@ struct CollectionArgs {
     /// List each file being copied instead of displaying a progress bar
     #[arg(short = 'v', long, conflicts_with = "quiet")]
     verbose: bool,
+}
+
+#[derive(Args)]
+struct LiveInfoArgs {
+    /// New output directory (existing directories are refused)
+    #[arg(short, long, value_name = "DIR", required_unless_present = "list")]
+    output: Option<PathBuf>,
+    /// List the embedded inventory data sets without querying the system
+    #[arg(long)]
+    list: bool,
+    /// Output format
+    #[arg(short = 't', long = "format", value_enum, default_value = "csv")]
+    format: kumade::live_info::Format,
+    /// Select a named data set; repeat (default: all)
+    #[arg(long = "dataset", value_name = "NAME")]
+    datasets: Vec<String>,
+    /// Concurrent PowerShell queries
+    #[arg(short='T',long,default_value_t=2,value_parser=clap::value_parser!(u64).range(1..=8))]
+    threads: u64,
+    /// Deadline for each query in seconds
+    #[arg(long,default_value_t=90,value_parser=clap::value_parser!(u64).range(1..=3600))]
+    timeout: u64,
+    /// Suppress progress
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 /// One worker per logical CPU, capped: more workers than that only multiply
@@ -212,6 +248,50 @@ fn run() -> Result<u8> {
         Err(error) => error.exit(),
     };
     let (options, plan_only) = match cli.command {
+        Some(Command::LiveInfo(args)) => {
+            if args.list {
+                ui::banner();
+                for dataset in kumade::live_info::datasets() {
+                    ui::status(&format!(
+                        "{:<28} {} fields",
+                        dataset.name,
+                        dataset.fields.len()
+                    ));
+                }
+                return Ok(0);
+            }
+            ensure!(cfg!(windows), "Live response inventory requires Windows");
+            // Reject unknown names before the output directory exists.
+            kumade::live_info::select(&args.datasets)?;
+            let output =
+                paths::resolve_future(args.output.as_deref().context("Missing output directory")?)?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::create_dir(&output).context("Live-info output must be a new directory")?;
+            platform::protect_output_root(&output)?;
+            if !args.quiet {
+                ui::banner();
+                ui::field("Start time", kumade::model::utc_now());
+            }
+            let info = kumade::live_info::collect_into(
+                &output,
+                &kumade::live_info::Options {
+                    format: args.format,
+                    threads: args.threads as usize,
+                    timeout_seconds: args.timeout,
+                    quiet: args.quiet,
+                    selected: args.datasets,
+                    ..Default::default()
+                },
+            )?;
+            if !args.quiet {
+                ui::field("Datasets", info.entries.len());
+                ui::field("Failed/partial providers", info.failures());
+                ui::field("Results saved", output.display());
+            }
+            return Ok(if info.failures() > 0 { 3 } else { 0 });
+        }
         Some(Command::Doctor) => {
             ui::banner();
             ui::field(
@@ -386,6 +466,18 @@ fn run() -> Result<u8> {
         verbose: options.verbose,
         ntfs_metadata: false,
         host_reserve: None,
+        live_info: if options.sources.is_empty() && !options.no_live_info {
+            Some(kumade::live_info::Options {
+                format: options.live_info_format,
+                timeout_seconds: options.live_info_timeout,
+                threads: options.threads.min(2),
+                reserve_bytes,
+                quiet: options.quiet,
+                ..Default::default()
+            })
+        } else {
+            None
+        },
     };
     let summary = if options.e01.is_some() {
         e01::collect(&plan, &output, options.e01_size_gib, &collect_options)?

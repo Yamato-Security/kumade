@@ -387,6 +387,7 @@ pub fn collect(
                 verbose: options.verbose,
                 ntfs_metadata: false,
                 host_reserve: None,
+                live_info: options.live_info.clone(),
             };
             let summary =
                 crate::vhdx::collect_staged(plan, &stage, size_gib, &stage_options, MAX_CAPACITY)?;
@@ -461,6 +462,7 @@ mod tests {
             verbose: false,
             ntfs_metadata: false,
             host_reserve: None,
+            live_info: None,
         }
     }
 
