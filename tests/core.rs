@@ -218,10 +218,18 @@ fn collection_names_share_a_utc_start_time_without_random_suffixes() {
     let (root, _) = collect::collect(&plan, &parent, &options()).unwrap();
     assert_eq!(root.file_name().unwrap(), "HOST01_2026-11-20_15-23-12");
     assert!(root.join("C/Windows/Prefetch/PROGRAM.EXE.pf").is_file());
+    let host: serde_json::Value =
+        serde_json::from_reader(File::open(root.join("client_info.json")).unwrap()).unwrap();
+    assert_eq!(host["hostname"], "HOST01");
+    let seal: serde_json::Value =
+        serde_json::from_reader(File::open(root.join("Seal.json")).unwrap()).unwrap();
+    assert!(seal["MetadataSHA256"]["client_info.json"].is_string());
     assert!(!root.join("Evidence").exists());
     assert_eq!(verify::verify(&root).unwrap(), (2, true));
     // An identical host/start time must never replace earlier evidence.
     assert!(collect::collect(&plan, &parent, &options()).is_err());
+    fs::write(root.join("client_info.json"), b"{\"hostname\":\"OTHER\"}").unwrap();
+    assert!(verify::verify(&root).is_err());
 }
 
 #[test]

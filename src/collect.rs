@@ -502,9 +502,18 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         );
     }
     write_json_new(&root.join("Plan.json"), plan)?;
+    // A sealed collection boundary lets Juntei group sibling data volumes with
+    // the Windows volume instead of discovering only C/Windows. `hostname` is
+    // the interoperability field; this is collector metadata, not a source file.
+    write_json_new(
+        &root.join("client_info.json"),
+        &serde_json::json!({
+            "hostname": computer, "Collector": "Kumade", "CollectionStartedUtc": plan.created_utc
+        }),
+    )?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(&s.root) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(&s.root)))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS acquisition is not implemented in this prototype","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     // Capture volatile state before potentially lengthy file copying. Explicit offline
     // collection never supplies this option; container backends carry it unchanged.
@@ -752,6 +761,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     let mut metadata = std::collections::BTreeMap::new();
     for name in [
         "Plan.json",
+        "client_info.json",
         "Run.json",
         "Manifest.jsonl",
         "Manifest.csv",

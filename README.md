@@ -99,6 +99,7 @@ HOST01_2026-11-20_15-23-12/
   D/$MFT
   E/$MFT
   LiveInfo/...
+  client_info.json
   Manifest.csv
   ...
 ```
@@ -114,7 +115,8 @@ inputs keep the full selected scope.
 `--vhdx E:\Evidence` and `--e01 E:\Evidence` create hostname/date-named
 containers in that directory. With no value, they use the current directory.
 A full filename remains an explicit override. Both containers contain the same
-hostname/date run directory and drive-based layout.
+hostname/date run directory and drive-based layout. A sealed `client_info.json`
+host marker lets Juntei group all of the run’s drive folders as one computer.
 Windows-incompatible names are reversibly encoded; exact source paths remain
 in the manifest. Very long names in directory mode use a manifest-mapped hash path.
 For the VHDX layout, metadata fields and fidelity limits, see
