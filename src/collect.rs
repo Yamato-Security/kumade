@@ -211,10 +211,25 @@ fn acquire_one_inner(
         source_file_id: None,
     };
     if source.snapshot.is_some() && crate::vss::omitted_paging_file(&item.relative_path) {
-        record.status = "Unsupported".into();
-        record.reason =
-            "VSS omits paging/hibernation contents; no live-file or raw-live fallback was used"
-                .into();
+        // Summary, Coverage.csv, Errors.csv and `verify` know Acquired, Partial,
+        // Failed and NotPresent. A paging file that exists in the snapshot is a
+        // planned file that was not acquired, so the run is Partial; a raw
+        // candidate that does not exist on this volume stays a legitimate absence.
+        let absent = item.before.is_none()
+            && source
+                .root
+                .join(&item.relative_path)
+                .symlink_metadata()
+                .is_err_and(|e| e.kind() == io::ErrorKind::NotFound);
+        if absent {
+            record.status = "NotPresent".into();
+            record.reason = "Not present in the VSS snapshot".into();
+        } else {
+            record.status = "Failed".into();
+            record.reason =
+                "VSS omits paging/hibernation contents; no live-file or raw-live fallback was used"
+                    .into();
+        }
         record.finished_utc = utc_now();
         return record;
     }

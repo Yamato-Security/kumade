@@ -225,7 +225,7 @@ impl Drop for Session {
     fn drop(&mut self) {
         if let Err(e) = self.close() {
             eprintln!(
-                "VSS cleanup failed: {e:#}. Only the current run's set was targeted; consult snapshot IDs in Plan.json."
+                "VSS cleanup failed: {e:#}. Only the current run's set was targeted; consult the snapshot IDs in Plan.json or ForensicCopy.json."
             );
         }
     }

@@ -45,9 +45,11 @@ as other Kumade collections and does not validate every artifact's internal form
 
 Windows/VSS can omit content, including paging and hibernation data. Artifact
 collection explicitly refuses to claim root `pagefile.sys`, `swapfile.sys` or
-`hiberfil.sys` contents from VSS: their manifest rows explain the unsupported
-scope and the result is partial when those artifacts are selected. Memory dumps
-that are ordinary files can still be collected. Other Windows/provider exclusion
+`hiberfil.sys` contents from VSS: their manifest rows are `Failed` with a reason
+that explains the unsupported scope, they are listed in `Errors.csv`, and the
+result is partial when those artifacts are selected; a paging file that does not
+exist on a volume stays `NotPresent`. Run without `--vss` to acquire them from the
+live volume. Memory dumps that are ordinary files can still be collected. Other Windows/provider exclusion
 policies can also affect the snapshot; VSS is not a RAM capture or a guarantee of
 original unallocated/slack contents.
 

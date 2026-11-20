@@ -307,6 +307,8 @@ mod tests {
         std::fs::create_dir(&source_root).unwrap();
         std::fs::write(source_root.join("pagefile.sys"), b"not a snapshot of RAM").unwrap();
         let mut source = crate::discovery::directory_source(&source_root, "C", "TEST").unwrap();
+        // A raw provider adds the hiberfil/swapfile candidates that this volume lacks.
+        source.raw_device = Some(PathBuf::from("unused-raw-device"));
         source.snapshot = Some(Snapshot {
             snapshot_id: "id".into(),
             snapshot_set_id: "set".into(),
@@ -327,24 +329,34 @@ mod tests {
             false,
         )
         .unwrap();
-        let file = plan
-            .files
-            .iter()
-            .find(|p| p.relative_path == Path::new("pagefile.sys"))
-            .unwrap();
+        let planned = |name: &str| {
+            plan.files
+                .iter()
+                .find(|p| p.relative_path == Path::new(name))
+                .unwrap()
+        };
         let output = temp.path().join("output");
         std::fs::create_dir(&output).unwrap();
-        let record = crate::collect::acquire_one(
-            &output,
-            &source,
-            file,
-            0,
-            &mut std::collections::HashMap::new(),
-        );
-        assert_eq!(record.status, "Unsupported");
+        let acquire = |name: &str| {
+            crate::collect::acquire_one(
+                &output,
+                &source,
+                planned(name),
+                0,
+                &mut std::collections::HashMap::new(),
+            )
+        };
+        // The paging file exists in the snapshot: a planned file that was not
+        // acquired, which Summary, Coverage.csv, Errors.csv and verify all understand.
+        let record = acquire("pagefile.sys");
+        assert_eq!(record.status, "Failed");
         assert!(record.reason.contains("no live-file"));
         assert_eq!(record.bytes_read, 0);
         assert!(!record.verified);
+        // Raw candidates this volume never had stay a legitimate absence.
+        let record = acquire("hiberfil.sys");
+        assert_eq!(record.status, "NotPresent");
+        assert_eq!(record.bytes_read, 0);
         assert_eq!(std::fs::read_dir(&output).unwrap().count(), 0);
     }
     #[test]
