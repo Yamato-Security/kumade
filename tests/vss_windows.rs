@@ -227,7 +227,7 @@ try {
         live_info: None,
     };
     let (root, summary) = collect::collect(&plan, &temp.path().join("direct"), &options)?;
-    assert_eq!(summary.completeness, "Complete");
+    assert_eq!(summary.completeness, "CompleteWithinSelectedPrototypeScope");
     let rows = record_rows(&root)?;
     let row = rows
         .iter()
