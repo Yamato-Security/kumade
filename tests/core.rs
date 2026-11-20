@@ -177,6 +177,161 @@ fn destination_encoding_is_reversible_without_common_collisions() {
 fn output_relative_paths_reject_parent_components() {
     assert!(paths::output_relative("C", Path::new("../escape"), None).is_err());
 }
+
+#[test]
+fn paths_put_every_acquisition_method_under_its_drive() {
+    let path = Path::new("Windows/System32/config/SYSTEM");
+    assert_eq!(
+        paths::output_relative("C", path, None).unwrap(),
+        Path::new("C/Windows/System32/config/SYSTEM")
+    );
+    assert_eq!(
+        kumade::metadata::output_relative("D", Path::new("$MFT"), None).unwrap(),
+        Path::new("D/$MFT")
+    );
+    assert_eq!(
+        paths::output_relative("E", Path::new("$Extend/$UsnJrnl"), Some("$J")).unwrap(),
+        Path::new("E/$Extend/$UsnJrnl/$J")
+    );
+    let long = PathBuf::from(format!("Windows/{}/file", "a/".repeat(140)));
+    let path = paths::output_relative("C", &long, None).unwrap();
+    assert!(path.starts_with("C/_KumadeLongPaths"));
+    let literal = paths::output_relative("C", Path::new("_KumadeLongPaths/file"), None).unwrap();
+    assert_eq!(literal, Path::new("C/%5FKumadeLongPaths/file"));
+}
+
+#[test]
+fn collection_names_share_a_utc_start_time_without_random_suffixes() {
+    assert_eq!(
+        paths::run_name("HOST01", "2026-11-20T15:23:12.1234567Z").unwrap(),
+        "HOST01_2026-11-20_15-23-12"
+    );
+    assert_eq!(
+        paths::run_name("HOST01", "2026-11-21T00:23:12+09:00").unwrap(),
+        "HOST01_2026-11-20_15-23-12"
+    );
+    assert!(paths::run_name("HOST01", "invalid").is_err());
+    let (temp, source) = fixture();
+    let mut plan = plan(source);
+    plan.created_utc = "2026-11-20T15:23:12Z".into();
+    let parent = temp.path().join("results");
+    let (root, _) = collect::collect(&plan, &parent, &options()).unwrap();
+    assert_eq!(root.file_name().unwrap(), "HOST01_2026-11-20_15-23-12");
+    assert!(root.join("C/Windows/Prefetch/PROGRAM.EXE.pf").is_file());
+    let host: serde_json::Value =
+        serde_json::from_reader(File::open(root.join("client_info.json")).unwrap()).unwrap();
+    assert_eq!(host["hostname"], "HOST01");
+    let seal: serde_json::Value =
+        serde_json::from_reader(File::open(root.join("Seal.json")).unwrap()).unwrap();
+    assert!(seal["MetadataSHA256"]["client_info.json"].is_string());
+    assert!(!root.join("Evidence").exists());
+    assert_eq!(verify::verify(&root).unwrap(), (2, true));
+    // An identical host/start time must never replace earlier evidence.
+    assert!(collect::collect(&plan, &parent, &options()).is_err());
+    fs::write(root.join("client_info.json"), b"{\"hostname\":\"OTHER\"}").unwrap();
+    assert!(verify::verify(&root).is_err());
+}
+
+#[test]
+fn container_directories_generate_names_and_explicit_filenames_are_preserved() {
+    let name = "HOST01_2026-11-20_15-23-12";
+    assert_eq!(
+        paths::image_destination(Path::new("new-output"), name, "vhdx").unwrap(),
+        Path::new("new-output/HOST01_2026-11-20_15-23-12.vhdx")
+    );
+    assert_eq!(
+        paths::image_destination(Path::new("new-output"), name, "E01").unwrap(),
+        Path::new("new-output/HOST01_2026-11-20_15-23-12.E01")
+    );
+    assert_eq!(
+        paths::image_destination(Path::new("custom.VHDX"), name, "vhdx").unwrap(),
+        Path::new("custom.VHDX")
+    );
+    assert!(paths::image_destination(Path::new("wrong.zip"), name, "vhdx").is_err());
+}
+
+#[test]
+fn metadata_only_sources_collect_metadata_without_payloads_or_profile_enumeration() {
+    let (temp, c) = fixture();
+    let mut sources = vec![c];
+    for drive in ["D", "E"] {
+        let root = temp.path().join(drive);
+        fs::create_dir_all(root.join("Windows/Prefetch")).unwrap();
+        fs::create_dir_all(root.join("Users/user")).unwrap();
+        fs::write(root.join("Windows/Prefetch/DO-NOT-COPY.pf"), b"payload").unwrap();
+        fs::write(root.join("$MFT"), b"metadata fixture").unwrap();
+        let source = discovery::scoped_directory_source(&root, drive, "HOST01", true).unwrap();
+        assert!(source.profile_roots.is_empty());
+        sources.push(source);
+    }
+    let p = discovery::build_plan(sources, &rules(), &[], false).unwrap();
+    assert_eq!(p.files.iter().filter(|f| f.source_id == "C").count(), 2);
+    for drive in ["D", "E"] {
+        let files: Vec<_> = p.files.iter().filter(|f| f.source_id == drive).collect();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative_path, Path::new("$MFT"));
+        let coverage = p
+            .coverage
+            .iter()
+            .find(|c| c.source_id == drive && c.artifact_id == "windows.prefetch")
+            .unwrap();
+        assert_eq!(coverage.status, "Excluded");
+        assert!(coverage.reason.contains("metadata-only"));
+    }
+    let (out, summary) = collect::collect(&p, &temp.path().join("results"), &options()).unwrap();
+    assert_eq!(summary.collected, 4);
+    assert_eq!(verify::verify(&out).unwrap(), (4, true));
+    assert!(out.join("D/$MFT").is_file());
+    assert!(!out.join("E/Windows").exists());
+    // Explicit artifact selection still narrows secondary-volume acquisition.
+    let p =
+        discovery::build_plan(p.sources, &rules(), &["windows.prefetch".into()], false).unwrap();
+    assert_eq!(p.files.len(), 1);
+    assert_eq!(p.files[0].source_id, "C");
+}
+
+#[test]
+fn metadata_only_live_sources_plan_raw_candidates_without_walking_payloads() {
+    let (temp, _) = fixture();
+    let root = temp.path().join("D");
+    fs::create_dir_all(root.join("Windows/Prefetch")).unwrap();
+    fs::write(root.join("Windows/Prefetch/DO-NOT-COPY.pf"), b"payload").unwrap();
+    let mut source = discovery::scoped_directory_source(&root, "D", "HOST01", true).unwrap();
+    source.raw_device = Some(ntfs_image());
+    source.live = true;
+    let p = plan(source);
+    assert!(p.issues.is_empty());
+    assert!(p.files.iter().all(
+        |f| f.before.is_none() && f.artifacts.iter().all(|id| id.starts_with("windows.ntfs."))
+    ));
+    assert!(p.files.iter().any(|f| f.relative_path == Path::new("$MFT")));
+    assert!(
+        p.files
+            .iter()
+            .any(|f| f.relative_path == Path::new("$Extend/$UsnJrnl")
+                && f.stream.as_deref() == Some("$J"))
+    );
+}
+#[test]
+fn reserved_collection_names_cannot_become_source_directories() {
+    for name in kumade::metadata::FILES {
+        assert!(paths::is_run_root_name(name));
+    }
+    assert!(paths::is_run_root_name("liveinfo"));
+    assert!(paths::is_run_root_name("PLAN.JSON"));
+    assert!(!paths::is_run_root_name("C"));
+    assert!(!paths::is_run_root_name("LiveInfo-1"));
+    let (temp, source) = fixture();
+    let mut p = plan(source);
+    p.sources[0].id = "LiveInfo".into();
+    for file in &mut p.files {
+        file.source_id = "LiveInfo".into();
+    }
+    let error = collect::collect(&p, &temp.path().join("results"), &options()).unwrap_err();
+    assert!(error.to_string().contains("collides"), "{error:#}");
+    assert!(!temp.path().join("results").exists());
+}
+
 #[test]
 fn fresh_relative_output_has_an_existing_ancestor() {
     let p = paths::resolve_future(Path::new("kumade-test-nonexistent/child")).unwrap();

@@ -61,8 +61,9 @@ fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
     for i in 0..24 {
         fs::write(source.join(format!("Windows/Prefetch/TEST-{i:02}.pf")), [i]).unwrap();
     }
-    let output = temp.path().join("results");
+    let parent = temp.path().join("results");
     for verbose in ["-v", "--verbose"] {
+        let output = parent.join(verbose.trim_start_matches('-'));
         let out = run(&[
             "collect",
             "-d",
@@ -102,13 +103,13 @@ fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
         // carriage returns, while allowing ordinary Windows line endings.
         assert!(!stdout.replace("\r\n", "\n").contains('\r'));
         assert!(!stdout.contains('\x1b'));
-    }
-    for root in fs::read_dir(output).unwrap() {
-        assert!(
-            run(&["verify", arg(&root.unwrap().path())])
-                .status
-                .success()
-        );
+        for root in fs::read_dir(output).unwrap() {
+            assert!(
+                run(&["verify", arg(&root.unwrap().path())])
+                    .status
+                    .success()
+            );
+        }
     }
 }
 
@@ -274,7 +275,46 @@ fn e01_collection_requires_windows() {
 #[cfg(not(windows))]
 #[test]
 fn vhdx_is_explicitly_unsupported_on_other_platforms() {
-    let output = run(&["--vhdx", "evidence.vhdx"]);
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("VHDX creation requires Windows"));
+    for args in [vec!["--vhdx", "evidence.vhdx"], vec!["--vhdx"]] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("VHDX creation requires Windows"));
+    }
+}
+
+#[test]
+fn offline_source_directories_cannot_shadow_collection_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("LiveInfo");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    fs::write(source.join("Windows/Prefetch/EXAMPLE.pf"), b"fixture").unwrap();
+    let output = temp.path().join("results");
+    let out = run(&[
+        "-d",
+        arg(&source),
+        "-o",
+        arg(&output),
+        "--computer",
+        "HOST01",
+        "--reserve-mib",
+        "0",
+        "-q",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let root = fs::read_dir(&output)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(
+        root.join("LiveInfo-1/Windows/Prefetch/EXAMPLE.pf")
+            .is_file()
+    );
+    assert!(!root.join("LiveInfo").exists());
+    assert!(run(&["verify", arg(&root)]).status.success());
 }

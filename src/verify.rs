@@ -73,6 +73,12 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         );
     }
     let run: serde_json::Value = serde_json::from_reader(File::open(root.join("Run.json"))?)?;
+    if run["EvidenceLayout"] == "DriveRoots" {
+        ensure!(
+            digests.contains_key("client_info.json"),
+            "Missing sealed host boundary"
+        );
+    }
     if run["LiveInfoEnabled"] == true {
         for name in [
             "LiveInfo/Manifest.json",

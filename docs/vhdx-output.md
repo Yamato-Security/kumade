@@ -2,7 +2,16 @@
 
 Run Kumade as an administrator on Windows and choose a fresh image filename:
 
+The default image name is `<Hostname>_YYYY-MM-DD_HH-MM-SS.vhdx` in UTC. Pass
+an output directory to generate it, or omit the value to use the `Kumade-Results`
+directory beside the executable (the `-o` default). A full `.vhdx` filename
+remains an explicit override. The image contains that same run directory, with
+`C/`, `D/`, etc. directly below it. Every local volume has the catalog scope;
+NTFS volumes also contain their filesystem metadata files. The physical volume
+holding the output is excluded unless it is the running Windows volume.
+
 ```powershell
+.\kumade.exe --vhdx E:\Evidence
 .\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
 .\kumade.exe --vhdx E:\Evidence\HOST01.vhdx --vhdx-size-gib 32
 .\kumade.exe -d C:\OfflineVolume --computer HOST01 --vhdx E:\Evidence\HOST01.vhdx
@@ -23,8 +32,10 @@ Windows PowerShell and the Storage cmdlets must be available; no third-party
 mounting software is required.
 
 The source plan is frozen before attachment, so the new volume cannot become a
-source during that acquisition. The image's host volume may still be a live
-source: creating the image changes that volume, as any local collection does.
+source during that acquisition. The volume that holds the image is left out of
+scope, as a directory destination is, unless it is the running Windows volume:
+that volume is always acquired, and creating the image there changes it, as any
+local collection does.
 `Run.json` records `PhysicalHostDestination` and accounts for that path in
 `DestinationOnLiveSource`, alongside the inner evidence destination.
 
@@ -124,7 +135,7 @@ values.
 Native source ACLs can restrict browsing the copied files. Elevated backup access
 can be required when inspecting or verifying them; Kumade does not replace these
 ACLs with broad analyst access. Restored attributes include Hidden and System, so
-the `Evidence\Live\<SourceId>` copy of a volume root is not listed by Explorer or
+the `<SourceId>` copy of a volume root is not listed by Explorer or
 by `dir` without `/a`; use `Get-ChildItem -Force` or show protected operating
 system files.
 

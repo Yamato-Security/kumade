@@ -32,6 +32,12 @@ pub struct Source {
     pub profile_roots: Vec<PathBuf>,
     #[serde(default)]
     pub excluded_profiles: Vec<String>,
+    /// Explicit NTFS metadata-only scope (`windows.ntfs.*` only, no payload
+    /// walk, no profile enumeration). Live discovery never sets it: every local
+    /// volume keeps the catalog scope, because a relocated profile, `$Recycle.Bin`,
+    /// IIS or SQL Server log on a data volume is evidence too.
+    #[serde(default)]
+    pub metadata_only: bool,
 }
 
 #[derive(Default, Debug)]

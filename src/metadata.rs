@@ -66,9 +66,7 @@ pub struct Snapshot {
 }
 
 pub fn output_relative(source: &str, relative: &Path, stream: Option<&str>) -> Result<PathBuf> {
-    let mut path = PathBuf::from("Evidence")
-        .join("Live")
-        .join(paths::encode_component(source));
+    let mut path = PathBuf::from(paths::encode_component(source));
     if !relative.as_os_str().is_empty() {
         for part in paths::relative_text(relative)?.split('/') {
             let encoded = paths::encode_component(part);
@@ -834,11 +832,11 @@ mod tests {
     fn source_directory_and_long_paths_keep_their_corresponding_container_paths() {
         assert_eq!(
             output_relative("C", Path::new(""), None).unwrap(),
-            Path::new("Evidence/Live/C")
+            Path::new("C")
         );
         let relative = format!("Windows/{}/file", "long/".repeat(60));
         let path = output_relative("C", Path::new(&relative), None).unwrap();
-        assert!(path.starts_with("Evidence/Live/C/Windows"));
+        assert!(path.starts_with("C/Windows"));
         assert!(!path.to_string_lossy().contains("LongPaths"));
         assert!(output_relative("C", Path::new(&"x".repeat(256)), None).is_err());
     }

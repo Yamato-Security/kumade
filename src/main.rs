@@ -69,15 +69,15 @@ struct CollectionArgs {
     /// Output parent directory; plan writes Plan.json here
     #[arg(short, long, value_name = "DIR")]
     output: Option<PathBuf>,
-    /// Save evidence in a new NTFS VHDX container (Windows, administrator)
-    #[arg(long, value_name = "FILE", conflicts_with = "output")]
-    vhdx: Option<PathBuf>,
+    /// Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
+    #[arg(long, value_name = "FILE_OR_DIR", conflicts_with = "output")]
+    vhdx: Option<Option<PathBuf>>,
     /// Virtual capacity in GiB (default: automatic, dynamically allocated)
     #[arg(long, value_name = "GIB", requires = "vhdx", value_parser = clap::value_parser!(u64).range(1..=65536))]
     vhdx_size_gib: Option<u64>,
-    /// Save evidence in a compressed E01 segment set (Windows, administrator)
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["output", "vhdx"])]
-    e01: Option<PathBuf>,
+    /// Save to compressed E01 segments; a directory (or no value: Kumade-Results beside the executable) names them by hostname and UTC start time
+    #[arg(long, value_name = "FILE_OR_DIR", conflicts_with_all = ["output", "vhdx"])]
+    e01: Option<Option<PathBuf>>,
     /// NTFS capacity in GiB before E01 compression (default: automatic)
     #[arg(long, value_name = "GIB", requires = "e01", value_parser = clap::value_parser!(u64).range(1..=65536))]
     e01_size_gib: Option<u64>,
@@ -154,6 +154,16 @@ fn default_threads() -> usize {
         .min(MAX_THREADS)
 }
 
+/// `-o` and a bare `--vhdx`/`--e01` share this default. The shell's current
+/// directory is never used: an elevated prompt starts in C:\Windows\System32,
+/// on the very volume being acquired.
+fn default_results_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("Kumade-Results")))
+        .unwrap_or_else(|| PathBuf::from("Kumade-Results"))
+}
+
 fn rules(path: Option<&Path>) -> Result<Rules> {
     match path {
         Some(p) => Rules::load(
@@ -163,13 +173,13 @@ fn rules(path: Option<&Path>) -> Result<Rules> {
     }
 }
 
-fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
+fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscovery> {
     if options.sources.is_empty() {
         ensure!(
             options.computer.is_none(),
             "--computer applies to offline --source inputs"
         );
-        return platform::live_sources();
+        return platform::live_sources(Some(destination));
     }
     let computer = options.computer.as_deref().unwrap_or("OfflineComputer");
     ensure!(
@@ -188,14 +198,19 @@ fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("Volume");
-        let label = if basename.eq_ignore_ascii_case("C%3A") {
-            "C".to_owned()
+        let label = if basename.len() == 4
+            && basename.as_bytes()[0].is_ascii_alphabetic()
+            && basename[1..].eq_ignore_ascii_case("%3A")
+        {
+            basename[..1].to_ascii_uppercase()
         } else {
             paths::encode_component(basename)
         };
         let mut id = label.clone();
         let mut suffix = i + 1;
-        while sources.iter().any(|s: &Source| s.id == id) {
+        // Collection metadata (Plan.json, LiveInfo, ...) sits beside the drive
+        // directories, so a source directory may not take one of those names.
+        while paths::is_run_root_name(&id) || sources.iter().any(|s: &Source| s.id == id) {
             id = format!("{label}-{suffix}");
             suffix += 1;
         }
@@ -232,6 +247,7 @@ fn sources(options: &CollectionArgs) -> Result<SourceDiscovery> {
 }
 
 fn run() -> Result<u8> {
+    let started_utc = kumade::model::utc_now();
     if std::env::args_os().len() == 1 {
         ui::banner();
         Cli::command().print_help()?;
@@ -388,20 +404,34 @@ fn run() -> Result<u8> {
         "--threads must be between 1 and {MAX_THREADS}"
     );
     let rules = rules(options.catalog.as_deref())?;
-    let discovered = sources(&options)?;
-    let sources = discovered.sources;
-    let output = options
+    // The destination is resolved before discovery so that live discovery can
+    // leave the volume holding it out of scope.
+    let destination = options
         .vhdx
         .clone()
         .or_else(|| options.e01.clone())
-        .or_else(|| options.output.clone())
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.join("Kumade-Results")))
-                .unwrap_or_else(|| PathBuf::from("Kumade-Results"))
-        });
-    let output = paths::resolve_future(&output)?;
+        .unwrap_or_else(|| options.output.clone())
+        .unwrap_or_else(default_results_dir);
+    let destination = paths::resolve_future(&destination)?;
+    let discovered = sources(&options, &destination)?;
+    let sources = discovered.sources;
+    let output = if options.vhdx.is_some() || options.e01.is_some() {
+        let computer = sources
+            .first()
+            .map(|s| s.computer.as_str())
+            .unwrap_or("UnknownComputer");
+        paths::image_destination(
+            &destination,
+            &paths::run_name(computer, &started_utc)?,
+            if options.vhdx.is_some() {
+                "vhdx"
+            } else {
+                "E01"
+            },
+        )?
+    } else {
+        destination
+    };
     for source in &sources {
         ensure!(
             source.live || (!output.starts_with(&source.root) && !source.root.starts_with(&output)),
@@ -419,9 +449,15 @@ fn run() -> Result<u8> {
         );
     }
     let mut plan = discovery::build_plan(sources, &rules, &options.artifacts, options.memory)?;
+    plan.created_utc = started_utc;
     if !options.quiet {
         for issue in &discovered.issues {
-            eprintln!("Source unavailable: {} ({})", issue.path, issue.reason);
+            let kind = if issue.status == "Excluded" {
+                "Source excluded"
+            } else {
+                "Source unavailable"
+            };
+            eprintln!("{kind}: {} ({})", issue.path, issue.reason);
         }
     }
     plan.issues.extend(discovered.issues);
@@ -517,5 +553,21 @@ mod tests {
             panic!("expected collect");
         };
         assert_eq!(options.threads, 2);
+    }
+
+    #[test]
+    fn containers_accept_automatic_names_and_destination_directories() {
+        // A bare flag carries no path; run() substitutes the exe-relative default.
+        let cli = Cli::try_parse_from(["kumade", "--vhdx"]).unwrap();
+        assert_eq!(cli.options.vhdx, Some(None));
+        assert!(default_results_dir().ends_with("Kumade-Results"));
+        assert!(default_results_dir().is_absolute() || std::env::current_exe().is_err());
+        let cli = Cli::try_parse_from(["kumade", "--vhdx", "-v"]).unwrap();
+        assert_eq!(cli.options.vhdx, Some(None));
+        assert!(cli.options.verbose);
+        let cli = Cli::try_parse_from(["kumade", "--e01", "output"]).unwrap();
+        assert_eq!(cli.options.e01, Some(Some(PathBuf::from("output"))));
+        let cli = Cli::try_parse_from(["kumade", "--vhdx", "--vhdx-size-gib", "4"]).unwrap();
+        assert_eq!(cli.options.vhdx_size_gib, Some(4));
     }
 }

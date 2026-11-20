@@ -68,13 +68,13 @@ On Windows, run an elevated PowerShell session for live collection:
 .\kumade.exe -o E:\Kumade-Results
 
 # Or save the entire acquisition in one new NTFS VHDX:
-.\kumade.exe --vhdx E:\Evidence\HOST01.vhdx
+.\kumade.exe --vhdx E:\Evidence
 
 # Or package the NTFS collection into compressed E01 segments:
-.\kumade.exe --e01 E:\Evidence\HOST01.e01
+.\kumade.exe --e01 E:\Evidence
 
 # List each copied file instead of displaying progress:
-.\kumade.exe --vhdx E:\Evidence\HOST01-verbose.vhdx -v
+.\kumade.exe --vhdx E:\Evidence -v
 ```
 
 Without `--source`, only Windows live mode is accepted. Offline mode never
@@ -85,7 +85,48 @@ The default reserves 2 GiB of destination space; `--reserve-mib` changes it.
 
 Each run creates `Plan.json`, `Run.json`, `Manifest.jsonl`, `Manifest.csv`,
 `Coverage.csv`, `DiscoveryIssues.csv`, `Errors.csv`, `Summary.json` and `Seal.json`.
-Payloads retain recognizable paths beneath `Evidence/Live/<SourceId>/`.
+Each run directory is named `<Hostname>_YYYY-MM-DD_HH-MM-SS`, using the UTC
+start time; there is no random suffix. A repeated host/start time refuses to
+overwrite an existing collection. Payloads preserve their original paths directly
+beneath their drive letter, with no acquisition-method wrapper directories:
+
+```text
+HOST01_2026-11-20_15-23-12/
+  C/Windows/System32/config/SYSTEM
+  C/Windows/System32/drivers/etc/hosts
+  C/$MFT
+  C/$Extend/$UsnJrnl/$J
+  D/$MFT
+  E/$MFT
+  LiveInfo/...
+  client_info.json
+  Manifest.csv
+  ...
+```
+
+For live collection, every local fixed volume receives the same catalog
+scope: each selected artifact family is checked on every volume, so
+profiles that `ProfileList` places on a data volume, `$Recycle.Bin`, IIS and
+SQL Server logs are acquired wherever they are. NTFS volumes additionally
+receive their NTFS metadata files: `$MFT`, `$LogFile`, USN `$J`/`$Max`,
+`$Secure:$SDS`, `$Boot` and `$Bitmap`. Unlettered volumes use a stable
+`Volume-<id>` folder.
+
+The volume that holds the destination is excluded, except for the running
+Windows volume, which is always acquired and noted as a live destination.
+Destination matching uses the volume identity, including GUID paths and mount
+aliases. Volumes without a readable filesystem (unformatted or BitLocker-locked)
+are recorded as excluded rather than failing the run. Removable media is not
+acquired by default.
+`--artifact` can narrow the scope; explicit offline `--source` inputs keep the
+full selected scope.
+
+`--vhdx E:\Evidence` and `--e01 E:\Evidence` create hostname/date-named
+containers in that directory. With no value, they use the `Kumade-Results`
+directory beside the executable, the same default as `-o`; the shell's current
+directory is never used. A full filename remains an explicit override. Both containers contain the same
+hostname/date run directory and drive-based layout. A sealed `client_info.json`
+host marker lets Juntei group all of the run’s drive folders as one computer.
 Windows-incompatible names are reversibly encoded; exact source paths remain
 in the manifest. Very long names in directory mode use a manifest-mapped hash path.
 For the VHDX layout, metadata fields and fidelity limits, see
