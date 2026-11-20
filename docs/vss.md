@@ -48,8 +48,9 @@ collection explicitly refuses to claim root `pagefile.sys`, `swapfile.sys` or
 `hiberfil.sys` contents from VSS: their manifest rows are `Failed` with a reason
 that explains the unsupported scope, they are listed in `Errors.csv`, and the
 result is partial when those artifacts are selected; a paging file that does not
-exist on a volume stays `NotPresent`. Run without `--vss` to acquire them from the
-live volume. Memory dumps that are ordinary files can still be collected. Other Windows/provider exclusion
+exist on a readable snapshot stays `NotPresent`. An unavailable snapshot or raw
+provider is a failure, never proof that an artifact was absent. Run without
+`--vss` to acquire paging contents from the live volume. Memory dumps that are ordinary files can still be collected. Other Windows/provider exclusion
 policies can also affect the snapshot; VSS is not a RAM capture or a guarantee of
 original unallocated/slack contents.
 

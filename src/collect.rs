@@ -215,13 +215,20 @@ fn acquire_one_inner(
         // Failed and NotPresent. A paging file that exists in the snapshot is a
         // planned file that was not acquired, so the run is Partial; a raw
         // candidate that does not exist on this volume stays a legitimate absence.
-        let absent = item.before.is_none()
+        let missing_candidate = item.before.is_none()
             && source
                 .root
                 .join(&item.relative_path)
                 .symlink_metadata()
                 .is_err_and(|e| e.kind() == io::ErrorKind::NotFound);
-        if absent {
+        // A vanished/unreadable snapshot makes every child look missing. That
+        // does not establish that this particular file was absent.
+        if missing_candidate && !source.root.is_dir() {
+            record.status = "Failed".into();
+            record.reason =
+                "Cannot establish paging-file absence: VSS snapshot root is unavailable or unreadable"
+                    .into();
+        } else if missing_candidate {
             record.status = "NotPresent".into();
             record.reason = "Not present in the VSS snapshot".into();
         } else {
@@ -414,7 +421,18 @@ fn acquire_one_inner(
             Err(error) => {
                 record.relative_output_path =
                     Some(paths::relative_text(partial.strip_prefix(root)?)?);
-                if item.before.is_none() && crate::raw::is_missing(&error) && record.bytes_read == 0
+                // Opening a missing raw device also returns NotFound. Only a
+                // successfully opened provider can establish a missing NTFS
+                // object/stream; never count provider failure as artifact absence.
+                let raw_available = source
+                    .raw_device
+                    .as_ref()
+                    .is_none_or(|device| raw_cache.contains_key(device));
+                if item.before.is_none()
+                    && crate::raw::is_missing(&error)
+                    && record.bytes_read == 0
+                    && raw_available
+                    && source.root.is_dir()
                 {
                     record.status = "NotPresent".into();
                     record.reason = format!("{error:#}");

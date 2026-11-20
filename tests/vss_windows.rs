@@ -109,6 +109,9 @@ try {
     let source_root = platform::canonicalize(Path::new(&volumes.ntfs))?;
     let prefetch = source_root.join("Windows/Prefetch");
     fs::create_dir_all(&prefetch)?;
+    // Ordinary test file, not an OS-configured pagefile. The acquisition policy
+    // must refuse its reserved paging name and account for that refusal.
+    fs::write(source_root.join("pagefile.sys"), b"excluded paging fixture")?;
     let path = prefetch.join("LOCKED.pf");
     let mut locked = OpenOptions::new()
         .write(true)
@@ -338,5 +341,49 @@ try {
             assert!(rows[0].source_path.ends_with("LOCKED.pf"));
         }
     }
+    let parent = temp.path().join("paging");
+    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .args([
+            "collect",
+            "--vss",
+            "--volume",
+            &volumes.ntfs,
+            "--artifact",
+            "windows.paging",
+            "--no-live-info",
+            "--reserve-mib",
+            "0",
+            "-q",
+            "-o",
+        ])
+        .arg(&parent)
+        .output()?;
+    ensure!(
+        output.status.code() == Some(3),
+        "Omitted paging must return Partial: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = fs::read_dir(parent)?
+        .next()
+        .context("Missing paging run")??
+        .path();
+    let rows = record_rows(&root)?;
+    assert_eq!(rows.iter().filter(|r| r.status == "Failed").count(), 1);
+    assert_eq!(rows.iter().filter(|r| r.status == "NotPresent").count(), 2);
+    // The requester has exited and cleaned up its snapshot; verification must
+    // still accept the sealed records and retain the partial completeness state.
+    assert_eq!(verify::verify(&root)?, (0, false));
+    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .arg("verify")
+        .arg(&root)
+        .output()?;
+    ensure!(
+        output.status.code() == Some(3),
+        "Partial verification returned the wrong exit code: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Integrity verified"));
     Ok(())
 }
