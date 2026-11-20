@@ -294,10 +294,12 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Every local fixed or removable volume, lettered or not, with the catalog
-/// scope: logs, profiles and Recycle Bins live on data volumes too, so every
-/// volume is checked for every selected artifact. NTFS volumes add their raw
-/// metadata files. `destination` is the directory or container path this run
+/// Every local fixed volume, lettered or not, with the catalog scope: logs,
+/// profiles and Recycle Bins live on data volumes too, so every volume is
+/// checked for every selected artifact. NTFS volumes add their raw metadata
+/// files. Removable media is not acquired by default (docs/architecture.md,
+/// default collection policy); the running Windows volume is acquired whatever
+/// drive type Windows reports for it. `destination` is the directory or container path this run
 /// will write to: the volume that merely holds the output is not evidence and
 /// is excluded by identity, unless it is the running Windows volume, which is
 /// always acquired.
@@ -334,7 +336,7 @@ mod windows {
         System::{
             Registry::*,
             Threading::*,
-            WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOTE, DRIVE_REMOVABLE},
+            WindowsProgramming::{DRIVE_FIXED, DRIVE_REMOTE},
         },
     };
 
@@ -652,12 +654,10 @@ mod windows {
                     .position(|&c| c == 0)
                     .context("Invalid volume name")?;
                 let guid = String::from_utf16(&volume[..n])?;
+                let system = guid.eq_ignore_ascii_case(&system_volume);
+                // Local fixed volumes only; removable media stays an explicit choice.
                 // SAFETY: volume contains the API-supplied NUL-terminated volume path.
-                if matches!(
-                    // SAFETY: API-supplied terminated volume path remains live.
-                    unsafe { GetDriveTypeW(volume.as_ptr()) },
-                    DRIVE_FIXED | DRIVE_REMOVABLE
-                ) {
+                if system || unsafe { GetDriveTypeW(volume.as_ptr()) } == DRIVE_FIXED {
                     let unavailable_id =
                         format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12]);
                     let attempted = (|| -> Result<Option<Source>> {
@@ -701,7 +701,6 @@ mod windows {
                         } else {
                             format!("Volume-{}", &crate::model::sha256(guid.as_bytes())[..12])
                         };
-                        let system = guid.eq_ignore_ascii_case(&system_volume);
                         if !system
                             && destination_volume
                                 .as_ref()
@@ -798,7 +797,7 @@ mod windows {
                     if e != ERROR_NO_MORE_FILES {
                         report.issues.push(Issue {
                             source_id: "VolumeEnumeration".into(),
-                            path: "Local volumes".into(),
+                            path: "Local fixed volumes".into(),
                             status: "Failed".into(),
                             reason: format!("Volume enumeration stopped: Windows error {e}"),
                         });
@@ -815,7 +814,7 @@ mod windows {
         result?;
         ensure!(
             !report.sources.is_empty(),
-            "No accessible local volumes were discovered: {}",
+            "No accessible fixed volumes were discovered: {}",
             report
                 .issues
                 .iter()

@@ -104,8 +104,8 @@ HOST01_2026-11-20_15-23-12/
   ...
 ```
 
-For live collection, every local fixed or removable volume receives the same
-catalog scope: each selected artifact family is checked on every volume, so
+For live collection, every local fixed volume receives the same catalog
+scope: each selected artifact family is checked on every volume, so
 profiles that `ProfileList` places on a data volume, `$Recycle.Bin`, IIS and
 SQL Server logs are acquired wherever they are. NTFS volumes additionally
 receive their NTFS metadata files: `$MFT`, `$LogFile`, USN `$J`/`$Max`,
@@ -115,8 +115,9 @@ receive their NTFS metadata files: `$MFT`, `$LogFile`, USN `$J`/`$Max`,
 The volume that holds the destination is excluded, except for the running
 Windows volume, which is always acquired and noted as a live destination.
 Destination matching uses the volume identity, including GUID paths and mount
-aliases. Volumes without a readable filesystem (unformatted, locked or empty
-removable readers) are recorded as excluded rather than failing the run.
+aliases. Volumes without a readable filesystem (unformatted or BitLocker-locked)
+are recorded as excluded rather than failing the run. Removable media is not
+acquired by default.
 `--artifact` can narrow the scope; explicit offline `--source` inputs keep the
 full selected scope.
 
