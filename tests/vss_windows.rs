@@ -234,7 +234,7 @@ try {
         .find(|r| r.source_path.ends_with("LOCKED.pf"))
         .context("Locked file not collected")?;
     ensure!(
-        row.status == "Collected",
+        row.status == "Acquired",
         "Snapshot file acquisition failed: {}",
         row.reason
     );
@@ -248,7 +248,7 @@ try {
         .find(|r| r.artifact_ids.contains("windows.ntfs.mft"))
         .context("MFT missing")?;
     ensure!(
-        mft.status == "Collected",
+        mft.status == "Acquired",
         "Snapshot MFT acquisition failed: {}",
         mft.reason
     );
@@ -320,10 +320,22 @@ try {
             );
             assert_eq!(plan["Sources"][0]["Snapshot"]["WritersParticipated"], false);
             assert!(
-                record_rows(&root)?
-                    .iter()
-                    .all(|r| r.method == "VssNativeRead")
+                plan["Sources"][0]["Snapshot"]["OriginalVolume"]
+                    .as_str()
+                    .context("Missing original-volume provenance")?
+                    .eq_ignore_ascii_case(&volumes.ntfs)
             );
+            let rows = record_rows(&root)?;
+            assert_eq!(
+                rows.len(),
+                1,
+                "Explicit selection must acquire only the isolated fixture"
+            );
+            assert!(
+                rows.iter()
+                    .all(|r| r.method == "VssNativeRead" && r.status == "Acquired")
+            );
+            assert!(rows[0].source_path.ends_with("LOCKED.pf"));
         }
     }
     Ok(())
