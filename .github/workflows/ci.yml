@@ -31,13 +31,9 @@ jobs:
         shell: pwsh
         run: ./scripts/test_vhdx.ps1 -Binary ./target/i686-pc-windows-msvc/debug/kumade.exe -WorkDirectory "$env:RUNNER_TEMP/kumade-vhdx-roundtrip"
 
-  test:
-    name: Test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  windows-x64:
+    name: Test (Windows x64)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,14 +44,7 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Independent E01 validation prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y libewf2
-          echo "KUMADE_EWFVERIFY=$GITHUB_WORKSPACE/scripts/verify_e01_libewf.py" >> "$GITHUB_ENV"
       - run: cargo test --locked --all-targets
       - name: NTFS VHDX round trip
-        if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test_vhdx.ps1 -Binary ./target/debug/kumade.exe -WorkDirectory "$env:RUNNER_TEMP/kumade-vhdx-roundtrip"

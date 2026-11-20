@@ -88,8 +88,10 @@ The following sections retain the initial release validation for context.
   required. This is an import-table check, not a Windows runtime test.
 
 The release workflow builds Windows x86 (32-bit), x64 and ARM64 packages with Rust 1.100.0
-and the locked dependency versions. Native CI covers Windows x64 plus Linux
-and macOS for development testing. Windows ARM64 is cross-built. Windows MSVC
+and the locked dependency versions. CI runs on Windows only (x64 natively and
+x86 through WOW64); Kumade targets Windows, so Linux and macOS are not built in
+CI. The libewf-based E01 oracle (`KUMADE_EWFVERIFY`, see
+[E01 output](e01-output.md)) remains a local check. Windows ARM64 is cross-built. Windows MSVC
 packages statically link the C runtime. Windows x86 tests run on the x64 Windows
 runner through WOW64; this does not qualify live acquisition on a native 32-bit
 Windows installation. Use the x64 package for live collection on x64 Windows.
