@@ -11,8 +11,8 @@ use kumade::{
 };
 use std::{
     fs::{self, OpenOptions},
-    io::{Seek, SeekFrom, Write},
-    os::windows::fs::OpenOptionsExt,
+    io::{Read, Seek, SeekFrom, Write},
+    os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -155,6 +155,52 @@ try {
     )?;
     assert_eq!(raw_bytes, b"before snapshot");
     drop(raw);
+    // Exercise forensic-copy's unbuffered handle and final partition sector too.
+    let device = OpenOptions::new()
+        .read(true)
+        .share_mode(3)
+        .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_NO_BUFFERING)
+        .open(&snapshot.device_object)?;
+    let mut length = 0i64;
+    let mut returned = 0;
+    ensure!(
+        // SAFETY: read-only device, correctly sized length output and output count.
+        unsafe {
+            windows_sys::Win32::System::IO::DeviceIoControl(
+                device.as_raw_handle(),
+                windows_sys::Win32::System::Ioctl::IOCTL_DISK_GET_LENGTH_INFO,
+                std::ptr::null(),
+                0,
+                (&mut length as *mut i64).cast(),
+                8,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        } != 0,
+        "Snapshot partition length query failed: {}",
+        std::io::Error::last_os_error()
+    );
+    ensure!(
+        // SAFETY: synchronous read-only device; control has no input/output payload.
+        unsafe {
+            windows_sys::Win32::System::IO::DeviceIoControl(
+                device.as_raw_handle(),
+                windows_sys::Win32::System::Ioctl::FSCTL_ALLOW_EXTENDED_DASD_IO,
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        } != 0,
+        "Snapshot extended partition access failed: {}",
+        std::io::Error::last_os_error()
+    );
+    let mut device = kumade::raw::DeviceReader::new(device, u64::try_from(length)?, 512)?;
+    device.seek(SeekFrom::End(-512))?;
+    device.read_exact(&mut [0u8; 512])?;
+    drop(device);
     let rules = Rules::load(DEFAULT_CATALOG)?;
     let mut plan = discovery::build_plan(
         discovered.sources,
