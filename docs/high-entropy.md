@@ -170,6 +170,9 @@ disagrees with the analysis hash.
 - Live files can change. File identity/size/timestamps are compared across
   analysis, and hashes link analysis to acquisition. These checks do not make
   an unsnapshotted live read atomic. Prefer `--vss` when appropriate.
+- Entropy discovery runs during planning, before the collection's automatic
+  live-response inventory. For time-sensitive volatile state, run `live-info`
+  first, then start the longer drive scan.
 - All valid discovered PEs are fully read and hashed, regardless of whether
   they pass the heuristic. Qualifying files are then read again for collection
   and readback verification. Large drives, slow disks and many PE files can

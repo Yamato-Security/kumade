@@ -947,7 +947,7 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
-    fn locked_windows_pe_uses_raw_ntfs_and_agrees_with_file_api() {
+    fn locked_windows_pe_and_raw_ntfs_analysis_agree() {
         use std::os::windows::fs::OpenOptionsExt;
         crate::metadata::enable_privileges().unwrap();
         let t = tempfile::tempdir().unwrap();
@@ -988,6 +988,25 @@ mod tests {
         let (raw, _, method) = inspect(
             &source,
             &path,
+            relative,
+            &Settings::default(),
+            &mut HashMap::new(),
+        )
+        .unwrap();
+        // SeBackupPrivilege + backup intent can make the native read succeed
+        // even while this exclusive handle is held. Either path must agree.
+        assert!(matches!(method.as_str(), "FileAPI" | "RawNTFS"));
+        assert_eq!(
+            raw.as_ref().unwrap().sha256,
+            native.as_ref().unwrap().sha256
+        );
+        assert!(raw.unwrap().candidate);
+        // Independently force the I/O-failure fallback against this same real
+        // locked NTFS file; the caller supplies its known source-relative path.
+        let unavailable_api_path = path.with_extension("missing-api-path");
+        let (raw, _, method) = inspect(
+            &source,
+            &unavailable_api_path,
             relative,
             &Settings::default(),
             &mut HashMap::new(),

@@ -166,7 +166,8 @@ symlinks, raw resident/nonresident/sparse stream inspection, backward-compatible
 plans, copy/seal verification and same-size analysis/acquisition changes. CLI
 tests reject invalid thresholds, missing opt-in and overflowing limits. Unit
 tests also exercise the raw inspection fallback without extracting a file;
-Windows-only tests compare locked-file PE analysis with native reads and ensure
+Windows-only tests compare locked-file PE analysis with native reads, explicitly
+force an I/O-failure fallback against that real file, and ensure
 ADS do not inherit the unnamed-stream digest. The existing Windows x86/x64 CI
 runs these tests and still performs its native NTFS VHDX round trips.
 
