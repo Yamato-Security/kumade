@@ -122,6 +122,26 @@ pub fn progress_bar(length: u64, quiet: bool) -> ProgressBar {
     bar
 }
 
+/// Drive discovery has no known total until enumeration finishes.
+pub fn scan_spinner(quiet: bool) -> ProgressBar {
+    if quiet {
+        return ProgressBar::hidden();
+    }
+    let bar = ProgressBar::with_draw_target(None, ProgressDrawTarget::stdout_with_hz(10));
+    bar.set_style(
+        ProgressStyle::with_template(&format!(
+            "{} {} {}\n\n{}",
+            paint("[{elapsed_precise}]", WHITE, colors_enabled()),
+            paint("{spinner}", GREEN, colors_enabled()),
+            paint("{human_pos} files inspected", WHITE, colors_enabled()),
+            paint("{wide_msg}", WHITE, colors_enabled())
+        ))
+        .expect("static scan template is valid"),
+    );
+    bar.enable_steady_tick(Duration::from_millis(300));
+    bar
+}
+
 pub fn progress_message(path: &str, size: Option<u64>) -> String {
     let width = Term::stdout().size().1 as usize;
     message_with_width(path, size, width)

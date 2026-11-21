@@ -108,6 +108,9 @@ impl Seek for DeviceReader {
     }
 }
 
+pub trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek + ?Sized> ReadSeek for T {}
+
 pub struct RawVolume {
     device: DeviceReader,
     ntfs: Ntfs,
@@ -187,6 +190,48 @@ impl RawVolume {
         let mut ntfs = Ntfs::new(&mut device).context("Not a supported NTFS volume")?;
         ntfs.read_upcase_table(&mut device)?;
         Ok(Self { device, ntfs })
+    }
+
+    /// Inspect logical unnamed DATA through the same locked-file backend as acquisition.
+    /// The callback borrows a seekable NTFS stream; no temporary copy is created.
+    pub fn inspect_file<T>(
+        &mut self,
+        relative: &Path,
+        inspect: impl FnOnce(&mut dyn ReadSeek, u64) -> Result<T>,
+    ) -> Result<(T, Fingerprint, Fingerprint)> {
+        self.device.invalidate();
+        let before = self.stat(relative, None)?;
+        ensure!(
+            !before.directory && before.attributes & 0x400 == 0,
+            "Raw reparse/directory content is unsupported"
+        );
+        let result = {
+            let file = locate(&self.ntfs, &mut self.device, relative)?;
+            let item = file
+                .data(&mut self.device, "")
+                .context("NTFS DATA is absent")??;
+            let attribute = item.to_attribute()?;
+            ensure!(
+                !attribute
+                    .flags()
+                    .intersects(NtfsAttributeFlags::COMPRESSED | NtfsAttributeFlags::ENCRYPTED),
+                "Raw compressed/encrypted DATA needs a supported logical-read backend"
+            );
+            let value = attribute.value(&mut self.device)?;
+            let size = value.len();
+            let mut reader = value.attach(&mut self.device);
+            inspect(&mut reader, size)?
+        };
+        self.device.invalidate();
+        let after = self.stat(relative, None)?;
+        let fingerprint = |s: RawStat| Fingerprint {
+            size: s.size,
+            modified_ns: filetime(s.modified),
+            created_ns: filetime(s.created),
+            accessed_ns: filetime(s.accessed),
+            identity: Some(s.identity),
+        };
+        Ok((result, fingerprint(before), fingerprint(after)))
     }
 
     pub fn copy_file(

@@ -95,7 +95,7 @@ pub fn encode_component(name: &str) -> String {
 
 /// Files and directories Kumade itself writes at the root of a collection.
 /// Drive directories sit beside them, so no source may take one of these names.
-pub const RUN_ROOT_NAMES: [&str; 13] = [
+pub const RUN_ROOT_NAMES: [&str; 16] = [
     "Plan.json",
     "client_info.json",
     "Run.json",
@@ -109,6 +109,9 @@ pub const RUN_ROOT_NAMES: [&str; 13] = [
     "LiveInfo",
     "NTFS-Metadata.jsonl",
     "NTFS-Metadata.csv",
+    "HighEntropyBinaries.csv",
+    "HighEntropyBinaries.jsonl",
+    "EntropySummary.json",
 ];
 
 /// Windows filesystems are case-insensitive, so the comparison is too.

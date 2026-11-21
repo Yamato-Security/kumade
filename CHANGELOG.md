@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add opt-in `--high-entropy` drive discovery and collection of PE packing
+  candidates, including binaries with misleading filename extensions. Measure
+  whole-file and executable-section Shannon entropy with streaming SHA-256,
+  bounded scan workers, configurable thresholds/exclusions and optional limits.
+  Reuse locked-file raw NTFS and VSS sources; seal PascalCase CSV/JSONL reports,
+  detect analysis/acquisition hash changes, and include candidates in directory,
+  VHDX and E01 output. High entropy is a heuristic, not a malware verdict.
+
 - Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements. VSS acquisition and process scanning share one native-architecture check, which also rejects the x64 build under the x64 emulation of Windows on ARM64 (not reported as WOW64).
 
 - Add opt-in `--vss` for live artifact collection (directory/VHDX/E01) and
