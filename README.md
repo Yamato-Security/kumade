@@ -193,3 +193,7 @@ See [validation results](docs/testing.md), [implementation status](docs/implemen
 Copyright © 2026 Shirofune Security Co., Ltd. Original Kumade code and definitions
 are licensed under [RPL-1.5](LICENSE). Third-party fixtures/dependencies keep their
 own licenses; see [fixture provenance](tests/fixtures/SOURCES.md).
+
+## Process-memory YARA hunting
+
+Use `kumade scan-processes -o Yara-Results` for an opt-in live memory scan with YARA Forge Core (default), Extended, Full or local rules. See [process-memory scanning](docs/yara-process-scan.md) for options, coverage/error reporting and interpretation limits.

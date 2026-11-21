@@ -104,8 +104,9 @@ Windows service latency; this is not a wall-clock deadline for all acquisition.
 Microsoft does not support VSS requesters running under WOW64. Use the native x64
 binary on x64 Windows, ARM64 on ARM64 Windows, or x86 on native 32-bit Windows,
 subject to that Windows edition's installed VSS/provider support. An emulated
-requester is rejected before snapshot creation; there is no PowerShell-based
-snapshot fallback. Unsupported hosts can still use normal collection.
+requester, including the x64 build under the x64 emulation of Windows on ARM64
+(which Windows does not report as WOW64), is rejected before snapshot creation;
+there is no PowerShell-based snapshot fallback. Unsupported hosts can still use normal collection.
 
 The binary includes a small SDK-compiled C++ bridge because `IVssBackupComponents`
 is a C++ SDK interface missing from the generated Rust Win32 metadata. Snapshot

@@ -15,10 +15,7 @@
 //! Native SDK bridge ownership. All calls stay on the creating COM thread.
 use super::*;
 use std::{ffi::c_void, marker::PhantomData, os::windows::ffi::OsStrExt, ptr, rc::Rc};
-use windows_sys::{
-    Win32::System::Threading::{GetCurrentProcess, IsWow64Process2},
-    core::GUID,
-};
+use windows_sys::core::GUID;
 
 #[repr(C)]
 struct NativeSnapshot {
@@ -79,21 +76,9 @@ fn string(s: &[u16]) -> Result<String> {
 }
 
 pub(super) fn check_host() -> Result<()> {
-    let (mut process, mut native) = (0u16, 0u16);
-    ensure!(
-        // SAFETY: pseudo handle and two valid output words.
-        unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) } != 0,
-        "Cannot determine the native Windows architecture"
-    );
-    ensure!(
-        process == 0,
-        "VSS requesters cannot run under WOW64/emulation; use Kumade's native {} build",
-        match native {
-            0xaa64 => "ARM64",
-            0x8664 => "x64",
-            _ => "architecture",
-        }
-    );
+    // Microsoft does not support VSS requesters under WOW64, and the x64 emulation of
+    // Windows on ARM64 is not reported as WOW64; the shared check covers both.
+    crate::platform::require_native_build("VSS acquisition")?;
     crate::platform::enable_backup_privilege()
         .context("VSS acquisition requires an elevated Administrator session")
 }
@@ -233,6 +218,7 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, IsWow64Process2};
     #[test]
     fn sdk_snapshot_layout_matches_rust() {
         assert_eq!(
