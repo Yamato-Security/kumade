@@ -841,10 +841,15 @@ try {{
             "-EncodedCommand",
             &encoded_script(&body),
         ]);
-        let capture = execute(command, Duration::from_secs(30)).unwrap();
+        // This checks locale semantics, not launch performance. A cold native
+        // PowerShell start on the loaded x86 runner can exceed 30 seconds.
+        // Use the normal provider deadline and retain diagnostics on failure.
+        let capture = execute(command, Duration::from_secs(90)).unwrap();
         assert!(
             capture.success,
-            "{}",
+            "stop={:?}; stdout={}; stderr={}",
+            capture.stop,
+            String::from_utf8_lossy(&capture.stdout),
             String::from_utf8_lossy(&capture.stderr)
         );
         let value: Value = serde_json::from_slice(&capture.stdout).unwrap();
