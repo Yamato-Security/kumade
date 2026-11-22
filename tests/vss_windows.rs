@@ -228,6 +228,7 @@ try {
         ntfs_metadata: false,
         host_reserve: None,
         live_info: None,
+        process_scan: None,
     };
     let (root, summary) = collect::collect(&plan, &temp.path().join("direct"), &options)?;
     assert_eq!(summary.completeness, "CompleteWithinSelectedPrototypeScope");

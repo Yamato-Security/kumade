@@ -53,6 +53,7 @@ fn collect(plan: &Plan, temp: &Path) -> (PathBuf, Summary, Vec<Record>) {
         ntfs_metadata: false,
         host_reserve: None,
         live_info: None,
+        process_scan: None,
     };
     let (root, summary) = collect::collect(plan, &temp.join("results"), &options).unwrap();
     let records = fs::read_to_string(root.join("Manifest.jsonl"))

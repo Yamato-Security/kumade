@@ -62,7 +62,7 @@ copied once and receives both artifact identifiers.
 | `--entropy-max-candidates <COUNT>` | No cap | Limit additional selected binary files |
 | `--entropy-max-collect-mib <MiB>` | No cap | Limit logical bytes of additional selected binary files |
 | `--entropy-exclude <GLOB>` | None | Repeatable, case-insensitive source-relative exclusion |
-| `-T, --threads <COUNT>` | Available logical CPUs, maximum 128 | Parallel scan/acquisition workers |
+| `-T, --threads <COUNT>` | Available logical CPUs, capped at 4; explicit maximum 128 | Parallel scan/acquisition workers |
 
 Entropy options require `--high-entropy`. Limits must be positive. MiB values
 are checked for 64-bit byte overflow. Limits on candidates/collection bytes

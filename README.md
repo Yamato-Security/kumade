@@ -19,6 +19,8 @@ Windows examples below.
 
 ## Implemented
 
+- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. `--yes` accepts defaults without prompts for automation; `--paging` opts into large paging/hibernation/existing dump files.
+
 - Optional [high-entropy binary collection](docs/high-entropy.md): `--high-entropy` scans selected source drives for PE executable-section packing candidates, copies them through normal acquisition, and records sealed CSV/JSONL analysis with source hashes.
 
 - Optional [VSS acquisition](docs/vss.md) with `--vss`: owned crash-consistent snapshots for locked-file collection and partition imaging, snapshot provenance and automatic cleanup. `--volume C:` selects live collection volumes.
@@ -49,7 +51,7 @@ Windows examples below.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
-- Acquisition defaults to one worker per available logical CPU (at most 128);
+- Acquisition defaults to up to four workers (limited by available logical CPUs);
   `-T, --threads` overrides it within that limit. `-v, --verbose` lists each file/stream being copied instead of
   displaying a progress bar. Running without arguments displays help.
 

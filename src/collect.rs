@@ -47,6 +47,7 @@ pub struct Options {
     pub ntfs_metadata: bool,
     pub host_reserve: Option<HostReserve>,
     pub live_info: Option<crate::live_info::Options>,
+    pub process_scan: Option<crate::yara_scan::Options>,
 }
 
 pub fn hash_file(path: &Path) -> Result<(u64, String)> {
@@ -576,7 +577,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     )?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     // Capture volatile state before potentially lengthy file copying. Explicit offline
     // collection never supplies this option; container backends carry it unchanged.
@@ -585,6 +586,29 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         .as_ref()
         .map(|config| crate::live_info::collect_into(&root, config))
         .transpose()?;
+    let process_scan_status = if let Some(config) = &options.process_scan {
+        if !options.quiet {
+            ui::status("Scanning live process memory with YARA…");
+        }
+        let mut config = config.clone();
+        config.output = root.join("YaraScan");
+        config.quiet = true;
+        Some(match crate::yara_scan::run(&config) {
+            Ok(0) => "Success".into(),
+            Ok(_) => "Partial".into(),
+            Err(error) => {
+                fs::create_dir_all(&config.output)?;
+                platform::protect_output_root(&config.output)?;
+                write_json_new(
+                    &config.output.join("Failure.json"),
+                    &serde_json::json!({"Status":"Failed","Error":format!("{error:#}")}),
+                )?;
+                "Failed".into()
+            }
+        })
+    } else {
+        None
+    };
     let new_file = |name: &str| -> Result<File> {
         Ok(OpenOptions::new()
             .write(true)
@@ -722,6 +746,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         catalog_sha256: plan.catalog_sha256.clone(),
         metadata_errors: 0,
         live_info_failed_providers: live_info.as_ref().map_or(0, |r| r.failures()),
+        process_scan_status,
     };
     for record in records.iter() {
         match record.status.as_str() {
@@ -739,6 +764,10 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         || summary.partial > 0
         || summary.discovery_errors > 0
         || summary.live_info_failed_providers > 0
+        || summary
+            .process_scan_status
+            .as_deref()
+            .is_some_and(|s| s != "Success")
     {
         summary.completeness = "Partial".into();
     }
@@ -843,6 +872,20 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             metadata.insert((*name).into(), hash_file(&root.join(name))?.1);
         }
     }
+    if options.process_scan.is_some() {
+        for entry in walkdir::WalkDir::new(root.join("YaraScan")).follow_links(false) {
+            let entry = entry?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            ensure!(
+                entry.file_type().is_file() && !platform::is_reparse_directory(entry.path()),
+                "Unsafe process-scan report"
+            );
+            let relative = paths::relative_text(entry.path().strip_prefix(&root)?)?;
+            metadata.insert(relative, hash_file(entry.path())?.1);
+        }
+    }
     if options.ntfs_metadata {
         for name in metadata::FILES {
             metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
@@ -897,6 +940,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
                     human_bytes(output_bytes)
                 ),
             );
+        }
+        if let Some(status) = &summary.process_scan_status {
+            ui::field("Process scan", format!("{status} (see YaraScan/)"));
         }
         ui::field("Completeness", &summary.completeness);
         ui::field("Elapsed", format!("{:.3}s", timer.elapsed().as_secs_f64()));

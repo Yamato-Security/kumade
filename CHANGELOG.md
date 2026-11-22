@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add an interactive collection wizard with per-category and deduplicated total
+  logical transfer estimates, explicit unknown sizes, optional VSS, entropy and
+  live process YARA scanning, output choices and a partition-imaging path.
+  Confirm before snapshots/scans/output; support `--yes`/`--no-wizard` for scripts
+  and `--wizard` for explicit guided input. Default paging/hibernation/existing
+  dumps off (`--paging` or explicit artifact selection enables them); default
+  acquisition to at most four logical CPU workers. Keep hashing, readback
+  verification and locked-file fallback enabled. Seal embedded YARA results
+  and report incomplete/failed scans as partial, including container output.
+
 - Add opt-in `--high-entropy` drive discovery and collection of PE packing
   candidates, including binaries with misleading filename extensions. Measure
   whole-file and executable-section Shannon entropy with streaming SHA-256,

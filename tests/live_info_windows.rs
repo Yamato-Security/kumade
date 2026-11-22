@@ -284,6 +284,7 @@ fn live_inventory_is_inside_a_normal_collection_seal() {
         verbose: false,
         ntfs_metadata: false,
         host_reserve: None,
+        process_scan: None,
         live_info: Some(Options {
             selected: vec!["HostInfo".into()],
             reserve_bytes: 0,

@@ -183,6 +183,8 @@ pub struct Summary {
     pub metadata_errors: u64,
     #[serde(default)]
     pub live_info_failed_providers: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_scan_status: Option<String>,
 }
 
 pub fn sha256(data: &[u8]) -> String {

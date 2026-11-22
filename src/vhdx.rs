@@ -647,6 +647,7 @@ mod windows {
             quiet: options.quiet,
             verbose: options.verbose,
             ntfs_metadata: true,
+            process_scan: options.process_scan.clone(),
             live_info: options.live_info.clone().map(|mut config| {
                 config.reserve_bytes = reserve;
                 config.host_reserve = Some(HostReserve {

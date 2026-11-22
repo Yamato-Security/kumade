@@ -140,6 +140,40 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
             );
         }
     }
+    if run["ProcessScanEnabled"] == true {
+        let status = summary
+            .process_scan_status
+            .as_deref()
+            .context("Missing process-scan status")?;
+        ensure!(
+            matches!(status, "Success" | "Partial" | "Failed"),
+            "Invalid process-scan status"
+        );
+        let required = if status == "Failed" {
+            "YaraScan/Failure.json"
+        } else {
+            "YaraScan/Summary.json"
+        };
+        ensure!(
+            digests.contains_key(required),
+            "Missing sealed process-scan completion report"
+        );
+        if status != "Failed" {
+            let scan: serde_json::Value =
+                serde_json::from_reader(File::open(paths::safe_join(&root, required)?)?)?;
+            let incomplete = scan["Incomplete"]
+                .as_u64()
+                .context("Invalid process-scan incomplete count")?;
+            ensure!(
+                (status == "Success") == (incomplete == 0),
+                "Process-scan status disagrees with its summary"
+            );
+        }
+        ensure!(
+            status == "Success" || summary.completeness == "Partial",
+            "Incomplete process scan must make collection partial"
+        );
+    }
     let expected: HashSet<_> = plan.files.iter().map(|f| f.id.clone()).collect();
     let entropy_hashes: std::collections::HashMap<_, _> = plan
         .files

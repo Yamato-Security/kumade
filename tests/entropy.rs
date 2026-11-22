@@ -88,6 +88,7 @@ fn options() -> Options {
         ntfs_metadata: false,
         host_reserve: None,
         live_info: None,
+        process_scan: None,
     }
 }
 fn scan(plan: &mut Plan, output: &Path, s: &Settings) {

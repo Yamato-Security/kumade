@@ -32,3 +32,5 @@ pub mod vhdx;
 pub mod vss;
 
 pub mod yara_scan;
+
+pub mod wizard;
