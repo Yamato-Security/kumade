@@ -18,7 +18,14 @@
   bounded scan workers, configurable thresholds/exclusions and optional limits.
   Reuse locked-file raw NTFS and VSS sources; seal PascalCase CSV/JSONL reports,
   detect analysis/acquisition hash changes, and include candidates in directory,
-  VHDX and E01 output. High entropy is a heuristic, not a malware verdict.
+  VHDX and E01 output. Only files with a built-in list of executable, script,
+  document, archive, package, image and data extensions are opened
+  (`--entropy-extension` adds names, `--entropy-all-files` opens everything).
+  PE-format files that are not executable images count as non-PE, a malformed
+  PE header gets a `Malformed` row instead of failing the run, and `Plan.json`
+  keeps settings and counters while the per-file inventory lives only in the
+  sealed reports, which `plan` writes beside the plan. High entropy is a
+  heuristic, not a malware verdict.
 
 - Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements. VSS acquisition and process scanning share one native-architecture check, which also rejects the x64 build under the x64 emulation of Windows on ARM64 (not reported as WOW64).
 

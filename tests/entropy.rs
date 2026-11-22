@@ -201,7 +201,7 @@ fn certificate_table_is_metadata_not_a_skip_or_trust_verdict() {
     assert!(a.has_certificate_table && a.candidate);
 }
 #[test]
-fn discovery_collects_extensionless_pe_once_and_seals_reports() {
+fn discovery_collects_renamed_pe_once_and_seals_reports() {
     let (_temp, mut plan, out) = fixture();
     assert!(plan.entropy_scan.is_none());
     assert_eq!(entropy::metadata_reserve(&plan).unwrap(), 0);
@@ -450,5 +450,164 @@ fn total_collection_cap_does_not_silently_discard_candidates() {
         r.observations
             .iter()
             .any(|o| o.status == "SelectionLimit" && o.relative_path == "large.exe")
+    );
+}
+
+#[test]
+fn only_listed_extensions_are_opened_unless_asked_otherwise() {
+    let (_temp, plan, out) = fixture();
+    let root = plan.sources[0].root.clone();
+    // The same high-entropy PE under names outside the list is never opened by default,
+    // while the comparison of listed names ignores case.
+    fs::write(root.join("OddLocation/table.toc"), pe(true, false, true)).unwrap();
+    fs::write(root.join("OddLocation/kernel"), pe(true, false, true)).unwrap();
+    fs::write(root.join("OddLocation/UPPER.EXE"), pe(true, false, true)).unwrap();
+    let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['absent']}\n").unwrap();
+    let fresh =
+        || discovery::build_plan(vec![plan.sources[0].clone()], &rules, &[], false).unwrap();
+    let mut p = fresh();
+    scan(&mut p, &out, &Settings::default());
+    let c = &p.entropy_scan.as_ref().unwrap().counts;
+    assert_eq!(
+        (c.files_seen, c.other_extension, c.pe_analyzed, c.non_pe),
+        (6, 2, 3, 1)
+    );
+    assert_eq!(p.files.len(), 2);
+    assert!(
+        p.entropy_scan
+            .as_ref()
+            .unwrap()
+            .observations
+            .iter()
+            .all(|o| !o.relative_path.ends_with(".toc") && o.relative_path != "OddLocation/kernel")
+    );
+    let mut p = fresh();
+    scan(
+        &mut p,
+        &out,
+        &Settings {
+            extensions: vec!["toc".into()],
+            ..Default::default()
+        },
+    );
+    assert_eq!(p.entropy_scan.as_ref().unwrap().counts.pe_analyzed, 4);
+    assert_eq!(p.files.len(), 3);
+    let mut p = fresh();
+    scan(
+        &mut p,
+        &out,
+        &Settings {
+            all_files: true,
+            ..Default::default()
+        },
+    );
+    let c = &p.entropy_scan.as_ref().unwrap().counts;
+    assert_eq!((c.other_extension, c.pe_analyzed), (0, 5));
+    assert_eq!(p.files.len(), 4);
+    assert!(entropy::DEFAULT_EXTENSIONS.contains(&"appref-ms"));
+    assert!(!entropy::DEFAULT_EXTENSIONS.contains(&"toc"));
+    assert_eq!(entropy::DEFAULT_EXTENSIONS.len(), 228);
+}
+
+#[test]
+fn non_image_pe_counts_as_non_pe_and_malformed_pe_is_not_a_failure() {
+    // Without IMAGE_FILE_EXECUTABLE_IMAGE the file is a PE-format container, such as a .NET
+    // Native TOC table, and the heuristic has nothing to score.
+    let mut container = pe(true, false, true);
+    container[0x96..0x98].copy_from_slice(&0u16.to_le_bytes());
+    assert!(analyze(&container, &Settings::default()).is_none());
+    // A section pointing past EOF is malformed: its own row and counter, no plan issue, and
+    // the run stays complete.
+    let (_temp, mut plan, out) = fixture();
+    let mut truncated = pe(true, false, true);
+    truncated[0x98 + 240 + 20..0x98 + 240 + 24].copy_from_slice(&u32::MAX.to_le_bytes());
+    fs::write(
+        plan.sources[0].root.join("OddLocation/broken.exe"),
+        truncated,
+    )
+    .unwrap();
+    fs::write(
+        plan.sources[0].root.join("OddLocation/table.dat"),
+        container,
+    )
+    .unwrap();
+    scan(&mut plan, &out, &Settings::default());
+    let r = plan.entropy_scan.as_ref().unwrap();
+    assert_eq!(
+        (
+            r.counts.malformed,
+            r.counts.errors,
+            r.counts.non_pe,
+            r.counts.pe_analyzed
+        ),
+        (1, 0, 2, 2)
+    );
+    let row = r
+        .observations
+        .iter()
+        .find(|o| o.relative_path == "OddLocation/broken.exe")
+        .unwrap();
+    assert_eq!(row.status, "Malformed");
+    assert!(row.reason.contains("out of bounds"));
+    assert!(
+        plan.issues
+            .iter()
+            .all(|i| !i.reason.starts_with("Entropy scan"))
+    );
+    assert!(
+        plan.coverage
+            .iter()
+            .any(|c| c.artifact_id == entropy::ARTIFACT && c.status == "Discovered")
+    );
+    let (root, summary) = collect::collect(&plan, &out, &options()).unwrap();
+    assert_eq!(summary.discovery_errors, 0);
+    assert_eq!(summary.completeness, "CompleteWithinSelectedPrototypeScope");
+    assert_eq!(verify::verify(&root).unwrap(), (1, true));
+    let rows: Vec<serde_json::Value> = fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(rows.iter().any(
+        |r| r["AnalysisStatus"] == "Malformed" && r["RelativePath"] == "OddLocation/broken.exe"
+    ));
+}
+
+#[test]
+fn plan_json_omits_the_inventory_and_plan_mode_writes_the_reports() {
+    let (temp, mut plan, out) = fixture();
+    scan(&mut plan, &out, &Settings::default());
+    let value = serde_json::to_value(&plan).unwrap();
+    let report = &value["EntropyScan"];
+    assert!(report.is_object(), "{value}");
+    assert!(report.get("Observations").is_none(), "{report}");
+    assert_eq!(report["Counts"]["PeAnalyzed"], 2);
+    assert_eq!(report["Settings"]["AllFiles"], false);
+    // Plan mode through the binary: Plan.json plus the three report files, no collection.
+    let plan_dir = temp.path().join("plan-only");
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_kumade"))
+        .args(["plan", "-d"])
+        .arg(&plan.sources[0].root)
+        .args(["--computer", "HOST01", "--high-entropy", "-q", "-o"])
+        .arg(&plan_dir)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    for name in entropy::FILES {
+        assert!(plan_dir.join(name).is_file(), "{name}");
+    }
+    assert!(plan_dir.join("Plan.json").is_file());
+    assert!(!plan_dir.join("Manifest.jsonl").exists());
+    let mut csv = csv::Reader::from_path(plan_dir.join("HighEntropyBinaries.csv")).unwrap();
+    assert_eq!(csv.records().count(), 2);
+    let saved: serde_json::Value =
+        serde_json::from_reader(fs::File::open(plan_dir.join("Plan.json")).unwrap()).unwrap();
+    assert!(saved["EntropyScan"].is_object() && saved["EntropyScan"].get("Observations").is_none());
+    assert!(
+        saved["Files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["ExpectedSHA256"].is_string())
     );
 }

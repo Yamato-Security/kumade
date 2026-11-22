@@ -50,6 +50,25 @@ packing candidates across each selected source root; it does not narrow its
 search to those artifact paths. A file already selected by the catalogue is
 copied once and receives both artifact identifiers.
 
+### Which files are opened
+
+The walk visits every regular file under the selected roots, but it only opens
+files whose extension is on a built-in list: executable images (`.exe`, `.dll`,
+`.sys`, `.scr`, `.cpl`, `.ocx`, `.com`, `.drv`, `.efi`, `.pyd`, …), scripts
+(PowerShell, WSH, JavaScript, batch, HTA, Python, shell, …), shortcuts and
+launchers, registry/configuration/XML text, web pages, Office and other
+documents, mail, archives, installers and packages, disk images, mailboxes, and
+the data and temporary names that payloads are hidden under (`.bin`, `.dat`,
+`.tmp`, `.txt`, `.log`, `.bak`, `.old`, `.cache`, `.dmp`, `.raw`, …). The full
+list is `DEFAULT_EXTENSIONS` in `src/entropy.rs`. The comparison ignores case
+and looks at the final extension only. Recognition inside an opened file is
+still by PE header, so a renamed executable is found under any listed name.
+
+Files with other names, and files without an extension, are counted in
+`EntropySummary.json` as `OtherExtension` and are not opened. Add names with
+`--entropy-extension <EXT>` (repeatable), or open every regular file with
+`--entropy-all-files`, which is the slower, exhaustive mode.
+
 ## Tuning
 
 | Option | Default | Meaning |
@@ -62,6 +81,8 @@ copied once and receives both artifact identifiers.
 | `--entropy-max-candidates <COUNT>` | No cap | Limit additional selected binary files |
 | `--entropy-max-collect-mib <MiB>` | No cap | Limit logical bytes of additional selected binary files |
 | `--entropy-exclude <GLOB>` | None | Repeatable, case-insensitive source-relative exclusion |
+| `--entropy-extension <EXT>` | None | Repeatable; also open files with this extension (dot optional, case ignored) |
+| `--entropy-all-files` | Off | Open every regular file instead of only the built-in extension list |
 | `-T, --threads <COUNT>` | Available logical CPUs, capped at 4; explicit maximum 128 | Parallel scan/acquisition workers |
 
 Entropy options require `--high-entropy`. Limits must be positive. MiB values
@@ -122,16 +143,18 @@ Three additional run-root files are sealed:
 - `EntropySummary.json`: settings, analysis start/end UTC times, counters and
   interpretation limits.
 
-`Plan.json` also stores the analysis inventory, configuration and expected
-hashes. `plan` mode writes this inventory in its plan without creating a
-collection or separate acquisition reports. Default collections without the
-flag do not gain entropy fields or report files.
+`Plan.json` stores the settings, the counters and the expected hash of every
+selected file; the per-file inventory is only in the two report files, so the
+plan stays small on drives with 100,000 or more PE files. `plan` mode writes
+the same three report files beside `Plan.json`, without the acquisition columns,
+and creates no collection. Default collections without the flag do not gain
+entropy fields or report files.
 
 | Field | Interpretation |
 |---|---|
 | `Computer`, `SourceId`, `RelativePath` | Source computer, selected volume/root and path within it |
 | `Method` | `FileAPI` or `RawNTFS` for a successful analysis |
-| `AnalysisStatus` | `Selected`, `AlreadyPlanned`, `BelowThreshold`, `SizeLimit`, `SelectionLimit`, `Excluded`, `Error` or `EnumerationError` |
+| `AnalysisStatus` | `Selected`, `AlreadyPlanned`, `BelowThreshold`, `Malformed`, `SizeLimit`, `SelectionLimit`, `Excluded`, `Error` or `EnumerationError` |
 | `Reason` | Error, exclusion or limit explanation |
 | `Size`, `SHA256` | Logical length and SHA-256 of the complete analyzed file |
 | `FileEntropy`, `MaxExecutableEntropy` | Whole-file entropy and maximum executable-section entropy meeting minimum size; null/empty when unavailable |
@@ -152,9 +175,17 @@ disagrees with the analysis hash.
 ## Coverage and performance limits
 
 - Header validation recognizes executable PE32/PE32+ images, including DLLs,
-  drivers and files with unusual extensions. The scanner does not find scripts,
-  ELF, archives, embedded PE payloads, deleted files, or PE content hidden only
-  in named streams. It does not promise Windows loader validation.
+  drivers and files with unusual extensions. A file with the MZ and PE
+  signatures but without the executable-image flag (.NET Native `.toc` tables,
+  `.mibc` profile data) is a container the heuristic cannot score and is counted
+  with the non-PE files. An image whose section table or optional header is
+  truncated or out of range gets a `Malformed` row and counter; it is not an
+  acquisition failure and does not make the run `Partial`. The scanner does not
+  find scripts, ELF, archives, embedded PE payloads, deleted files, or PE content
+  hidden only in named streams. It does not promise Windows loader validation.
+- Only files with a listed extension are opened. A payload stored under a name
+  outside the list, or without an extension, is counted but not inspected unless
+  `--entropy-all-files` or `--entropy-extension` says otherwise.
 - The directory walk skips symlinks and reparse points rather than traversing
   other volumes or aliases. Cloud-only placeholders and WOF/reparse files may
   therefore be excluded. Excluded directories count as one exclusion, not an
@@ -176,12 +207,15 @@ disagrees with the analysis hash.
 - All valid discovered PEs are fully read and hashed, regardless of whether
   they pass the heuristic. Qualifying files are then read again for collection
   and readback verification. Large drives, slow disks and many PE files can
-  add substantial time and I/O. The scanner has a count/spinner, not a percent,
-  because the total file count is unknown during enumeration.
+  add substantial time and I/O: on a 150 GB developer image with 156,000 PE
+  files the scan read about 80 GB and took 42 minutes on two CPUs. The scanner
+  has a count/spinner, not a percent, because the total file count is unknown
+  during enumeration.
 - Read buffers are approximately 1 MiB plus at most 96 section histograms per
   worker. In-memory inventory grows with the number of PE/error/exclusion
-  records; it is not constant for an entire drive. Container sizing reserves
-  additional space for the analysis inventory and reports.
+  records; it is not constant for an entire drive (about 190 MB of working set
+  for the image above). Container sizing reserves space for the CSV/JSONL
+  reports from the size of that inventory.
 
 ## References
 

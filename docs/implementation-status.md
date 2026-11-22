@@ -98,9 +98,11 @@ and independent comparison before a release claims broad production coverage.
 ## High-entropy PE discovery
 
 `--high-entropy` adds an optional full selected-source walk before collection.
-The scanner recognizes PE32/PE32+ by header signatures regardless of filename,
-measures logical on-disk bytes, hashes each analyzed PE and adds qualifying
-unnamed streams to the existing acquisition plan. Directory, VHDX and E01
+The scanner opens files whose extension is on a built-in list of executable,
+script, document, archive, package, image and data names (extendable, or every
+file with `--entropy-all-files`), recognizes PE32/PE32+ by header signatures
+regardless of what the name claims, measures logical on-disk bytes, hashes each
+analyzed PE and adds qualifying unnamed streams to the existing acquisition plan. Directory, VHDX and E01
 share that plan and sealed reports. An acquired-content mismatch is partial.
 The default evaluates executable sections of at least 4096 bytes at 7.2
 bits/byte; whole-file/either criteria and explicit resource limits are available.
