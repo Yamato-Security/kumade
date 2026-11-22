@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::{File, OpenOptions},
     io::{BufWriter, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -38,6 +38,270 @@ pub const FILES: &[&str] = &[
     "HighEntropyBinaries.csv",
     "HighEntropyBinaries.jsonl",
     "EntropySummary.json",
+];
+/// File types opened for PE recognition by default: executable images plus the script,
+/// document, archive, package, image and data names that malware is dropped or renamed as.
+/// Other names are counted and never opened; `--entropy-extension` adds names and
+/// `--entropy-all-files` opens every regular file.
+pub const DEFAULT_EXTENSIONS: &[&str] = &[
+    // Executable images and loadable code
+    "exe",
+    "dll",
+    "sys",
+    "scr",
+    "cpl",
+    "ocx",
+    "com",
+    "drv",
+    "ax",
+    "acm",
+    "tsp",
+    "efi",
+    "pyd",
+    "node",
+    "xll",
+    "wll",
+    // PowerShell
+    "ps1",
+    "psm1",
+    "psd1",
+    "ps1xml",
+    "psc1",
+    "pssc",
+    "psrc",
+    "clixml",
+    // Windows Script Host
+    "vbs",
+    "vbe",
+    "wsf",
+    "wsh",
+    "wsc",
+    "sct",
+    // JavaScript
+    "js",
+    "jse",
+    "mjs",
+    "cjs",
+    // Batch
+    "bat",
+    "cmd",
+    // HTML applications and documents
+    "hta",
+    "html",
+    "htm",
+    "xhtml",
+    "mht",
+    "mhtml",
+    "svg",
+    // Shortcuts and launchers
+    "lnk",
+    "url",
+    "scf",
+    "pif",
+    "msc",
+    "job",
+    "rdp",
+    "application",
+    "appref-ms",
+    // Shell item files
+    "settingcontent-ms",
+    "library-ms",
+    "search-ms",
+    "searchconnector-ms",
+    // Registry, setup, WMI and XML text
+    "reg",
+    "inf",
+    "mof",
+    "mfl",
+    "xml",
+    "xsl",
+    "xslt",
+    // Configuration
+    "ini",
+    "cfg",
+    "conf",
+    "config",
+    "json",
+    "yaml",
+    "yml",
+    "ovpn",
+    // Build and source
+    "proj",
+    "csproj",
+    "vbproj",
+    "targets",
+    "tasks",
+    "cs",
+    "vb",
+    "bas",
+    "vba",
+    // Scripting languages
+    "py",
+    "pyw",
+    "pyc",
+    "pyo",
+    "rb",
+    "pl",
+    "pm",
+    "lua",
+    "ahk",
+    "au3",
+    "a3x",
+    "tcl",
+    "sh",
+    "bash",
+    // ASP web pages
+    "asp",
+    "aspx",
+    "ashx",
+    "asmx",
+    "ascx",
+    "asa",
+    "asax",
+    // PHP web pages
+    "php",
+    "php3",
+    "php4",
+    "php5",
+    "php7",
+    "php8",
+    "phtml",
+    // JSP, ColdFusion and CGI
+    "jsp",
+    "jspx",
+    "jspf",
+    "cfm",
+    "cfml",
+    "cgi",
+    // Word
+    "doc",
+    "dot",
+    "docx",
+    "docm",
+    "dotx",
+    "dotm",
+    "rtf",
+    // Excel
+    "xls",
+    "xlt",
+    "xla",
+    "xlsx",
+    "xlsm",
+    "xlsb",
+    "xltx",
+    "xltm",
+    "xlam",
+    "xlm",
+    // Spreadsheet and query files
+    "slk",
+    "csv",
+    "iqy",
+    "dqy",
+    "oqy",
+    "rqy",
+    "odc",
+    // PowerPoint
+    "ppt",
+    "pps",
+    "pot",
+    "ppa",
+    "pptx",
+    "pptm",
+    "ppsx",
+    "ppsm",
+    "potx",
+    "potm",
+    "ppam",
+    "sldx",
+    "sldm",
+    // PDF and OneNote
+    "pdf",
+    "one",
+    "onepkg",
+    // Publisher, Visio and Access
+    "pub",
+    "vsd",
+    "vsdx",
+    "vsdm",
+    "mdb",
+    "mde",
+    "accdb",
+    "accde",
+    // OpenDocument and HWP
+    "odt",
+    "ods",
+    "odp",
+    "ott",
+    "ots",
+    "otp",
+    "hwp",
+    "hwpx",
+    // Help files
+    "chm",
+    "hlp",
+    // Mail messages
+    "eml",
+    "msg",
+    "oft",
+    // Archives
+    "zip",
+    "rar",
+    "7z",
+    "tar",
+    "gz",
+    "tgz",
+    "bz2",
+    "tbz2",
+    "xz",
+    "txz",
+    "zst",
+    // Installers and packages
+    "msi",
+    "msp",
+    "mst",
+    "cab",
+    "msu",
+    "appx",
+    "appxbundle",
+    "msix",
+    "msixbundle",
+    // Application packages
+    "jar",
+    "war",
+    "ear",
+    "pyz",
+    "whl",
+    "nupkg",
+    "vsix",
+    "crx",
+    "xpi",
+    "phar",
+    // Disk and system images
+    "iso",
+    "img",
+    "vhd",
+    "vhdx",
+    "vmdk",
+    "vdi",
+    "wim",
+    "esd",
+    // Mailboxes
+    "pst",
+    "ost",
+    "mbox",
+    // Data and temporary names that hide payloads
+    "bin",
+    "dat",
+    "tmp",
+    "temp",
+    "txt",
+    "log",
+    "bak",
+    "old",
+    "cache",
+    "dmp",
+    "dump",
+    "raw",
 ];
 
 #[derive(Clone, Debug, Default, ValueEnum, Serialize, Deserialize, PartialEq)]
@@ -57,6 +321,10 @@ pub struct Settings {
     pub max_candidates: Option<u64>,
     pub max_collect_mib: Option<u64>,
     pub excludes: Vec<String>,
+    /// Extensions opened in addition to `DEFAULT_EXTENSIONS`, lower-case, without the dot.
+    pub extensions: Vec<String>,
+    /// Open every regular file whatever its name.
+    pub all_files: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -68,6 +336,8 @@ impl Default for Settings {
             max_candidates: None,
             max_collect_mib: None,
             excludes: vec![],
+            extensions: vec![],
+            all_files: false,
         }
     }
 }
@@ -97,6 +367,12 @@ pub struct EntropyArgs {
     /// Exclude a source-relative glob from entropy discovery; repeat as needed
     #[arg(long, requires = "high_entropy", value_name = "GLOB")]
     pub entropy_exclude: Vec<String>,
+    /// Also open files with this extension (case-insensitive, dot optional); repeat as needed
+    #[arg(long, requires = "high_entropy", value_name = "EXT")]
+    pub entropy_extension: Vec<String>,
+    /// Open every regular file instead of only the built-in extension list
+    #[arg(long, requires = "high_entropy")]
+    pub entropy_all_files: bool,
 }
 fn threshold(s: &str) -> std::result::Result<f64, String> {
     s.parse::<f64>()
@@ -121,6 +397,12 @@ impl EntropyArgs {
             max_candidates: self.entropy_max_candidates,
             max_collect_mib: self.entropy_max_collect_mib,
             excludes: self.entropy_exclude.clone(),
+            extensions: self
+                .entropy_extension
+                .iter()
+                .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+                .collect(),
+            all_files: self.entropy_all_files,
         }
     }
 }
@@ -157,6 +439,16 @@ impl std::fmt::Display for SizeLimit {
     }
 }
 impl std::error::Error for SizeLimit {}
+/// A PE image whose headers cannot be trusted: reported with its own status, never as an
+/// acquisition failure, because the file was reached and read.
+#[derive(Debug)]
+struct Malformed(&'static str);
+impl std::fmt::Display for Malformed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for Malformed {}
 
 fn entropy(counts: &[u64; 256], size: u64) -> f64 {
     if size == 0 {
@@ -178,12 +470,12 @@ fn le32(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes(b[i..i + 4].try_into().expect("bounded header"))
 }
 fn read_at(reader: &mut dyn ReadSeek, size: u64, offset: u64, buffer: &mut [u8]) -> Result<()> {
-    ensure!(
-        offset
-            .checked_add(buffer.len() as u64)
-            .is_some_and(|end| end <= size),
-        "PE range extends past EOF"
-    );
+    if !offset
+        .checked_add(buffer.len() as u64)
+        .is_some_and(|end| end <= size)
+    {
+        return Err(Malformed("PE header extends past EOF").into());
+    }
     reader.seek(SeekFrom::Start(offset))?;
     reader.read_exact(buffer)?;
     Ok(())
@@ -217,23 +509,27 @@ pub fn analyze(
     if &coff[..4] != b"PE\0\0" {
         return Ok(None);
     }
+    // Without IMAGE_FILE_EXECUTABLE_IMAGE this is a PE-format container, not an image: .NET
+    // Native `.toc` tables, `.mibc` profile data and object-like files. The heuristic has
+    // nothing to score in them, so they count with the non-PE files.
+    if le16(&coff, 22) & 2 == 0 {
+        return Ok(None);
+    }
     let n = usize::from(le16(&coff, 6));
-    ensure!(
-        (1..=96).contains(&n),
-        "Invalid PE section count (Windows supports up to 96)"
-    );
-    ensure!(le16(&coff, 22) & 2 != 0, "PE is not an executable image");
+    if !(1..=96).contains(&n) {
+        return Err(Malformed("Invalid PE section count (Windows supports up to 96)").into());
+    }
     let optional_len = usize::from(le16(&coff, 20));
-    ensure!(optional_len >= 96, "PE optional header is truncated");
+    if optional_len < 96 {
+        return Err(Malformed("PE optional header is truncated").into());
+    }
     let mut optional = vec![0; optional_len];
     read_at(reader, size, at + 24, &mut optional)?;
     let directory = match le16(&optional, 0) {
         0x10b => 96,
-        0x20b => {
-            ensure!(optional_len >= 112, "PE32+ optional header is truncated");
-            112
-        }
-        _ => anyhow::bail!("Unsupported PE optional-header format"),
+        0x20b if optional_len >= 112 => 112,
+        0x20b => return Err(Malformed("PE32+ optional header is truncated").into()),
+        _ => return Err(Malformed("Unsupported PE optional-header format").into()),
     };
     let cert = if optional_len >= directory + 40 && le32(&optional, directory - 4) > 4 {
         let offset = u64::from(le32(&optional, directory + 32));
@@ -253,13 +549,13 @@ pub fn analyze(
         )?;
         let offset = u64::from(le32(&s, 20));
         let length = u64::from(le32(&s, 16));
-        ensure!(
-            length == 0
-                || offset
-                    .checked_add(length)
-                    .is_some_and(|e| offset > 0 && e <= size),
-            "PE section raw bytes are truncated or out of bounds"
-        );
+        if length != 0
+            && !offset
+                .checked_add(length)
+                .is_some_and(|e| offset > 0 && e <= size)
+        {
+            return Err(Malformed("PE section raw bytes are truncated or out of bounds").into());
+        }
         sections.push(Section {
             name: String::from_utf8_lossy(&s[..s[..8].iter().position(|b| *b == 0).unwrap_or(8)])
                 .into_owned(),
@@ -360,6 +656,8 @@ pub struct Counts {
     pub selected_bytes: u64,
     pub skipped: u64,
     pub errors: u64,
+    pub malformed: u64,
+    pub other_extension: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -368,6 +666,10 @@ pub struct Report {
     pub started_utc: String,
     pub finished_utc: String,
     pub counts: Counts,
+    /// One row per analyzed PE, error, limit and exclusion. Kept in memory for the sealed
+    /// CSV/JSONL reports and left out of Plan.json, which would otherwise grow by hundreds of
+    /// megabytes on an ordinary workstation.
+    #[serde(skip)]
     pub observations: Vec<Observation>,
 }
 fn issue(source: &Source, path: &str, status: &str, reason: &str) -> Observation {
@@ -382,6 +684,19 @@ fn issue(source: &Source, path: &str, status: &str, reason: &str) -> Observation
         observation_id: None,
         fingerprint: None,
     }
+}
+/// A PE image that was analyzed: its source-relative text, result, fingerprint and method.
+struct Analyzed {
+    text: String,
+    analysis: Analysis,
+    before: Fingerprint,
+    method: String,
+}
+/// What one regular file turned out to be.
+enum Seen {
+    Pe(Box<Analyzed>),
+    NotPe,
+    OtherExtension,
 }
 fn inspect(
     source: &Source,
@@ -471,6 +786,11 @@ pub fn augment_plan(
         );
     }
     let excludes = builder.build()?;
+    let extensions: HashSet<String> = DEFAULT_EXTENSIONS
+        .iter()
+        .map(|e| (*e).to_owned())
+        .chain(settings.extensions.iter().cloned())
+        .collect();
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()?;
@@ -549,6 +869,14 @@ pub fn augment_plan(
                     if !entry.file_type().is_file() {
                         return None;
                     }
+                    let listed = entry
+                        .path()
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| extensions.contains(&e.to_ascii_lowercase()));
+                    if !settings.all_files && !listed {
+                        return Some(Ok(Seen::OtherExtension));
+                    }
                     let relative = match entry.path().strip_prefix(&source.root) {
                         Ok(r) => r,
                         Err(e) => return Some(Err(issue(source, "", "Error", &e.to_string()))),
@@ -571,12 +899,22 @@ pub fn augment_plan(
                     progress.inc(1);
                     Some(
                         match inspect(source, entry.path(), relative, settings, cache) {
-                            Ok((analysis, before, method)) => Ok((text, analysis, before, method)),
+                            Ok((Some(analysis), before, method)) => {
+                                Ok(Seen::Pe(Box::new(Analyzed {
+                                    text,
+                                    analysis,
+                                    before,
+                                    method,
+                                })))
+                            }
+                            Ok((None, _, _)) => Ok(Seen::NotPe),
                             Err(e) => Err(issue(
                                 source,
                                 &text,
                                 if e.downcast_ref::<SizeLimit>().is_some() {
                                     "SizeLimit"
+                                } else if e.downcast_ref::<Malformed>().is_some() {
+                                    "Malformed"
                                 } else {
                                     "Error"
                                 },
@@ -594,7 +932,13 @@ pub fn augment_plan(
                         s.0.files_seen += 1;
                     }
                     match result {
-                        Ok((text, Some(analysis), before, method)) => {
+                        Ok(Seen::Pe(seen)) => {
+                            let Analyzed {
+                                text,
+                                analysis,
+                                before,
+                                method,
+                            } = *seen;
                             s.0.pe_analyzed += 1;
                             if analysis.candidate {
                                 s.0.candidates += 1;
@@ -616,12 +960,13 @@ pub fn augment_plan(
                                 observation_id: None,
                             });
                         }
-                        Ok((_, None, _, _)) => s.0.non_pe += 1,
+                        Ok(Seen::NotPe) => s.0.non_pe += 1,
+                        Ok(Seen::OtherExtension) => s.0.other_extension += 1,
                         Err(row) => {
-                            if row.status == "SizeLimit" {
-                                s.0.skipped += 1;
-                            } else {
-                                s.0.errors += 1;
+                            match row.status.as_str() {
+                                "SizeLimit" => s.0.skipped += 1,
+                                "Malformed" => s.0.malformed += 1,
+                                _ => s.0.errors += 1,
                             }
                             s.1.push(row);
                         }
@@ -758,6 +1103,8 @@ pub fn augment_plan(
         ui::field("High-entropy candidates", counts.candidates);
         ui::field("Additional binary files", counts.selected_new);
         ui::field("Entropy scan failures", counts.errors);
+        ui::field("Malformed PE files", counts.malformed);
+        ui::field("Files outside the extension list", counts.other_extension);
     }
     plan.entropy_scan = Some(Report {
         settings: settings.clone(),
@@ -873,8 +1220,8 @@ pub fn write_report(root: &Path, report: &Report, records: &[Record]) -> Result<
     Ok(())
 }
 
-/// Conservative headroom for Plan.json plus CSV/JSONL/summary reports in an evidence container.
-/// Counting serialization avoids allocating another copy of a drive-wide inventory.
+/// Headroom for the CSV/JSONL/summary reports in an evidence container. Counting serialization
+/// avoids allocating another copy of a drive-wide inventory.
 pub fn metadata_reserve(plan: &Plan) -> Result<u64> {
     struct Counter(u64);
     impl Write for Counter {
@@ -893,10 +1240,15 @@ pub fn metadata_reserve(plan: &Plan) -> Result<u64> {
         return Ok(0);
     };
     let mut counter = Counter(0);
-    serde_json::to_writer(&mut counter, report)?;
+    for row in &report.observations {
+        serde_json::to_writer(&mut counter, row)?;
+        counter.0 += 1;
+    }
+    // The JSONL is about this size and the CSV a little smaller; Plan.json no longer carries
+    // the rows. Three times the row bytes plus a megabyte covers both files and the summary.
     counter
         .0
-        .checked_mul(12)
+        .checked_mul(3)
         .and_then(|n| n.checked_add(1024 * 1024))
         .context("Entropy metadata reserve overflow")
 }

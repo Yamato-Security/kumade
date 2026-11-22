@@ -571,6 +571,12 @@ fn run() -> Result<u8> {
         std::fs::create_dir_all(&output)?;
         collect::write_json_new(&output.join("Plan.json"), &plan)?;
         ui::field("Plan saved", output.join("Plan.json").display());
+        if let Some(report) = &plan.entropy_scan {
+            // Plan.json carries the settings and counters only; the per-file inventory goes
+            // beside it in the same report files a collection seals.
+            kumade::entropy::write_report(&output, report, &[])?;
+            ui::field("Entropy reports saved", output.display());
+        }
         return Ok(
             if plan
                 .issues
@@ -685,9 +691,31 @@ mod tests {
                 "18446744073709551615",
             ],
             vec!["kumade", "--entropy-exclude", "Windows/**"],
+            vec!["kumade", "--entropy-extension", "toc"],
+            vec!["kumade", "--entropy-all-files"],
         ] {
             assert!(Cli::try_parse_from(args).is_err());
         }
+        let cli = Cli::try_parse_from([
+            "kumade",
+            "--high-entropy",
+            "--entropy-extension",
+            ".Toc",
+            "--entropy-extension",
+            "mibc",
+        ])
+        .unwrap();
+        let settings = cli.options.entropy.settings();
+        assert_eq!(settings.extensions, ["toc", "mibc"]);
+        assert!(!settings.all_files);
+        assert!(
+            Cli::try_parse_from(["kumade", "--high-entropy", "--entropy-all-files"])
+                .unwrap()
+                .options
+                .entropy
+                .settings()
+                .all_files
+        );
         for args in [
             vec!["kumade", "--high-entropy", "--entropy-threshold", "8"],
             vec![
