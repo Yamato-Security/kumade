@@ -115,6 +115,16 @@ logical file instead, including headers, overlays and certificate bytes.
 as section data. All PE sections are reported with their sizes, offsets,
 executable flag and individual entropy.
 
+Managed assemblies need one adjustment. The .NET runtime stores an assembly's
+embedded resources (compressed satellite strings, images, serialized objects)
+inside the executable `.text` section, so a harmless `*.resources.dll` would
+reach the threshold on its resources alone. When an image has a CLR header,
+the managed resources byte range it describes is left out of the section
+measurement; `MeasuredSize` in the section list shows what was measured. The
+IL and metadata stay in, because packed and crypted .NET payloads show up there.
+Whole-file entropy is not adjusted. On a stock developer image this removed
+most of the satellite assemblies from the candidate list.
+
 For example, validation with an inert generated Windows x64 program and UPX
 4.2.4 produced:
 
@@ -159,8 +169,9 @@ entropy fields or report files.
 | `Size`, `SHA256` | Logical length and SHA-256 of the complete analyzed file |
 | `FileEntropy`, `MaxExecutableEntropy` | Whole-file entropy and maximum executable-section entropy meeting minimum size; null/empty when unavailable |
 | `Machine`, `IsDLL` | COFF machine code and DLL characteristic; PE signatures drive recognition, not `.exe` extensions |
+| `IsManaged` | The image has a CLR header (a .NET or mixed-mode assembly); its managed resources were left out of the section measurement |
 | `HasCertificateTable` | A positive in-bounds certificate-table range exists; **not** signature validation or publisher trust |
-| `Sections` | JSON array of `Name`, `RawOffset`, `RawSize`, `Executable`, `Entropy` |
+| `Sections` | JSON array of `Name`, `RawOffset`, `RawSize`, `MeasuredSize`, `Executable`, `Entropy`; `MeasuredSize` is smaller than `RawSize` where managed resources were skipped |
 | `ObservationId` | Join key to `Manifest.csv`/`Manifest.jsonl` for selected files |
 | `AcquisitionStatus`, `CollectedSHA256`, `RelativeOutputPath` | Actual copy result and output location; unavailable if not selected |
 | `HashMatchesAnalysis` | Whether the copied content matches the analyzed content; blank/null without an acquired hash |

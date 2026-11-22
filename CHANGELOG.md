@@ -14,8 +14,10 @@
   PE-format files that are not executable images count as non-PE, a malformed
   PE header gets a `Malformed` row instead of failing the run, and `Plan.json`
   keeps settings and counters while the per-file inventory lives only in the
-  sealed reports, which `plan` writes beside the plan. High entropy is a
-  heuristic, not a malware verdict.
+  sealed reports, which `plan` writes beside the plan. Managed assemblies are
+  measured without their embedded CLR resources, so satellite `.resources.dll`
+  files no longer qualify on compressed strings alone, and `IsManaged` is
+  reported. High entropy is a heuristic, not a malware verdict.
 
 - Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements. VSS acquisition and process scanning share one native-architecture check, which also rejects the x64 build under the x64 emulation of Windows on ARM64 (not reported as WOW64).
 

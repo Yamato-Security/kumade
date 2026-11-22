@@ -413,6 +413,9 @@ pub struct Section {
     pub name: String,
     pub raw_offset: u64,
     pub raw_size: u64,
+    /// Bytes the entropy was measured over: the raw size minus a managed assembly's embedded
+    /// resources, which sit inside `.text` without being code.
+    pub measured_size: u64,
     pub executable: bool,
     pub entropy: f64,
 }
@@ -427,6 +430,8 @@ pub struct Analysis {
     pub machine: String,
     #[serde(rename = "IsDLL")]
     pub is_dll: bool,
+    /// The image has a CLR header: a .NET assembly or mixed-mode image.
+    pub is_managed: bool,
     pub has_certificate_table: bool,
     pub candidate: bool,
     pub sections: Vec<Section>,
@@ -479,6 +484,20 @@ fn read_at(reader: &mut dyn ReadSeek, size: u64, offset: u64, buffer: &mut [u8])
     reader.seek(SeekFrom::Start(offset))?;
     reader.read_exact(buffer)?;
     Ok(())
+}
+/// Raw layout of one section: virtual address and extent, raw offset and size.
+struct Layout {
+    va: u64,
+    extent: u64,
+    raw_offset: u64,
+    raw_size: u64,
+}
+/// File offset of `need` bytes at `rva`, when they are backed by a section's raw data.
+fn rva_to_offset(layout: &[Layout], rva: u64, need: u64) -> Option<u64> {
+    layout.iter().find_map(|s| {
+        let delta = rva.checked_sub(s.va)?;
+        (delta < s.extent && delta.checked_add(need)? <= s.raw_size).then(|| s.raw_offset + delta)
+    })
 }
 /// Header checks use seeked bounded reads. Histograms and hash then read the complete
 /// logical file once; sections are measured from on-disk bytes, never virtual zero padding.
@@ -539,6 +558,7 @@ pub fn analyze(
         false
     };
     let mut sections = Vec::with_capacity(n);
+    let mut layout = Vec::with_capacity(n);
     for index in 0..n {
         let mut s = [0; 40];
         read_at(
@@ -556,14 +576,71 @@ pub fn analyze(
         {
             return Err(Malformed("PE section raw bytes are truncated or out of bounds").into());
         }
+        layout.push(Layout {
+            va: u64::from(le32(&s, 12)),
+            extent: u64::from(le32(&s, 8)).max(length),
+            raw_offset: offset,
+            raw_size: length,
+        });
         sections.push(Section {
             name: String::from_utf8_lossy(&s[..s[..8].iter().position(|b| *b == 0).unwrap_or(8)])
                 .into_owned(),
             raw_offset: offset,
             raw_size: length,
+            measured_size: length,
             executable: le32(&s, 36) & 0x2000_0000 != 0,
             entropy: 0.0,
         });
+    }
+    // IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR (14) points at the CLR header of a managed assembly.
+    // Its embedded resources (compressed satellite strings, images, serialized objects) are
+    // stored inside the executable `.text` section without being code, so that byte range is
+    // left out of the section measurement. IL and metadata stay in it, because packed and
+    // crypted .NET payloads show up there.
+    let mut managed = false;
+    let mut resources = None;
+    if optional_len >= directory + 120 && le32(&optional, directory - 4) > 14 {
+        let rva = u64::from(le32(&optional, directory + 112));
+        let length = u64::from(le32(&optional, directory + 116));
+        if rva > 0
+            && length >= 72
+            && let Some(offset) = rva_to_offset(&layout, rva, 72)
+        {
+            let mut clr = [0; 72];
+            read_at(reader, size, offset, &mut clr)?;
+            managed = true;
+            let resources_rva = u64::from(le32(&clr, 24));
+            let resources_len = u64::from(le32(&clr, 28));
+            if resources_rva > 0
+                && resources_len > 0
+                && let Some(start) = rva_to_offset(&layout, resources_rva, 1)
+                && let Some(owner) = layout
+                    .iter()
+                    .find(|s| start >= s.raw_offset && start < s.raw_offset + s.raw_size)
+            {
+                let end = start
+                    .saturating_add(resources_len)
+                    .min(owner.raw_offset + owner.raw_size);
+                resources = Some((start, end));
+            }
+        }
+    }
+    // The byte ranges each section is measured over: its raw data minus the managed resources.
+    let pieces: Vec<Vec<(u64, u64)>> = sections
+        .iter()
+        .map(|s| {
+            let (a, b) = (s.raw_offset, s.raw_offset + s.raw_size);
+            match resources {
+                Some((x, y)) if x < b && y > a => [(a, x.max(a)), (y.min(b), b)]
+                    .into_iter()
+                    .filter(|(p, q)| p < q)
+                    .collect(),
+                _ => vec![(a, b)],
+            }
+        })
+        .collect();
+    for (s, ranges) in sections.iter_mut().zip(&pieces) {
+        s.measured_size = ranges.iter().map(|(p, q)| q - p).sum();
     }
     if settings
         .max_file_mib
@@ -591,12 +668,14 @@ pub fn analyze(
             .checked_add(read as u64)
             .context("File position overflow")?;
         ensure!(end <= size, "File grew during entropy analysis");
-        for (section, counts) in sections.iter().zip(per.iter_mut()) {
-            let start = position.max(section.raw_offset);
-            let stop = end.min(section.raw_offset + section.raw_size);
-            if start < stop {
-                for b in &data[(start - position) as usize..(stop - position) as usize] {
-                    counts[*b as usize] += 1;
+        for (ranges, counts) in pieces.iter().zip(per.iter_mut()) {
+            for (from, to) in ranges {
+                let start = position.max(*from);
+                let stop = end.min(*to);
+                if start < stop {
+                    for b in &data[(start - position) as usize..(stop - position) as usize] {
+                        counts[*b as usize] += 1;
+                    }
                 }
             }
         }
@@ -604,11 +683,11 @@ pub fn analyze(
     }
     ensure!(position == size, "File shortened during entropy analysis");
     for (s, counts) in sections.iter_mut().zip(&per) {
-        s.entropy = entropy(counts, s.raw_size);
+        s.entropy = entropy(counts, s.measured_size);
     }
     let maximum = sections
         .iter()
-        .filter(|s| s.executable && s.raw_size >= settings.min_bytes)
+        .filter(|s| s.executable && s.measured_size >= settings.min_bytes)
         .map(|s| s.entropy)
         .reduce(f64::max);
     let file_entropy = entropy(&full, size);
@@ -626,6 +705,7 @@ pub fn analyze(
         max_executable_entropy: maximum,
         machine: format!("0x{:04X}", le16(&coff, 4)),
         is_dll: le16(&coff, 22) & 0x2000 != 0,
+        is_managed: managed,
         has_certificate_table: cert,
         candidate,
         sections,
@@ -1133,6 +1213,7 @@ struct Export<'a> {
     machine: Option<&'a str>,
     #[serde(rename = "IsDLL")]
     is_dll: Option<bool>,
+    is_managed: Option<bool>,
     has_certificate_table: Option<bool>,
     sections: String,
     observation_id: Option<&'a str>,
@@ -1168,6 +1249,7 @@ pub fn write_report(root: &Path, report: &Report, records: &[Record]) -> Result<
         "MaxExecutableEntropy",
         "Machine",
         "IsDLL",
+        "IsManaged",
         "HasCertificateTable",
         "Sections",
         "ObservationId",
@@ -1196,6 +1278,7 @@ pub fn write_report(root: &Path, report: &Report, records: &[Record]) -> Result<
             max_executable_entropy: a.and_then(|a| a.max_executable_entropy),
             machine: a.map(|a| a.machine.as_str()),
             is_dll: a.map(|a| a.is_dll),
+            is_managed: a.map(|a| a.is_managed),
             has_certificate_table: a.map(|a| a.has_certificate_table),
             sections: serde_json::to_string(&a.map(|a| &a.sections))?,
             observation_id: row.observation_id.as_deref(),

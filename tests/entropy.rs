@@ -105,6 +105,8 @@ fn section_entropy_and_hash_are_exact_for_pe32_and_pe32_plus() {
         assert_eq!(a.sha256, sha256(&b));
         assert_eq!(a.machine, if plus { "0x8664" } else { "0x014C" });
         assert!(!a.has_certificate_table);
+        assert!(!a.is_managed);
+        assert_eq!(a.sections[0].measured_size, 4096);
     }
 }
 #[test]
@@ -609,4 +611,85 @@ fn plan_json_omits_the_inventory_and_plan_mode_writes_the_reports() {
             .iter()
             .any(|f| f["ExpectedSHA256"].is_string())
     );
+}
+
+/// A PE32 assembly: data directory 14 points at a CLR header at the start of `.text`
+/// (RVA 0x1000, file 0x200) whose managed resources cover `resources_len` bytes from
+/// RVA 0x1100. The rest of `.text` keeps the high-entropy pattern of `pe()`.
+fn managed_pe(resources_len: u32) -> Vec<u8> {
+    let mut b = pe(true, false, false);
+    let optional = 0x98;
+    b[optional + 92..optional + 96].copy_from_slice(&16u32.to_le_bytes());
+    b[optional + 96 + 112..optional + 96 + 116].copy_from_slice(&0x1000u32.to_le_bytes());
+    b[optional + 96 + 116..optional + 96 + 120].copy_from_slice(&72u32.to_le_bytes());
+    for (i, va) in [0x1000u32, 0x2000].into_iter().enumerate() {
+        let s = 0x98 + 224 + i * 40;
+        b[s + 8..s + 12].copy_from_slice(&4096u32.to_le_bytes());
+        b[s + 12..s + 16].copy_from_slice(&va.to_le_bytes());
+    }
+    b[0x200..0x204].copy_from_slice(&72u32.to_le_bytes());
+    b[0x210..0x214].copy_from_slice(&1u32.to_le_bytes());
+    b[0x218..0x21c].copy_from_slice(&0x1100u32.to_le_bytes());
+    b[0x21c..0x220].copy_from_slice(&resources_len.to_le_bytes());
+    b
+}
+
+#[test]
+fn managed_resources_are_left_out_of_the_executable_section_measurement() {
+    let settings = Settings {
+        min_bytes: 1024,
+        ..Default::default()
+    };
+    // Satellite assembly: everything after the CLR header is compressed resources. Only the
+    // 256 header bytes remain, below the minimum, so the file is no longer a candidate.
+    let satellite = analyze(&managed_pe(4096 - 0x100), &settings).unwrap();
+    assert!(satellite.is_managed);
+    assert_eq!(satellite.sections[0].raw_size, 4096);
+    assert_eq!(satellite.sections[0].measured_size, 0x100);
+    assert_eq!(satellite.max_executable_entropy, None);
+    assert!(!satellite.candidate);
+    // Whole-file entropy still counts the resources: with the uniform resource bytes, the
+    // constant `.rsrc` section and the headers it lands well above the low-entropy sections.
+    assert!(satellite.file_entropy > 4.0 && satellite.file_entropy < 7.0);
+    // A crypted assembly: the IL region itself is high entropy and stays a candidate.
+    let crypted = analyze(&managed_pe(512), &settings).unwrap();
+    assert!(crypted.is_managed);
+    assert_eq!(crypted.sections[0].measured_size, 4096 - 512);
+    assert!(crypted.max_executable_entropy.unwrap() > 7.9);
+    assert!(crypted.candidate);
+    // No resources at all: measured like a native image.
+    let plain = analyze(&managed_pe(0), &settings).unwrap();
+    assert!(plain.is_managed && plain.candidate);
+    assert_eq!(plain.sections[0].measured_size, 4096);
+    // Exported through the scan: the column and the per-section measured size are visible.
+    let (_temp, mut plan, out) = fixture();
+    fs::write(
+        plan.sources[0]
+            .root
+            .join("OddLocation/strings.resources.dll"),
+        managed_pe(4096 - 0x100),
+    )
+    .unwrap();
+    scan(&mut plan, &out, &settings);
+    assert_eq!(
+        plan.files.len(),
+        1,
+        "the satellite assembly is not selected"
+    );
+    let (root, _) = collect::collect(&plan, &out, &options()).unwrap();
+    let rows: Vec<serde_json::Value> = fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let row = rows
+        .iter()
+        .find(|r| r["RelativePath"] == "OddLocation/strings.resources.dll")
+        .unwrap();
+    assert_eq!(row["AnalysisStatus"], "BelowThreshold");
+    assert_eq!(row["IsManaged"], true);
+    let sections: serde_json::Value =
+        serde_json::from_str(row["Sections"].as_str().unwrap()).unwrap();
+    assert_eq!(sections[0]["MeasuredSize"], 0x100);
+    assert_eq!(rows.iter().filter(|r| r["IsManaged"] == false).count(), 2);
 }
