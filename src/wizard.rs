@@ -244,7 +244,8 @@ fn display_category(s: &str) -> &str {
         "BrowserActivity" => "Browser artifacts",
         "ServerRoles" => "Server role artifacts",
         "OperatingSystem" => "Operating system logs",
-        "Memory" => "Paging, swap, hibernation and existing memory dumps",
+        "Paging" => "Paging, swap, hibernation and existing memory dumps",
+        "Memory" => "Other memory artifacts",
         _ => s,
     }
 }
@@ -325,7 +326,11 @@ pub fn run<R: BufRead, W: Write>(
             continue;
         }
         categories
-            .entry(d.category.clone())
+            .entry(if d.id == "windows.paging" {
+                "Paging".into()
+            } else {
+                d.category.clone()
+            })
             .or_default()
             .push(d.id.clone());
     }

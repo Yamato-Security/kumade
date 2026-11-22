@@ -353,3 +353,14 @@ fn embedded_yara_child() {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
+
+#[test]
+fn custom_category_cannot_accidentally_enable_paging_by_default() {
+    let (_t, mut p, _r) = fixture();
+    let r=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: windows.prefetch, Name: Prefetch, Category: Memory, Patterns: ['Windows/Prefetch/*']}\n - {Id: windows.paging, Name: Paging, Category: Memory, Patterns: ['pagefile.sys']}\n").unwrap();
+    p = discovery::build_plan(p.sources, &r, &[], false).unwrap();
+    let sizes = Sizes::discover(&p);
+    let mut io = Prompt::new(Cursor::new(b"\n\n\n\n\n"), Vec::new());
+    let c = wizard::run(&mut io, &p, &r, &sizes, choices(), false, false).unwrap();
+    assert_eq!(c.artifacts, vec!["windows.prefetch"]);
+}
