@@ -319,6 +319,140 @@ fn same_drive_output_parent_does_not_exclude_the_whole_drive_from_entropy() {
 }
 
 #[test]
+fn output_exclusions_do_not_hide_matching_paths_on_another_volume() {
+    let (t, p) = fixture();
+    let mut c = p.sources[0].clone();
+    c.live = true; // Synthetic live root permits the collector's own output on C.
+    let d_root = t.path().join("drive-d");
+    let output = c.root.join("Evidence");
+    fs::create_dir_all(&output).unwrap();
+    fs::write(output.join("previous-output.exe"), pe()).unwrap();
+    fs::create_dir_all(d_root.join("Evidence")).unwrap();
+    fs::write(d_root.join("Evidence/core.exe"), pe()).unwrap();
+    fs::write(d_root.join("Evidence/additional.exe"), pe()).unwrap();
+    let d = discovery::directory_source(&d_root, "D", "ORDER").unwrap();
+    let r = Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: windows.prefetch, Name: Test, Category: Test, Patterns: ['pf.bin', 'Evidence/core.exe']}\n").unwrap();
+    let plan = discovery::build_plan(vec![c, d], &r, &[], false).unwrap();
+    let mut opts = options();
+    opts.entropy = Some(Default::default());
+    let (root, summary) = collect::collect(&plan, &output, &opts).unwrap();
+    assert_eq!(
+        summary.collected, 3,
+        "D's additional candidate must be acquired"
+    );
+    assert_eq!(kumade::verify::verify(&root).unwrap(), (3, true));
+    assert!(root.join("D/Evidence/additional.exe").is_file());
+    let rows: Vec<serde_json::Value> = fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(rows.iter().any(|r| r["SourceId"] == "C"
+        && r["RelativePath"] == "Evidence"
+        && r["AnalysisStatus"] == "Excluded"));
+    for (path, status, method) in [
+        ("Evidence/core.exe", "AlreadyPlanned", "CollectedCopy"),
+        ("Evidence/additional.exe", "Selected", "FileAPI"),
+    ] {
+        let row = rows
+            .iter()
+            .find(|r| r["SourceId"] == "D" && r["RelativePath"] == path)
+            .unwrap();
+        assert_eq!(row["AnalysisStatus"], status);
+        assert_eq!(row["Method"], method);
+        assert_eq!(row["HashMatchesAnalysis"], true);
+    }
+    let final_plan: Plan =
+        serde_json::from_reader(fs::File::open(root.join("Plan.json")).unwrap()).unwrap();
+    let settings = final_plan.entropy_scan.unwrap().settings;
+    assert!(
+        settings.excludes.is_empty(),
+        "Automatic paths must not become global user globs"
+    );
+    assert!(settings.output_excludes.contains_key("C"));
+    assert!(!settings.output_excludes.contains_key("D"));
+}
+
+#[test]
+fn scoped_output_paths_preserve_user_globs_and_snapshot_mapping() {
+    for frozen in [false, true] {
+        let t = tempfile::tempdir().unwrap();
+        let c_root = t.path().join("drive-c");
+        let d_root = t.path().join("drive-d");
+        let snapshot = t.path().join("snapshot-c");
+        for root in [&c_root, &d_root, &snapshot] {
+            fs::create_dir_all(root.join("Evidence[1]")).unwrap();
+            fs::create_dir_all(root.join("Private")).unwrap();
+            fs::write(root.join("Evidence[1]/binary.exe"), pe()).unwrap();
+            fs::write(root.join("Private/private.exe"), pe()).unwrap();
+        }
+        let mut c = discovery::directory_source(&c_root, "C", "ORDER").unwrap();
+        if frozen {
+            c.snapshot = Some(kumade::vss::Snapshot {
+                snapshot_id: "synthetic".into(),
+                snapshot_set_id: "synthetic".into(),
+                provider_id: "synthetic".into(),
+                original_volume: "synthetic".into(),
+                original_root: c.root.clone(),
+                device_object: snapshot.clone(),
+                created_utc: utc_now(),
+                attributes: 0,
+                consistency: "Synthetic fixture".into(),
+                writers_participated: false,
+            });
+            c.root = kumade::platform::canonicalize(&snapshot).unwrap();
+        }
+        let d = discovery::directory_source(&d_root, "D", "ORDER").unwrap();
+        let r = Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['missing']}\n").unwrap();
+        let mut plan = discovery::build_plan(vec![c, d], &r, &[], false).unwrap();
+        let mut settings = kumade::entropy::Settings {
+            excludes: vec!["Private/**".into()],
+            ..Default::default()
+        };
+        let output = c_root.join("Evidence[1]");
+        kumade::entropy::exclude_output_paths(
+            &mut settings,
+            &plan.sources,
+            std::slice::from_ref(&output),
+        )
+        .unwrap();
+        assert_eq!(settings.excludes, ["Private/**"]);
+        // Container output can be outside the source trees: only the scoped
+        // physical-output rule should exclude C's frozen/live Evidence[1].
+        kumade::entropy::augment_plan(&mut plan, &settings, &t.path().join("analysis"), 2, true)
+            .unwrap();
+        let report = plan.entropy_scan.unwrap();
+        assert_eq!(report.counts.candidates, 1, "frozen={frozen}: {report:?}");
+        assert!(report.observations.iter().any(|r| r.source_id == "D"
+            && r.relative_path == "Evidence[1]/binary.exe"
+            && r.status == "Selected"));
+        assert!(
+            !report
+                .observations
+                .iter()
+                .any(|r| r.relative_path == "Private/private.exe" && r.analysis.is_some())
+        );
+    }
+}
+
+#[test]
+fn entropy_settings_keep_scoped_exclusions_and_accept_older_settings() {
+    let original = kumade::entropy::Settings::default();
+    let old = serde_json::to_value(&original).unwrap();
+    assert!(old.get("OutputExcludes").is_none());
+    let restored: kumade::entropy::Settings = serde_json::from_value(old).unwrap();
+    assert!(restored.output_excludes.is_empty());
+    let mut settings = original;
+    settings
+        .output_excludes
+        .insert("C".into(), vec!["Evidence/**".into()]);
+    let value = serde_json::to_value(&settings).unwrap();
+    assert_eq!(value["OutputExcludes"]["C"][0], "Evidence/**");
+    let restored: kumade::entropy::Settings = serde_json::from_value(value).unwrap();
+    assert_eq!(restored.output_excludes, settings.output_excludes);
+}
+
+#[test]
 fn unfinished_early_stage_cannot_pass_as_standalone_live_info() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path();

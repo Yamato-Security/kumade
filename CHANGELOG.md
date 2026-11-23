@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Scope automatic entropy output exclusions by source volume, including snapshot
+  reads and preserved-copy analysis. Excluding `C:\Evidence` no longer hides
+  `D:\Evidence`; explicit user exclusion globs remain global. Record automatic
+  paths by `SourceId` in `Settings.OutputExcludes` and accept older settings
+  without that optional field.
+
 - Acquire in volatility order: handle RAM requests first (actual RAM capture is
   still unimplemented), preserve process/network/DNS/logon state before VSS and
   disk planning, then prioritize USN, `$LogFile`, `$MFT`, event logs, registry and

@@ -105,6 +105,13 @@ as `Excluded`; their contents have not been checked.
 Use `/` in portable exclusion patterns, including on Windows. Exclusions
 apply only to entropy discovery, not ordinary artifact collection.
 
+Collector output paths are excluded automatically, separately for each source
+volume. `Settings.OutputExcludes` in the plan and entropy summary records those
+patterns by `SourceId`; a directory excluded on C: does not hide a directory with
+the same name on D:. Snapshot reads use the originating source's rules, and the
+same rules apply to already preserved copies. User-supplied `--entropy-exclude`
+patterns still apply to every selected source.
+
 ### Why executable sections by default?
 
 Whole-file entropy can be raised by compressed resources, certificates or

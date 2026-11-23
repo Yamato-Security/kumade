@@ -107,6 +107,11 @@ reserves and E01 output headroom are rechecked; failures retain partial evidence
 
 Collector output paths and early staging are excluded from entropy discovery.
 An output parent equal to a source root does **not** exclude the entire drive.
+Automatic exclusions are recorded in `Settings.OutputExcludes`, keyed by
+`SourceId`, and apply only to that volume or its snapshot projection. Saving to
+`C:\Evidence` does not exclude an unrelated `D:\Evidence` directory. These
+rules apply both to discovery and analysis of already preserved copies.
+User-supplied `--entropy-exclude` patterns remain global across selected sources.
 
 - [Microsoft `ResizeVirtualDisk`](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-resizevirtualdisk)
 - [Microsoft `Resize-Partition`](https://learn.microsoft.com/en-us/powershell/module/storage/resize-partition)

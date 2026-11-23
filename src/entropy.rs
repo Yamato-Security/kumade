@@ -92,6 +92,10 @@ pub struct Settings {
     pub max_candidates: Option<u64>,
     pub max_collect_mib: Option<u64>,
     pub excludes: Vec<String>,
+    /// Collector-generated source-relative globs, scoped to this plan's SourceId.
+    /// User-provided `excludes` remain global across selected sources.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub output_excludes: BTreeMap<String, Vec<String>>,
     /// Which built-in extension list is opened.
     pub coverage: ExtensionSet,
     /// Extensions opened in addition to that list, lower-case, without the dot.
@@ -109,6 +113,7 @@ impl Default for Settings {
             max_candidates: None,
             max_collect_mib: None,
             excludes: vec![],
+            output_excludes: BTreeMap::new(),
             coverage: ExtensionSet::Standard,
             extensions: vec![],
             all_files: false,
@@ -175,6 +180,7 @@ impl EntropyArgs {
             max_candidates: self.entropy_max_candidates,
             max_collect_mib: self.entropy_max_collect_mib,
             excludes: self.entropy_exclude.clone(),
+            output_excludes: BTreeMap::new(),
             coverage: self.entropy_coverage.unwrap_or(d.coverage),
             extensions: self
                 .entropy_extension
@@ -653,8 +659,9 @@ fn inspect(
     }
 }
 
-/// Add only actual collector paths *inside* a source. An output parent equal
-/// to a source root must never exclude the entire source drive.
+/// Scope collector paths to their source, including its snapshot projection.
+/// An output parent equal to a root never excludes the whole drive. Global user
+/// globs are unchanged: C:/Evidence must not exclude D:/Evidence automatically.
 pub fn exclude_output_paths(
     settings: &mut Settings,
     sources: &[Source],
@@ -670,8 +677,15 @@ pub fn exclude_output_paths(
                     continue;
                 }
                 let text = globset::escape(&paths::relative_text(relative)?);
-                settings.excludes.push(text.clone());
-                settings.excludes.push(format!("{text}/**"));
+                let patterns = settings
+                    .output_excludes
+                    .entry(source.id.clone())
+                    .or_default();
+                for pattern in [text.clone(), format!("{text}/**")] {
+                    if !patterns.contains(&pattern) {
+                        patterns.push(pattern);
+                    }
+                }
             }
         }
     }
@@ -729,16 +743,24 @@ pub fn augment_with_copies(
         settings.max_candidates != Some(0),
         "Invalid entropy candidate limit"
     );
-    let mut builder = globset::GlobSetBuilder::new();
-    for pattern in &settings.excludes {
-        builder.add(
-            globset::GlobBuilder::new(pattern)
-                .case_insensitive(true)
-                .literal_separator(false)
-                .build()?,
-        );
-    }
-    let excludes = builder.build()?;
+    let compile_globs = |patterns: &[String]| -> Result<globset::GlobSet> {
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in patterns {
+            builder.add(
+                globset::GlobBuilder::new(pattern)
+                    .case_insensitive(true)
+                    .literal_separator(false)
+                    .build()?,
+            );
+        }
+        Ok(builder.build()?)
+    };
+    let excludes = compile_globs(&settings.excludes)?;
+    let output_excludes: BTreeMap<_, _> = settings
+        .output_excludes
+        .iter()
+        .map(|(id, patterns)| Ok((id.clone(), compile_globs(patterns)?)))
+        .collect::<Result<_>>()?;
     let extensions: HashSet<String> = settings
         .coverage
         .extensions()
@@ -759,6 +781,7 @@ pub fn augment_with_copies(
     }
     let progress = ui::scan_spinner(quiet);
     for source in &plan.sources {
+        let source_excludes = output_excludes.get(&source.id);
         let output = paths::resolve_future(destination).with_context(|| {
             format!(
                 "Cannot resolve the entropy output path {}",
@@ -794,7 +817,8 @@ pub fn augment_with_copies(
                 let excluded = e.depth() > 0
                     && (e.path().starts_with(&output)
                         || mapped.as_ref().is_some_and(|p| e.path().starts_with(p))
-                        || excludes.is_match(relative));
+                        || excludes.is_match(relative)
+                        || source_excludes.is_some_and(|set| set.is_match(relative)));
                 let reparse = e.depth() > 0
                     && (e.file_type().is_symlink() || platform::is_reparse_directory(e.path()));
                 if excluded || reparse {
@@ -952,7 +976,12 @@ pub fn augment_with_copies(
         let Some(source) = plan.sources.iter().find(|s| s.id == *source_id) else {
             continue;
         };
-        if source.metadata_only || excludes.is_match(relative) {
+        if source.metadata_only
+            || excludes.is_match(relative)
+            || output_excludes
+                .get(source_id)
+                .is_some_and(|set| set.is_match(relative))
+        {
             continue;
         }
         let listed = relative
