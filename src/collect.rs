@@ -39,6 +39,7 @@ pub struct HostReserve {
     pub bytes: u64,
 }
 
+#[derive(Clone)]
 pub struct Options {
     pub threads: usize,
     pub reserve_bytes: u64,
@@ -47,6 +48,9 @@ pub struct Options {
     pub ntfs_metadata: bool,
     pub host_reserve: Option<HostReserve>,
     pub live_info: Option<crate::live_info::Options>,
+    pub process_scan: Option<crate::yara_scan::Options>,
+    pub early: Option<Arc<crate::early::Capture>>,
+    pub entropy: Option<crate::entropy::Settings>,
 }
 
 pub fn hash_file(path: &Path) -> Result<(u64, String)> {
@@ -494,6 +498,23 @@ impl Journal {
 }
 
 pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf, Summary)> {
+    collect_with_capacity(plan, parent, options, None)
+}
+
+pub struct CapacityUpdate {
+    pub reserve: u64,
+    pub host: Option<HostReserve>,
+}
+pub type CapacityHook<'a> = dyn FnMut(&Plan) -> Result<CapacityUpdate> + 'a;
+pub fn collect_with_capacity(
+    initial: &Plan,
+    parent: &Path,
+    options: &Options,
+    mut capacity: Option<&mut CapacityHook<'_>>,
+) -> Result<(PathBuf, Summary)> {
+    let mut owned_plan = initial.clone();
+    let plan = &mut owned_plan;
+
     let mut source_ids = std::collections::HashSet::new();
     for s in &plan.sources {
         ensure!(
@@ -544,12 +565,53 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         options.reserve_bytes,
         available
     );
-    let run_id = uuid::Uuid::new_v4().to_string();
     let computer = plan
         .sources
         .first()
         .map(|s| s.computer.as_str())
         .unwrap_or("UnknownComputer");
+    let owned_early = options.early.is_none();
+    let early = if let Some(v) = &options.early {
+        Some(v.clone())
+    } else {
+        crate::early::prepare(
+            &parent,
+            computer,
+            plan.memory_requested,
+            options.live_info.as_ref(),
+        )?
+    };
+    if let Some(early) = &early {
+        early.validate(computer, plan.memory_requested)?;
+        let expected: std::collections::HashSet<_> = options
+            .live_info
+            .as_ref()
+            .map(|o| crate::live_info::select(&o.selected))
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| crate::ordering::live_priority(&s.name) <= 2)
+            .map(|s| s.name)
+            .collect();
+        let actual: std::collections::HashSet<_> = early
+            .live
+            .as_ref()
+            .map(|v| v.entries.iter().map(|e| e.provider.clone()).collect())
+            .unwrap_or_default();
+        ensure!(
+            expected == actual,
+            "Early volatile providers do not match the selected live scope"
+        );
+    }
+    ensure!(
+        fs2::available_space(&parent)?
+            >= plan
+                .known_bytes
+                .saturating_add(options.reserve_bytes)
+                .saturating_add(early.as_ref().map_or(0, |e| e.bytes)),
+        "Insufficient space to preserve the early volatile capture and selected artifacts"
+    );
+    let run_id = uuid::Uuid::new_v4().to_string();
     let root = parent.join(paths::run_name(computer, &plan.created_utc)?);
     fs::create_dir(&root).with_context(|| {
         format!(
@@ -564,7 +626,14 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
             "Destination filesystem cannot enforce per-file access controls; secure the storage separately.",
         );
     }
-    write_json_new(&root.join("Plan.json"), plan)?;
+    write_json_new(
+        &root.join(if options.entropy.is_some() {
+            "InitialPlan.json"
+        } else {
+            "Plan.json"
+        }),
+        plan,
+    )?;
     // A sealed collection boundary lets Juntei group sibling data volumes with
     // the Windows volume instead of discovering only C/Windows. `hostname` is
     // the interoperability field; this is collector metadata, not a source file.
@@ -576,26 +645,21 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     )?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
-    // Capture volatile state before potentially lengthy file copying. Explicit offline
-    // collection never supplies this option; container backends carry it unchanged.
-    let live_info = options
-        .live_info
+    let mut prior_live = early
         .as_ref()
-        .map(|config| crate::live_info::collect_into(&root, config))
-        .transpose()?;
+        .map(|e| e.import(&root))
+        .transpose()?
+        .flatten();
+    let mut live_info = None;
+    let mut process_scan_status = None;
     let new_file = |name: &str| -> Result<File> {
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(root.join(name))?)
     };
-    let mut discovery = csv::Writer::from_writer(new_file("DiscoveryIssues.csv")?);
-    for i in &plan.issues {
-        discovery.serialize(i)?;
-    }
-    discovery.flush()?;
     let journal = Arc::new(Mutex::new(Journal {
         json: BufWriter::new(new_file("Manifest.jsonl")?),
         csv: csv::Writer::from_writer(new_file("Manifest.csv")?),
@@ -608,76 +672,191 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         ui::status("Collecting evidence…");
         println!();
     }
-    let mut ntfs_metadata = options.ntfs_metadata.then(|| metadata::prepare(plan));
-    let sparse_sources: std::collections::HashSet<_> = ntfs_metadata
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .filter(|s| s.attributes.is_some_and(|a| a & 0x200 != 0))
-        .map(|s| (s.source_id.clone(), s.source_path.clone()))
-        .collect();
+    let mut ntfs_metadata = options.ntfs_metadata.then(Vec::<metadata::Snapshot>::new);
+    let mut snapshot_keys = std::collections::HashSet::new();
+    let mut sparse_sources = std::collections::HashSet::new();
     let progress = ui::progress_bar(plan.files.len() as u64, options.quiet || options.verbose);
-    let started = utc_now();
+    let started = plan.created_utc.clone();
     let timer = Instant::now();
-    let sources: HashMap<_, _> = plan.sources.iter().map(|s| (s.id.clone(), s)).collect();
+    if let Some(memory) = early.as_ref().and_then(|e| e.memory.clone()) {
+        journal
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
+            .append(&memory)?;
+        records
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Record state poisoned"))?
+            .push(memory);
+    }
+    let mut reserve = options.reserve_bytes;
+    let mut host_reserve = options.host_reserve.clone();
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(options.threads.min(plan.files.len().max(1)))
+        .num_threads(options.threads)
         .build()?;
-    for phase in 0..if options.ntfs_metadata { 2 } else { 1 } {
-        pool.install(|| {
-            plan.files
-                .par_iter()
-                .filter(|item| !options.ntfs_metadata || item.stream.is_some() == (phase == 1))
-                .for_each_init(HashMap::new, |raw_cache, item| {
-                    let source = sources[&item.source_id];
-                    if options.verbose && !options.quiet {
-                        let mut path = item.source_path.display().to_string();
-                        if let Some(stream) = &item.stream {
-                            path.push(':');
-                            path.push_str(stream);
-                        }
-                        ui::field("Copying", path);
-                    } else if !options.quiet {
-                        progress.set_message(ui::progress_message(
-                            &format!("{}/{}", source.id, item.relative_path.display()),
-                            item.before.as_ref().map(|m| m.size),
-                        ));
-                    }
-                    let record = acquire_one_inner(
-                        &root,
-                        source,
-                        item,
-                        options.reserve_bytes,
-                        raw_cache,
-                        DestinationPolicy {
-                            native_ntfs: options.ntfs_metadata,
-                            source_sparse: sparse_sources.contains(&(
-                                source.id.clone(),
-                                item.source_path.display().to_string(),
-                            )),
-                            host_reserve: options.host_reserve.as_ref(),
-                        },
-                    );
-                    match journal.lock() {
-                        Ok(mut j) => {
-                            if let Err(e) = j.append(&record)
-                                && let Ok(mut v) = journal_errors.lock()
-                            {
-                                v.push(e.to_string());
-                            }
-                        }
-                        Err(e) => {
-                            if let Ok(mut v) = journal_errors.lock() {
-                                v.push(e.to_string());
-                            }
-                        }
-                    }
-                    if let Ok(mut v) = records.lock() {
-                        v.push(record);
-                    }
-                    progress.inc(1);
+    // First pass: hot artifacts. Then expensive optional hunts/configuration,
+    // followed by less volatile disk evidence. Every batch has a completion barrier.
+    for section in 0..=2 {
+        if section == 1 {
+            process_scan_status = process_scan(&root, options)?;
+            live_info = options
+                .live_info
+                .as_ref()
+                .map(|config| {
+                    crate::live_info::collect_remaining_into(&root, config, prior_live.take())
                 })
-        });
+                .transpose()?;
+        }
+        let previous_ids: std::collections::HashSet<_> =
+            plan.files.iter().map(|f| f.id.clone()).collect();
+        if section == 2 {
+            let Some(settings) = &options.entropy else {
+                continue;
+            };
+            if !options.quiet {
+                ui::status("Selected artifacts acquired; starting deferred entropy analysis…");
+            }
+            let mut copies = HashMap::new();
+            {
+                let acquired = records
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
+                let by_id: HashMap<_, _> =
+                    acquired.iter().map(|r| (&r.observation_id, r)).collect();
+                for f in &plan.files {
+                    if f.stream.is_some() {
+                        continue;
+                    }
+                    if let Some(r) = by_id.get(&f.id).filter(|r| r.status == "Acquired")
+                        && let (Some(path), Some(hash)) = (&r.relative_output_path, &r.sha256)
+                    {
+                        copies.insert(
+                            (f.source_id.clone(), f.relative_path.clone()),
+                            crate::entropy::CopyInput {
+                                root: root.clone(),
+                                path: paths::safe_join(&root, path)?,
+                                sha256: hash.clone(),
+                                before: f.before.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+            let mut settings = settings.clone();
+            let mut outputs = vec![root.clone(), parent.clone()];
+            if let Some(capture) = &early {
+                outputs.push(capture.root.clone());
+            }
+            crate::entropy::exclude_output_paths(&mut settings, &plan.sources, &outputs)?;
+            crate::entropy::augment_with_copies(
+                plan,
+                &settings,
+                &root,
+                options.threads,
+                options.quiet,
+                &copies,
+            )?;
+            #[cfg(windows)]
+            if options.ntfs_metadata {
+                metadata::augment_streams(plan)?;
+            }
+            if let Some(hook) = capacity.as_mut() {
+                let update = hook(plan)?;
+                reserve = update.reserve;
+                host_reserve = update.host;
+            }
+            progress.set_length(plan.files.len() as u64);
+        }
+        let sources: HashMap<_, _> = plan.sources.iter().map(|s| (s.id.clone(), s)).collect();
+        let files: Vec<_> = plan
+            .files
+            .iter()
+            .filter(|f| section != 2 || !previous_ids.contains(&f.id))
+            .cloned()
+            .collect();
+        for (priority, batch) in crate::ordering::batches(&files, options.ntfs_metadata) {
+            if (section == 0 && priority > 5) || (section == 1 && priority <= 5) {
+                continue;
+            }
+            if let Some(inventory) = ntfs_metadata.as_mut() {
+                for snapshot in metadata::prepare(plan, &batch) {
+                    if snapshot_keys.insert((
+                        snapshot.source_id.clone(),
+                        snapshot.relative_output_path.clone(),
+                    )) {
+                        if snapshot.attributes.is_some_and(|a| a & 0x200 != 0) {
+                            sparse_sources
+                                .insert((snapshot.source_id.clone(), snapshot.source_path.clone()));
+                        }
+                        inventory.push(snapshot);
+                    }
+                }
+            }
+            if !options.quiet {
+                progress.suspend(|| {
+                    ui::field(
+                        "Acquisition stage",
+                        if section == 2 {
+                            "Additional entropy candidates"
+                        } else {
+                            crate::ordering::LABELS[priority]
+                        },
+                    )
+                });
+            }
+            pool.install(|| {
+                batch
+                    .par_iter()
+                    .for_each_init(HashMap::new, |raw_cache, item| {
+                        let source = sources[&item.source_id];
+                        if options.verbose && !options.quiet {
+                            let mut path = item.source_path.display().to_string();
+                            if let Some(stream) = &item.stream {
+                                path.push(':');
+                                path.push_str(stream);
+                            }
+                            ui::field("Copying", path);
+                        } else if !options.quiet {
+                            progress.set_message(ui::progress_message(
+                                &format!("{}/{}", source.id, item.relative_path.display()),
+                                item.before.as_ref().map(|m| m.size),
+                            ));
+                        }
+                        let record = acquire_one_inner(
+                            &root,
+                            source,
+                            item,
+                            reserve,
+                            raw_cache,
+                            DestinationPolicy {
+                                native_ntfs: options.ntfs_metadata,
+                                source_sparse: sparse_sources.contains(&(
+                                    source.id.clone(),
+                                    item.source_path.display().to_string(),
+                                )),
+                                host_reserve: host_reserve.as_ref(),
+                            },
+                        );
+                        match journal.lock() {
+                            Ok(mut j) => {
+                                if let Err(e) = j.append(&record)
+                                    && let Ok(mut v) = journal_errors.lock()
+                                {
+                                    v.push(e.to_string());
+                                }
+                            }
+                            Err(e) => {
+                                if let Ok(mut v) = journal_errors.lock() {
+                                    v.push(e.to_string());
+                                }
+                            }
+                        }
+                        if let Ok(mut v) = records.lock() {
+                            v.push(record);
+                        }
+                        progress.inc(1);
+                    })
+            });
+        }
     }
     progress.finish_and_clear();
     journal
@@ -692,17 +871,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         "Cannot seal collection because manifest writing failed: {}",
         failures.join("; ")
     );
-    let mut records = records
+    let records = records
         .lock()
         .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
-    if plan.memory_requested {
-        let record=Record{schema_version:1,observation_id:uuid::Uuid::new_v4().to_string(),computer:computer.into(),source_id:"Memory".into(),source_path:"Physical RAM".into(),stream_name:None,artifact_ids:"windows.memory".into(),relative_output_path:None,method:"MemoryProvider".into(),status:"Failed".into(),reason:"RAM acquisition is not implemented in this prototype; no memory image has been acquired".into(),started_utc:started.clone(),finished_utc:utc_now(),logical_size:None,bytes_read:0,sha256:None,verified:false,changed_during_read:false,created_utc:None,modified_utc:None,accessed_utc:None,source_file_id:None};
-        journal
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
-            .append(&record)?;
-        records.push(record);
-    }
     let mut summary = Summary {
         schema_version: 1,
         run_id,
@@ -722,6 +893,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         catalog_sha256: plan.catalog_sha256.clone(),
         metadata_errors: 0,
         live_info_failed_providers: live_info.as_ref().map_or(0, |r| r.failures()),
+        process_scan_status,
     };
     for record in records.iter() {
         match record.status.as_str() {
@@ -739,6 +911,10 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         || summary.partial > 0
         || summary.discovery_errors > 0
         || summary.live_info_failed_providers > 0
+        || summary
+            .process_scan_status
+            .as_deref()
+            .is_some_and(|s| s != "Success")
     {
         summary.completeness = "Partial".into();
     }
@@ -746,6 +922,7 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         records.len() == plan.files.len() + usize::from(plan.memory_requested),
         "Not every planned task produced a result"
     );
+    let membership: HashMap<_, _> = plan.files.iter().map(|f| (&f.id, &f.artifacts)).collect();
     let mut coverage = csv::Writer::from_writer(new_file("Coverage.csv")?);
     for planned in &plan.coverage {
         let mut family = FamilyCoverage {
@@ -761,9 +938,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         };
         for record in records.iter().filter(|r| {
             r.source_id == planned.source_id
-                && r.artifact_ids
-                    .split(';')
-                    .any(|id| id == planned.artifact_id)
+                && membership
+                    .get(&r.observation_id)
+                    .is_some_and(|ids| ids.contains(&planned.artifact_id))
         }) {
             match record.status.as_str() {
                 "Acquired" => family.acquired += 1,
@@ -822,6 +999,14 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     if let Some(report) = &plan.entropy_scan {
         crate::entropy::write_report(&root, report, &records)?;
     }
+    if options.entropy.is_some() {
+        write_json_new(&root.join("Plan.json"), plan)?;
+    }
+    let mut discovery = csv::Writer::from_writer(new_file("DiscoveryIssues.csv")?);
+    for issue in &plan.issues {
+        discovery.serialize(issue)?;
+    }
+    discovery.flush()?;
     write_json_new(&root.join("Summary.json"), &summary)?;
     let (_, manifest_hash) = hash_file(&root.join("Manifest.jsonl"))?;
     let mut metadata = std::collections::BTreeMap::new();
@@ -838,9 +1023,29 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
     ] {
         metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
     }
+    if options.entropy.is_some() {
+        metadata.insert(
+            "InitialPlan.json".into(),
+            hash_file(&root.join("InitialPlan.json"))?.1,
+        );
+    }
     if plan.entropy_scan.is_some() {
         for name in crate::entropy::FILES {
             metadata.insert((*name).into(), hash_file(&root.join(name))?.1);
+        }
+    }
+    if options.process_scan.is_some() {
+        for entry in walkdir::WalkDir::new(root.join("YaraScan")).follow_links(false) {
+            let entry = entry?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            ensure!(
+                entry.file_type().is_file() && !platform::is_reparse_directory(entry.path()),
+                "Unsafe process-scan report"
+            );
+            let relative = paths::relative_text(entry.path().strip_prefix(&root)?)?;
+            metadata.insert(relative, hash_file(entry.path())?.1);
         }
     }
     if options.ntfs_metadata {
@@ -898,8 +1103,14 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
                 ),
             );
         }
+        if let Some(status) = &summary.process_scan_status {
+            ui::field("Process scan", format!("{status} (see YaraScan/)"));
+        }
         ui::field("Completeness", &summary.completeness);
         ui::field("Elapsed", format!("{:.3}s", timer.elapsed().as_secs_f64()));
+    }
+    if owned_early && let Some(capture) = early {
+        capture.cleanup()?;
     }
     Ok((root, summary))
 }
@@ -992,6 +1203,33 @@ pub(crate) fn commit_payload(from: &Path, to: &Path) -> Result<()> {
         fs::remove_file(from)?;
         Ok(())
     }
+}
+
+fn process_scan(root: &Path, options: &Options) -> Result<Option<String>> {
+    let status = if let Some(config) = &options.process_scan {
+        if !options.quiet {
+            ui::status("Scanning live process memory with YARA…");
+        }
+        let mut config = config.clone();
+        config.output = root.join("YaraScan");
+        config.quiet = true;
+        Some(match crate::yara_scan::run(&config) {
+            Ok(0) => "Success".into(),
+            Ok(_) => "Partial".into(),
+            Err(error) => {
+                fs::create_dir_all(&config.output)?;
+                platform::protect_output_root(&config.output)?;
+                write_json_new(
+                    &config.output.join("Failure.json"),
+                    &serde_json::json!({"Status":"Failed","Error":format!("{error:#}")}),
+                )?;
+                "Failed".into()
+            }
+        })
+    } else {
+        None
+    };
+    Ok(status)
 }
 
 #[cfg(test)]

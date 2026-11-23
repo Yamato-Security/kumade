@@ -84,7 +84,7 @@ pub struct Dataset {
 pub fn datasets() -> Vec<Dataset> {
     serde_json::from_str(include_str!("datasets.json")).expect("embedded dataset catalog")
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Entry {
     pub provider: String,
@@ -98,6 +98,7 @@ pub struct Entry {
     pub sha256: String,
     pub message: String,
 }
+#[derive(Clone, Debug)]
 pub struct Outcome {
     pub entries: Vec<Entry>,
     pub files: Vec<String>,
@@ -500,8 +501,36 @@ pub fn select(selected: &[String]) -> Result<Vec<Dataset>> {
     Ok(specs)
 }
 
+/// Capture only rapidly changing providers; the sealed output can be imported later.
+pub fn collect_fast_into(root: &Path, options: &Options) -> Result<Option<Outcome>> {
+    let fast: Vec<_> = select(&options.selected)?
+        .into_iter()
+        .filter(|s| crate::ordering::live_priority(&s.name) <= 2)
+        .map(|s| s.name)
+        .collect();
+    if fast.is_empty() {
+        return Ok(None);
+    }
+    let mut config = options.clone();
+    config.selected = fast;
+    collect_into(root, &config).map(Some)
+}
+
+/// Finish remaining providers, preserving acquisition times of imported fast rows.
+/// The caller imports only fast data files, not their intermediate manifests/seal.
+pub fn collect_remaining_into(
+    root: &Path,
+    options: &Options,
+    prior: Option<Outcome>,
+) -> Result<Outcome> {
+    collect_with_prior(root, options, prior)
+}
+
 /// Write a new LiveInfo directory into an already protected collection root.
 pub fn collect_into(root: &Path, options: &Options) -> Result<Outcome> {
+    collect_with_prior(root, options, None)
+}
+fn collect_with_prior(root: &Path, options: &Options, prior: Option<Outcome>) -> Result<Outcome> {
     ensure!(cfg!(windows), "Live response inventory requires Windows");
     ensure!(
         (1..=8).contains(&options.threads),
@@ -511,10 +540,25 @@ pub fn collect_into(root: &Path, options: &Options) -> Result<Outcome> {
         (1..=3600).contains(&options.timeout_seconds),
         "Live-info timeout must be in 1..=3600 seconds"
     );
-    let specs = select(&options.selected)?;
+    let mut specs = select(&options.selected)?;
+    let mut previous = prior.map(|p| p.entries).unwrap_or_default();
+    ensure!(
+        previous
+            .iter()
+            .all(|p| specs.iter().any(|s| s.name == p.provider)),
+        "Early live data is outside selected provider scope"
+    );
+    specs.retain(|s| !previous.iter().any(|e| e.provider == s.name));
     let exe = powershell();
     let directory = root.join("LiveInfo");
-    fs::create_dir(&directory)?;
+    if previous.is_empty() {
+        fs::create_dir(&directory)?;
+    } else {
+        ensure!(
+            directory.is_dir(),
+            "Imported live data directory is missing"
+        );
+    }
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(options.threads)
         .build()?;
@@ -522,69 +566,75 @@ pub fn collect_into(root: &Path, options: &Options) -> Result<Outcome> {
         crate::ui::status("Collecting live response inventory…")
     }
     let bar = (!options.quiet).then(|| crate::ui::progress_bar(specs.len() as u64, false)); // shared terminal styling
-    let entries: Result<Vec<_>> = pool.install(|| {
-        specs
-            .par_iter()
-            .map(|dataset| {
-                let started = crate::model::utc_now();
-                let timer = Instant::now();
-                let result = (|| -> Result<_> {
-                    ensure!(
-                        fs2::available_space(&directory)?
-                            >= options.reserve_bytes.saturating_add(2 * LIMIT as u64),
-                        "Live-info destination free-space reserve reached"
-                    );
-                    if let Some(host) = &options.host_reserve {
+    let mut collected = Vec::new();
+    for priority in 0..=4 {
+        let entries: Result<Vec<_>> = pool.install(|| {
+            specs
+                .par_iter()
+                .filter(|s| crate::ordering::live_priority(&s.name) == priority)
+                .map(|dataset| {
+                    let started = crate::model::utc_now();
+                    let timer = Instant::now();
+                    let result = (|| -> Result<_> {
                         ensure!(
-                            fs2::available_space(&host.path)?
-                                >= host.bytes.saturating_add(2 * LIMIT as u64),
-                            "Live-info physical host free-space reserve reached"
+                            fs2::available_space(&directory)?
+                                >= options.reserve_bytes.saturating_add(2 * LIMIT as u64),
+                            "Live-info destination free-space reserve reached"
                         );
-                    }
-                    let captured = (|| -> Result<Capture> {
-                        let exe = exe.as_ref().map_err(|e| anyhow::anyhow!("{e:#}"))?;
-                        let mut command = Command::new(exe);
-                        command.args([
-                            "-NoLogo",
-                            "-NoProfile",
-                            "-NonInteractive",
-                            "-EncodedCommand",
-                            &encoded_script(&script(dataset)),
-                        ]);
-                        execute(command, Duration::from_secs(options.timeout_seconds))
+                        if let Some(host) = &options.host_reserve {
+                            ensure!(
+                                fs2::available_space(&host.path)?
+                                    >= host.bytes.saturating_add(2 * LIMIT as u64),
+                                "Live-info physical host free-space reserve reached"
+                            );
+                        }
+                        let captured = (|| -> Result<Capture> {
+                            let exe = exe.as_ref().map_err(|e| anyhow::anyhow!("{e:#}"))?;
+                            let mut command = Command::new(exe);
+                            command.args([
+                                "-NoLogo",
+                                "-NoProfile",
+                                "-NonInteractive",
+                                "-EncodedCommand",
+                                &encoded_script(&script(dataset)),
+                            ]);
+                            execute(command, Duration::from_secs(options.timeout_seconds))
+                        })();
+                        let (rows, status, message) = match captured {
+                            Ok(c) => parse(dataset, c),
+                            Err(e) => (vec![], "Failed".into(), format!("{e:#}")),
+                        };
+                        let name = format!("{}.{}", dataset.name, options.format.extension());
+                        let path = directory.join(&name);
+                        write_rows(&path, dataset, &rows, options.format)?;
+                        let (bytes, sha256) = crate::collect::hash_file(&path)?;
+                        Ok(Entry {
+                            provider: dataset.name.clone(),
+                            status,
+                            rows: rows.len(),
+                            started_utc: started,
+                            finished_utc: crate::model::utc_now(),
+                            elapsed_seconds: timer.elapsed().as_secs_f64(),
+                            output_file: format!("LiveInfo/{name}"),
+                            bytes,
+                            sha256,
+                            message,
+                        })
                     })();
-                    let (rows, status, message) = match captured {
-                        Ok(c) => parse(dataset, c),
-                        Err(e) => (vec![], "Failed".into(), format!("{e:#}")),
-                    };
-                    let name = format!("{}.{}", dataset.name, options.format.extension());
-                    let path = directory.join(&name);
-                    write_rows(&path, dataset, &rows, options.format)?;
-                    let (bytes, sha256) = crate::collect::hash_file(&path)?;
-                    Ok(Entry {
-                        provider: dataset.name.clone(),
-                        status,
-                        rows: rows.len(),
-                        started_utc: started,
-                        finished_utc: crate::model::utc_now(),
-                        elapsed_seconds: timer.elapsed().as_secs_f64(),
-                        output_file: format!("LiveInfo/{name}"),
-                        bytes,
-                        sha256,
-                        message,
-                    })
-                })();
-                if let Some(bar) = &bar {
-                    bar.inc(1)
-                }
-                result
-            })
-            .collect()
-    });
+                    if let Some(bar) = &bar {
+                        bar.inc(1)
+                    }
+                    result
+                })
+                .collect()
+        });
+        collected.extend(entries?);
+    }
     if let Some(bar) = bar {
         bar.finish_and_clear()
     }
-    let entries = entries?;
+    previous.extend(collected);
+    let entries = previous;
     crate::collect::write_json_new(
         &directory.join("Manifest.json"),
         &json!({"SchemaVersion":1,"SnapshotType":"NonAtomicLiveQueries","Entries":entries}),
@@ -841,10 +891,15 @@ try {{
             "-EncodedCommand",
             &encoded_script(&body),
         ]);
-        let capture = execute(command, Duration::from_secs(30)).unwrap();
+        // This checks locale semantics, not launch performance. A cold native
+        // PowerShell start on the loaded x86 runner can exceed 30 seconds.
+        // Use the normal provider deadline and retain diagnostics on failure.
+        let capture = execute(command, Duration::from_secs(90)).unwrap();
         assert!(
             capture.success,
-            "{}",
+            "stop={:?}; stdout={}; stderr={}",
+            capture.stop,
+            String::from_utf8_lossy(&capture.stdout),
             String::from_utf8_lossy(&capture.stderr)
         );
         let value: Value = serde_json::from_slice(&capture.stdout).unwrap();

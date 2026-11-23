@@ -11,7 +11,7 @@ Run a native-architecture Windows build from an elevated terminal:
 .\kumade.exe scan-processes --rules .\my-rules.yar --pid 1234 -t jsonl -o .\Yara-Selected
 ```
 
-This is opt-in and separate from `collect`. It uses Boreal's Rust YARA evaluator with an instrumented Windows memory reader (`OpenProcess`, `VirtualQueryEx`, `ReadProcessMemory`). It does not suspend, inject into, terminate, remediate or write to scanned processes. Normal memory reads can fault pages into RAM. It requests SeDebugPrivilege on the collector token when available; protected processes can remain inaccessible even when elevated. Use the native ARM64 build on ARM64 Windows and x64 on x64 Windows. Emulated builds refuse the operation rather than silently missing address space.
+This is opt-in. The standalone command remains available; `collect --scan-processes` or the collection wizard can also run it and seal the results inside the collection. It uses Boreal's Rust YARA evaluator with an instrumented Windows memory reader (`OpenProcess`, `VirtualQueryEx`, `ReadProcessMemory`). It does not suspend, inject into, terminate, remediate or write to scanned processes. Normal memory reads can fault pages into RAM. It requests SeDebugPrivilege on the collector token when available; protected processes can remain inaccessible even when elevated. Use the native ARM64 build on ARM64 Windows and x64 on x64 Windows. Emulated builds refuse the operation rather than silently missing address space.
 
 ## Rules
 

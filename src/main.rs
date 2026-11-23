@@ -23,7 +23,7 @@ use kumade::{
 };
 use std::{
     collections::HashSet,
-    io::Write,
+    io::{IsTerminal, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -67,6 +67,32 @@ enum Command {
 
 #[derive(Args, Clone)]
 struct CollectionArgs {
+    /// Accept collection defaults without interactive prompts (for scripts)
+    #[arg(long, alias = "no-wizard", conflicts_with = "wizard")]
+    yes: bool,
+    /// Force the collection wizard, including when answers are piped
+    #[arg(long, conflicts_with = "quiet")]
+    wizard: bool,
+    /// Include paging, swap, hibernation and existing memory dumps (default: off)
+    #[arg(long)]
+    paging: bool,
+    /// Scan live process memory after hot disk artifacts (default: off)
+    #[arg(long, conflicts_with = "sources")]
+    scan_processes: bool,
+    /// YARA Forge package for the optional process scan (default: core)
+    #[arg(
+        long,
+        value_enum,
+        requires = "scan_processes",
+        conflicts_with = "yara_rules"
+    )]
+    yara_ruleset: Option<kumade::yara_scan::RuleSet>,
+    /// Use local YARA rules instead of downloading YARA Forge
+    #[arg(long, requires = "scan_processes")]
+    yara_rules: Option<PathBuf>,
+    /// YARA Forge release for the process scan (default: latest)
+    #[arg(long, requires = "scan_processes", conflicts_with = "yara_rules")]
+    yara_release: Option<String>,
     /// Mounted Windows volume directory; repeat for additional volumes
     #[arg(short = 'd', long = "source", value_name = "DIR")]
     sources: Vec<PathBuf>,
@@ -115,7 +141,7 @@ struct CollectionArgs {
     /// Additional local profile root under a selected source
     #[arg(long = "profile-root", value_name = "DIR")]
     profile_roots: Vec<PathBuf>,
-    /// Maximum acquisition workers (default: available logical CPUs, at most 128)
+    /// Maximum acquisition workers (default: available logical CPUs, at most 4)
     #[arg(short = 'T', long, default_value_t = default_threads())]
     threads: usize,
     /// Keep this much destination space free (MiB)
@@ -181,14 +207,14 @@ struct LiveInfoArgs {
     quiet: bool,
 }
 
-/// One worker per logical CPU, capped: more workers than that only multiply
-/// open raw-volume handles and I/O contention on an evidence disk.
+/// A conservative live-triage default; operators can explicitly request up to
+/// MAX_THREADS for faster storage or CPU-heavy encoding.
 pub const MAX_THREADS: usize = 128;
 
 fn default_threads() -> usize {
     std::thread::available_parallelism()
         .map_or(1, usize::from)
-        .min(MAX_THREADS)
+        .min(4)
 }
 
 /// `-o` and a bare `--vhdx`/`--e01` share this default. The shell's current
@@ -300,7 +326,7 @@ fn run() -> Result<u8> {
         }
         Err(error) => error.exit(),
     };
-    let (options, plan_only) = match cli.command {
+    let (mut options, plan_only) = match cli.command {
         Some(Command::ScanProcesses(args)) => return kumade::yara_scan::run(&args),
         Some(Command::ForensicCopy(args)) => {
             kumade::forensic_copy::run(&kumade::forensic_copy::Options {
@@ -486,6 +512,200 @@ fn run() -> Result<u8> {
     let destination = paths::resolve_future(&destination)?;
     let mut discovered = sources(&options, &destination)?;
     kumade::vss::select_sources(&mut discovered, &options.volumes)?;
+    ensure!(
+        !plan_only || !options.wizard,
+        "The collection wizard is not used with plan"
+    );
+    ensure!(
+        !options.scan_processes || cfg!(windows),
+        "Process-memory YARA scanning requires Windows"
+    );
+    if options.scan_processes {
+        kumade::yara_scan::check_host()?;
+    }
+    let interactive = !plan_only
+        && !options.yes
+        && !options.quiet
+        && (options.wizard || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal()));
+    let defaults = kumade::wizard::default_artifacts(&rules, &options.artifacts, options.paging);
+    let mut selected = defaults.clone();
+    if interactive {
+        if !options.quiet {
+            ui::status("Estimating transfer sizes from file and NTFS metadata…");
+        }
+        // An open scope is sized over the whole catalog so every group has an
+        // estimate; an explicit scope is sized after --paging has been applied.
+        let preflight_ids: &[String] = if options.artifacts.is_empty() {
+            &[]
+        } else {
+            &defaults
+        };
+        let preflight = discovery::build_plan(
+            discovered.sources.clone(),
+            &rules,
+            preflight_ids,
+            options.memory,
+        )?;
+        let sizes = kumade::wizard::Sizes::discover(&preflight);
+        let choices = kumade::wizard::Choices {
+            artifacts: defaults,
+            restrict_artifacts: !options.artifacts.is_empty(),
+            live_info: !options.no_live_info,
+            vss: options.vss,
+            entropy: options.entropy.high_entropy,
+            yara: options.scan_processes,
+            local_yara: options.yara_rules.is_some(),
+            vss_available: options.sources.is_empty()
+                && cfg!(windows)
+                && kumade::vss::check_host().is_ok(),
+            yara_available: options.sources.is_empty()
+                && cfg!(windows)
+                && kumade::yara_scan::check_host().is_ok(),
+            yara_ruleset: options
+                .yara_ruleset
+                .unwrap_or(kumade::yara_scan::RuleSet::Core),
+            output: if options.e01.is_some() {
+                kumade::wizard::Output::E01
+            } else if options.vhdx.is_some() {
+                kumade::wizard::Output::Vhdx
+            } else {
+                kumade::wizard::Output::Directory
+            },
+            output_explicit: options.e01.is_some() || options.vhdx.is_some(),
+            threads: options.threads,
+            image_source: None,
+        };
+        let live = options.sources.is_empty();
+        let choices = kumade::wizard::run(
+            &mut kumade::wizard::Prompt::new(std::io::stdin().lock(), std::io::stdout().lock()),
+            &preflight,
+            &rules,
+            &sizes,
+            choices,
+            cfg!(windows),
+            live,
+        )?;
+        if let Some(index) = choices.image_source {
+            let source = &discovered.sources[index];
+            let volume = source
+                .raw_device
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| {
+                    if source.id.len() == 1 && source.id.as_bytes()[0].is_ascii_alphabetic() {
+                        format!("{}:", source.id)
+                    } else {
+                        source.root.to_string_lossy().into_owned()
+                    }
+                });
+            kumade::forensic_copy::run(&kumade::forensic_copy::Options {
+                source: volume,
+                output: destination.join("DiskImages"),
+                reserve_mib: options.reserve_mib,
+                quiet: options.quiet,
+                vss: choices.vss,
+                vss_timeout: options.vss_timeout.unwrap_or(120),
+            })?;
+            return Ok(0);
+        }
+        selected = choices.artifacts;
+        options.no_live_info = !choices.live_info;
+        options.vss = choices.vss;
+        options.entropy.high_entropy = choices.entropy;
+        options.scan_processes = choices.yara;
+        options.yara_ruleset = Some(choices.yara_ruleset);
+        options.threads = choices.threads;
+        if options.e01.is_none() && options.vhdx.is_none() {
+            match choices.output {
+                kumade::wizard::Output::Directory => {}
+                kumade::wizard::Output::Vhdx => {
+                    options.output = None;
+                    options.vhdx = Some(Some(destination.clone()));
+                }
+                kumade::wizard::Output::E01 => {
+                    options.output = None;
+                    options.e01 = Some(Some(destination.clone()));
+                }
+            }
+        }
+    }
+    ensure!(
+        plan_only
+            || !selected.is_empty()
+            || options.entropy.high_entropy
+            || options.scan_processes
+            || options.memory
+            || (options.sources.is_empty() && !options.no_live_info),
+        "Nothing selected for collection; use --paging or --artifact to select evidence"
+    );
+    let reserve_bytes = options
+        .reserve_mib
+        .checked_mul(1024 * 1024)
+        .context("Reserve value overflow")?;
+    let live_options = if options.sources.is_empty() && !options.no_live_info {
+        Some(kumade::live_info::Options {
+            format: options.live_info_format,
+            timeout_seconds: options.live_info_timeout,
+            threads: options.threads.min(2),
+            reserve_bytes,
+            quiet: options.quiet,
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+    // Wizard sizing is metadata-only preflight. Actual acquisition begins here:
+    // RAM request first, then volatile live state, before VSS and full file planning.
+    let computer = discovered
+        .sources
+        .first()
+        .map(|s| s.computer.as_str())
+        .unwrap_or("UnknownComputer");
+    let early_output = if options.vhdx.is_some() || options.e01.is_some() {
+        paths::image_destination(
+            &destination,
+            &paths::run_name(computer, &started_utc)?,
+            if options.vhdx.is_some() {
+                "vhdx"
+            } else {
+                "E01"
+            },
+        )?
+    } else {
+        destination.clone()
+    };
+    // A sibling image may share the source's parent. Validate the actual output,
+    // rather than rejecting its parent: fresh UUID staging remains a sibling.
+    let early_parent = if options.vhdx.is_some() || options.e01.is_some() {
+        early_output
+            .parent()
+            .context("Image output has no parent")?
+            .to_owned()
+    } else {
+        early_output.clone()
+    };
+    for source in &discovered.sources {
+        ensure!(
+            source.live
+                || (!early_output.starts_with(&source.root)
+                    && !source.root.starts_with(&early_output)),
+            "Source and output directory trees must not overlap"
+        );
+    }
+    let early = if plan_only {
+        None
+    } else {
+        kumade::early::prepare(
+            &early_parent,
+            computer,
+            options.memory,
+            live_options.as_ref(),
+        )?
+    };
+    // Revalidate choices before creating a snapshot or output container.
+    if options.vss {
+        kumade::vss::check_host()?;
+    }
     let mut snapshots = if options.vss {
         if !options.quiet {
             ui::status("Creating crash-consistent VSS snapshots…");
@@ -531,7 +751,7 @@ fn run() -> Result<u8> {
             "The destination is on a live source volume. Output writes will change that volume; acquisition uses a frozen pre-write plan.",
         );
     }
-    let mut plan = discovery::build_plan(sources, &rules, &options.artifacts, options.memory)?;
+    let mut plan = kumade::wizard::build_plan(sources, &rules, &selected, options.memory)?;
     plan.created_utc = started_utc;
     if !options.quiet {
         for issue in &discovered.issues {
@@ -544,7 +764,7 @@ fn run() -> Result<u8> {
         }
     }
     plan.issues.extend(discovered.issues);
-    if options.entropy.high_entropy {
+    if plan_only && options.entropy.high_entropy {
         kumade::entropy::augment_plan(
             &mut plan,
             &options.entropy.settings(),
@@ -589,10 +809,6 @@ fn run() -> Result<u8> {
             },
         );
     }
-    let reserve_bytes = options
-        .reserve_mib
-        .checked_mul(1024 * 1024)
-        .context("Reserve value overflow")?;
     let collect_options = Options {
         threads: options.threads,
         reserve_bytes,
@@ -600,18 +816,33 @@ fn run() -> Result<u8> {
         verbose: options.verbose,
         ntfs_metadata: false,
         host_reserve: None,
-        live_info: if options.sources.is_empty() && !options.no_live_info {
-            Some(kumade::live_info::Options {
-                format: options.live_info_format,
-                timeout_seconds: options.live_info_timeout,
-                threads: options.threads.min(2),
-                reserve_bytes,
+        process_scan: if options.scan_processes {
+            Some(kumade::yara_scan::Options {
+                output: PathBuf::new(),
+                ruleset: options
+                    .yara_ruleset
+                    .unwrap_or(kumade::yara_scan::RuleSet::Core),
+                rules_release: options
+                    .yara_release
+                    .clone()
+                    .unwrap_or_else(|| "latest".into()),
+                rules: options.yara_rules.clone(),
+                format: kumade::yara_scan::Format::Csv,
+                pids: vec![],
+                threads: 2,
+                timeout: 60,
+                chunk_mib: 16,
                 quiet: options.quiet,
-                ..Default::default()
             })
         } else {
             None
         },
+        live_info: live_options,
+        early: early.clone(),
+        entropy: options
+            .entropy
+            .high_entropy
+            .then(|| options.entropy.settings()),
     };
     let result = if options.e01.is_some() {
         e01::collect(&plan, &output, options.e01_size_gib, &collect_options)
@@ -633,6 +864,9 @@ fn run() -> Result<u8> {
             anyhow::bail!("Acquisition failed: {error:#}; VSS cleanup also failed: {cleanup:#}")
         }
     };
+    if let Some(capture) = early {
+        capture.cleanup()?;
+    }
     if options.vss && !options.quiet {
         ui::field("VSS cleanup", "Owned snapshot set released");
     }
@@ -661,7 +895,7 @@ mod tests {
     fn default_workers_follow_available_cpus_and_explicit_workers_override_them() {
         let cli = Cli::try_parse_from(["kumade", "-o", "results"]).unwrap();
         assert_eq!(cli.options.threads, default_threads());
-        assert!(cli.options.threads > 0 && cli.options.threads <= MAX_THREADS);
+        assert!(cli.options.threads > 0 && cli.options.threads <= 4);
         let cli = Cli::try_parse_from(["kumade", "collect", "-T", "2"]).unwrap();
         let Some(Command::Collect(options)) = cli.command else {
             panic!("expected collect");

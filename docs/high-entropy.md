@@ -84,7 +84,7 @@ slowest, exhaustive mode.
 | `--entropy-coverage <LEVEL>` | `standard` | `standard`, `broad` or `comprehensive` extension list, see above |
 | `--entropy-extension <EXT>` | None | Repeatable; also open files with this extension (dot optional, case ignored) |
 | `--entropy-all-files` | Off | Open every regular file instead of only the built-in extension list |
-| `-T, --threads <COUNT>` | Available logical CPUs, maximum 128 | Parallel scan/acquisition workers |
+| `-T, --threads <COUNT>` | Available logical CPUs, capped at 4; explicit maximum 128 | Parallel scan/acquisition workers |
 
 Entropy options require `--high-entropy`. Limits must be positive. MiB values
 are checked for 64-bit byte overflow. Limits on candidates/collection bytes
@@ -104,6 +104,13 @@ as `Excluded`; their contents have not been checked.
 
 Use `/` in portable exclusion patterns, including on Windows. Exclusions
 apply only to entropy discovery, not ordinary artifact collection.
+
+Collector output paths are excluded automatically, separately for each source
+volume. `Settings.OutputExcludes` in the plan and entropy summary records those
+patterns by `SourceId`; a directory excluded on C: does not hide a directory with
+the same name on D:. Snapshot reads use the originating source's rules, and the
+same rules apply to already preserved copies. User-supplied `--entropy-exclude`
+patterns still apply to every selected source.
 
 ### Why executable sections by default?
 
@@ -167,7 +174,7 @@ entropy fields or report files.
 | Field | Interpretation |
 |---|---|
 | `Computer`, `SourceId`, `RelativePath` | Source computer, selected volume/root and path within it |
-| `Method` | `FileAPI` or `RawNTFS` for a successful analysis |
+| `Method` | `FileAPI`, `RawNTFS` or `CollectedCopy` for a successful analysis |
 | `AnalysisStatus` | `Selected`, `AlreadyPlanned`, `BelowThreshold`, `Malformed`, `SizeLimit`, `SelectionLimit`, `Excluded`, `Error` or `EnumerationError` |
 | `Reason` | Error, exclusion or limit explanation |
 | `Size`, `SHA256` | Logical length and SHA-256 of the complete analyzed file |
@@ -222,9 +229,10 @@ disagrees with the analysis hash.
 - Live files can change. File identity/size/timestamps are compared across
   analysis, and hashes link analysis to acquisition. These checks do not make
   an unsnapshotted live read atomic. Prefer `--vss` when appropriate.
-- Entropy discovery runs during planning, before the collection's automatic
-  live-response inventory. For time-sensitive volatile state, run `live-info`
-  first, then start the longer drive scan.
+- During collection, entropy discovery runs after the selected artifacts have
+  been acquired. Already captured files use their verified collected copies.
+  Standalone `plan --high-entropy` still analyzes sources directly. See
+  [acquisition order](acquisition-order.md).
 - All valid discovered PEs are fully read and hashed, regardless of whether
   they pass the heuristic. Qualifying files are then read again for collection
   and readback verification. Large drives, slow disks and many PE files can

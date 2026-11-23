@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- Scope automatic entropy output exclusions by source volume, including snapshot
+  reads and preserved-copy analysis. Excluding `C:\Evidence` no longer hides
+  `D:\Evidence`; explicit user exclusion globs remain global. Record automatic
+  paths by `SourceId` in `Settings.OutputExcludes` and accept older settings
+  without that optional field.
+
+- Acquire in volatility order: handle RAM requests first (actual RAM capture is
+  still unimplemented), preserve process/network/DNS/logon state before VSS and
+  disk planning, then prioritize USN, `$LogFile`, `$MFT`, event logs, registry and
+  active databases. Use parallel workers inside priority barriers; keep native
+  base files and their ADS together so USN `$J` is not postponed behind bulk
+  data. Run slower inventory and optional process YARA after hot disk evidence,
+  and defer full-drive entropy analysis until selected artifacts are acquired.
+  Analyze already collected files from their verified copies. Import protected
+  early live-state staging with hash checks and retain it on failures. Allow
+  only newly owned automatic VHDX/E01 staging containers to grow for late
+  candidates; never resize source disks or silently exceed explicit capacities.
+
+- Add an interactive collection wizard with per-category and deduplicated total
+  logical transfer estimates, explicit unknown sizes, optional VSS, entropy and
+  live process YARA scanning, output choices and a partition-imaging path.
+  Confirm before snapshots/scans/output; support `--yes`/`--no-wizard` for scripts
+  and `--wizard` for explicit guided input. Default paging/hibernation/existing
+  dumps off (`--paging` or explicit artifact selection enables them); default
+  acquisition to at most four logical CPU workers. Keep hashing, readback
+  verification and locked-file fallback enabled. Seal embedded YARA results
+  and report incomplete/failed scans as partial, including container output.
+
 - Validate CLR header sizes, metadata bounds/signature and complete managed
   resource ranges before excluding bytes from PE section entropy. Invalid or
   overlapping declarations keep the original bytes in scoring. Clarify that

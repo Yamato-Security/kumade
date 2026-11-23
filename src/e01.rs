@@ -351,6 +351,21 @@ pub fn collect(
     }
     #[cfg(windows)]
     {
+        let mut configured = options.clone();
+        let owns_early = configured.early.is_none();
+        if owns_early {
+            let resolved = paths::resolve_future(output)?;
+            configured.early = crate::early::prepare(
+                resolved.parent().context("E01 output has no parent")?,
+                plan.sources
+                    .first()
+                    .map(|s| s.computer.as_str())
+                    .unwrap_or("UnknownComputer"),
+                plan.memory_requested,
+                configured.live_info.as_ref(),
+            )?;
+        }
+        let options = &configured;
         let output = paths::resolve_future(output)?;
         validate_new_image_path(&output)?;
         ensure!(
@@ -375,7 +390,8 @@ pub fn collect(
             let raw_known = crate::metadata::raw_candidate_sizes(plan).known;
             let output_headroom = plan
                 .known_bytes
-                .checked_add(raw_known)
+                .checked_add(options.early.as_ref().map_or(0, |e| e.bytes))
+                .and_then(|n| n.checked_add(raw_known))
                 .and_then(|n| n.checked_add(WRITER_HEADROOM))
                 .and_then(|n| n.checked_add(512 * 1024 * 1024))
                 .and_then(|n| n.checked_add(options.reserve_bytes))
@@ -388,6 +404,9 @@ pub fn collect(
                 ntfs_metadata: false,
                 host_reserve: None,
                 live_info: options.live_info.clone(),
+                process_scan: options.process_scan.clone(),
+                early: options.early.clone(),
+                entropy: options.entropy.clone(),
             };
             let summary =
                 crate::vhdx::collect_staged(plan, &stage, size_gib, &stage_options, MAX_CAPACITY)?;
@@ -414,6 +433,10 @@ pub fn collect(
         })();
         match result {
             Ok(summary) => {
+                if owns_early && let Some(capture) = &options.early {
+                    capture.cleanup()?;
+                }
+
                 let path = work.keep();
                 if let Err(e) = fs::remove_dir_all(&path) {
                     eprintln!(
@@ -463,6 +486,9 @@ mod tests {
             ntfs_metadata: false,
             host_reserve: None,
             live_info: None,
+            process_scan: None,
+            early: None,
+            entropy: None,
         }
     }
 

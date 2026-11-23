@@ -24,8 +24,8 @@ Windows. The new dynamic NTFS image holds the acquisition directly. Available
 source metadata is inventoried and restored, with explicit partial results for
 losses. See [VHDX output](vhdx-output.md) for dependencies and fidelity limits.
 
-Acquisition uses the available logical CPU count by default, capped at 128;
-`-T, --threads` sets the maximum worker count within that limit. Workers are limited to the number of planned
+Acquisition uses the available logical CPU count by default, capped at four;
+`-T, --threads` explicitly accepts up to 128 workers. Workers are limited to the number of planned
 files when there are fewer files than CPUs. `-v, --verbose` prints each source
 file/stream being copied in full, one line per attempt, instead of displaying
 the progress bar. Parallel copies can appear in any order; their final outcome
@@ -108,3 +108,10 @@ The default evaluates executable sections of at least 4096 bytes at 7.2
 bits/byte; whole-file/either criteria and explicit resource limits are available.
 It does not unpack binaries, validate Authenticode signatures, enumerate deleted
 files or interpret entropy as a malware verdict. See [the guide](high-entropy.md).
+
+
+Interactive collection now has a [size-estimating wizard](collection-wizard.md).
+The paging family is off by default; `--paging` or explicit artifact selection
+enables it. `--yes` suppresses prompts for automation. Optional embedded
+process-memory YARA runs use the existing engine and are sealed with the
+collection, including native container output.

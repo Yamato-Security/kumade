@@ -184,3 +184,26 @@ eligible high-entropy executable section. Normal directory collection and
 `verify` confirmed matching analysis/copy hashes and sealed reports. Neither
 program was executed. This is functional validation, not a malware-detection
 accuracy benchmark.
+
+
+## Collection wizard
+
+Wizard regressions cover actual piped CLI prompts, displayed byte totals versus
+the acquired manifest, safe defaults, paging opt-in, EOF/cancellation without
+output, unattended operation, invalid-answer reprompting, raw/unknown estimates,
+overlap deduplication, an empty selection and explicit artifact restrictions.
+Embedded process-scan failure is retained, sealed and verified as partial;
+modifying its diagnostic file fails verification. Windows CI also runs its
+existing VSS, x86/x64 and native container regressions with the wizard bypassed
+automatically for redirected command invocation.
+
+
+## Volatility ordering
+
+Tests shuffle planned files and check actual manifest ordering/timestamps with
+multiple workers, first-position RAM request failure, native base/ADS priority
+promotion, volatile-provider classes, independent retained-stage verification,
+deferred entropy after core payloads, collected-copy analysis after live-source
+deletion, and same-drive output exclusions. Windows tests check fast process
+state before hot disk files and HostInfo afterward, plus expansion of a newly
+owned dynamic VHDX with payload hash preservation.

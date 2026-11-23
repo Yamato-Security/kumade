@@ -50,7 +50,7 @@ pub enum Format {
     Jsonl,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct Options {
     /// New result directory (existing directories are refused)
     #[arg(short, long, value_name = "DIR")]
@@ -304,6 +304,14 @@ fn table<T: Serialize>(
         }
     }
     Ok(())
+}
+
+/// Whether this binary can inspect the host's complete native address spaces.
+pub fn check_host() -> Result<()> {
+    #[cfg(windows)]
+    return windows::require_native();
+    #[cfg(not(windows))]
+    anyhow::bail!("Process scanning requires native Windows");
 }
 
 pub fn run(options: &Options) -> Result<u8> {

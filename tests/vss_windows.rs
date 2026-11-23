@@ -253,6 +253,9 @@ try {
         ntfs_metadata: false,
         host_reserve: None,
         live_info: None,
+        process_scan: None,
+        early: None,
+        entropy: None,
     };
     let (root, summary) = collect::collect(&plan, &temp.path().join("direct"), &options)?;
     assert_eq!(summary.completeness, "CompleteWithinSelectedPrototypeScope");
@@ -295,31 +298,34 @@ try {
         "{}",
         canonical.display()
     );
+    // Plan-time scan over the snapshot root (`plan --high-entropy` on a snapshot source).
     let mut scanned = plan.clone();
-    let destination = temp.path().join("entropy");
     kumade::entropy::augment_plan(
         &mut scanned,
         &kumade::entropy::Settings::default(),
-        &destination,
+        &temp.path().join("planned"),
         2,
         true,
     )?;
-    let report = scanned
+    let planned = scanned
         .entropy_scan
         .as_ref()
         .context("Entropy report missing")?;
     assert!(
-        report
+        planned
             .observations
             .iter()
             .any(|o| o.relative_path == "Windows/System32/packed.exe" && o.status == "Selected"),
-        "{report:?}"
+        "{planned:?}"
     );
     assert!(
-        report.observations.iter().all(|o| o.status != "Error"),
-        "{report:?}"
+        planned.observations.iter().all(|o| o.status != "Error"),
+        "{planned:?}"
     );
-    let (root, summary) = collect::collect(&scanned, &destination, &options)?;
+    // Deferred scan after the selected artifacts, as `collect --high-entropy` runs it.
+    let mut with_entropy = options.clone();
+    with_entropy.entropy = Some(kumade::entropy::Settings::default());
+    let (root, summary) = collect::collect(&plan, &temp.path().join("entropy"), &with_entropy)?;
     assert_eq!(summary.completeness, "CompleteWithinSelectedPrototypeScope");
     let rows = record_rows(&root)?;
     let packed = rows
@@ -333,6 +339,22 @@ try {
             .starts_with(&*snapshot_root.to_string_lossy()),
         "{}",
         packed.source_path
+    );
+    let report: Vec<serde_json::Value> =
+        fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+    assert!(
+        report
+            .iter()
+            .any(|r| r["RelativePath"] == "Windows/System32/packed.exe"
+                && r["AnalysisStatus"] == "Selected"),
+        "{report:?}"
+    );
+    assert!(
+        report.iter().all(|r| r["AnalysisStatus"] != "Error"),
+        "{report:?}"
     );
     assert!(verify::verify(&root)?.1);
     // Another requester's snapshot must survive deletion of the first set.

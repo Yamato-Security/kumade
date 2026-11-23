@@ -125,11 +125,11 @@ struct Target {
 
 type RawVolumes = HashMap<PathBuf, Option<RawVolume>>;
 
-pub(crate) fn prepare(plan: &Plan) -> Vec<Snapshot> {
+pub(crate) fn prepare(plan: &Plan, files: &[&PlannedFile]) -> Vec<Snapshot> {
     // Include each collected file's containing directories exactly once. Capture
     // these before payload writes and restore deepest first after all children.
     let mut targets = BTreeMap::<(String, PathBuf), Target>::new();
-    for item in &plan.files {
+    for item in files {
         let Some(source) = plan.sources.iter().find(|s| s.id == item.source_id) else {
             continue;
         };
