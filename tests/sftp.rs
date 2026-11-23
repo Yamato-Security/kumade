@@ -244,3 +244,130 @@ fn validates_host_pin_path_and_exclusive_create() {
     assert!(store.create("test", 0).is_err());
     assert_eq!(store.objects.lock().unwrap()["test"], b"original");
 }
+
+#[test]
+fn raw_ntfs_and_absent_candidates_keep_their_status_without_local_payloads() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("source");
+    fs::create_dir(&root).unwrap();
+    let mut source = discovery::directory_source(&root, "C", "HOST").unwrap();
+    source.raw_device = Some(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ntfs-testfs1.img"),
+    );
+    let rules = Rules::load(DEFAULT_CATALOG).unwrap();
+    let plan = discovery::build_plan(
+        vec![source],
+        &rules,
+        &["windows.ntfs.mft".into(), "windows.ntfs.usn".into()],
+        false,
+    )
+    .unwrap();
+    let store = Arc::new(MemoryStore::default());
+    let target = Target::from_store(store.clone(), true).unwrap();
+    let (root, summary) = collect::collect(
+        &plan,
+        &temp.path().join("staging"),
+        &options(target.clone()),
+    )
+    .unwrap();
+    assert_eq!(summary.collected, 1);
+    assert_eq!(summary.failed, 0);
+    assert!(!root.join("C").exists());
+    let records: Vec<Record> = fs::read_to_string(root.join("Manifest.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    let mft = records.iter().find(|r| r.status == "Transferred").unwrap();
+    assert_eq!(mft.method, "RawNTFS");
+    assert!(records.iter().any(|r| r.status == "NotPresent"));
+    let (name, _) = target.publish(&root, &summary).unwrap();
+    let objects = store.objects.lock().unwrap();
+    let delivery: serde_json::Value = serde_json::from_slice(&objects[&name]).unwrap();
+    assert!(delivery["Objects"].as_array().unwrap().iter().any(|o| {
+        o["RelativePath"]
+            .as_str()
+            .unwrap()
+            .starts_with("_KumadeStreams/")
+    }));
+}
+
+#[test]
+fn source_change_is_partial_and_retains_the_actual_streamed_version() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    let file = source.join("Windows/Prefetch/APP.pf");
+    fs::write(&file, b"before").unwrap();
+    let rules = Rules::load(DEFAULT_CATALOG).unwrap();
+    let plan = discovery::build_plan(
+        vec![discovery::directory_source(&source, "C", "HOST").unwrap()],
+        &rules,
+        &["windows.prefetch".into()],
+        false,
+    )
+    .unwrap();
+    fs::write(file, b"different bytes after planning").unwrap();
+    let target = Target::from_store(Arc::new(MemoryStore::default()), false).unwrap();
+    let (root, summary) =
+        collect::collect(&plan, &temp.path().join("staging"), &options(target)).unwrap();
+    assert_eq!(summary.completeness, "Partial");
+    assert_eq!(summary.partial, 1);
+    let r: Record = serde_json::from_str(
+        fs::read_to_string(root.join("Manifest.jsonl"))
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(r.changed_during_read);
+    assert_eq!(r.sha256, Some(sha256(b"different bytes after planning")));
+    assert!(!r.verified);
+}
+
+#[test]
+fn named_streams_are_disjoint_from_the_base_file_namespace() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("source");
+    fs::create_dir_all(root.join("Windows/Prefetch")).unwrap();
+    let file = root.join("Windows/Prefetch/APP.pf");
+    fs::write(&file, b"base").unwrap();
+    fs::write(format!("{}:Extra", file.display()), b"named stream").unwrap();
+    let rules = Rules::load(DEFAULT_CATALOG).unwrap();
+    let mut plan = discovery::build_plan(
+        vec![discovery::directory_source(&root, "C", "HOST").unwrap()],
+        &rules,
+        &["windows.prefetch".into()],
+        false,
+    )
+    .unwrap();
+    plan.files
+        .retain(|f| f.relative_path.file_name().is_some_and(|n| n == "APP.pf"));
+    let mut stream = plan.files[0].clone();
+    stream.id = "named-stream".into();
+    stream.stream = Some("Extra".into());
+    stream.before = None;
+    plan.files.push(stream);
+    let store = Arc::new(MemoryStore::default());
+    let target = Target::from_store(store.clone(), false).unwrap();
+    let (root, summary) = collect::collect(
+        &plan,
+        &temp.path().join("staging"),
+        &options(target.clone()),
+    )
+    .unwrap();
+    assert_eq!(summary.collected, 2);
+    let (name, _) = target.publish(&root, &summary).unwrap();
+    let objects = store.objects.lock().unwrap();
+    let delivery: serde_json::Value = serde_json::from_slice(&objects[&name]).unwrap();
+    let list = delivery["Objects"].as_array().unwrap();
+    assert!(
+        list.iter()
+            .any(|o| o["RelativePath"] == "C/Windows/Prefetch/APP.pf")
+    );
+    assert!(
+        list.iter()
+            .any(|o| o["RelativePath"] == "_KumadeStreams/C/Windows/Prefetch/APP.pf/Extra")
+    );
+}

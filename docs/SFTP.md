@@ -49,6 +49,10 @@ On a **dedicated Linux OpenSSH server**, install `openssh-server`, Python 3 and
 sudo python3 scripts/sftp_account.py --base /srv/kumade --ttl-seconds 3600
 ```
 
+To obtain the ED25519 host-key fingerprint (verify the key chosen by your SSH
+service), run `sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` on
+the server. Deliver it through a trusted channel, separately from the password.
+
 This creates a random account/password, a chroot and a root-owned incoming
 directory with mode `1733`. It removes inherited/default ACLs and schedules a
 systemd timer to lock the account **and kill existing sessions**. Install the

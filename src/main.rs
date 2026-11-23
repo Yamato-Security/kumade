@@ -973,6 +973,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sftp_options_require_explicit_pin_and_refuse_ambiguous_outputs() {
+        for args in [
+            vec!["kumade", "collect", "--sftp", "host", "-o", "results"],
+            vec!["kumade", "collect", "--sftp", "host", "--vhdx"],
+            vec!["kumade", "collect", "--sftp", "host", "--e01"],
+            vec!["kumade", "collect", "--sftp-password-stdin"],
+            vec![
+                "kumade",
+                "collect",
+                "--sftp",
+                "host",
+                "--sftp-password-stdin",
+                "--wizard",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        let cli = Cli::try_parse_from(["kumade", "collect", "--sftp", "host"]).unwrap();
+        let Some(Command::Collect(options)) = cli.command else {
+            panic!("collect")
+        };
+        assert!(options.sftp.validate().is_err());
+    }
+
+    #[test]
     fn default_workers_follow_available_cpus_and_explicit_workers_override_them() {
         let cli = Cli::try_parse_from(["kumade", "-o", "results"]).unwrap();
         assert_eq!(cli.options.threads, default_threads());
