@@ -315,3 +315,33 @@ fn same_drive_output_parent_does_not_exclude_the_whole_drive_from_entropy() {
     assert_eq!(kumade::verify::verify(&output).unwrap(), (1, true));
     drop(t);
 }
+
+#[test]
+fn unfinished_early_stage_cannot_pass_as_standalone_live_info() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path();
+    let live = root.join("LiveInfo");
+    fs::create_dir(&live).unwrap();
+    collect::write_json_new(
+        &live.join("Manifest.json"),
+        &serde_json::json!({"SchemaVersion":1,"Entries":[]}),
+    )
+    .unwrap();
+    fs::write(live.join("Manifest.csv"), b"").unwrap();
+    let hashes: std::collections::BTreeMap<_, _> =
+        ["LiveInfo/Manifest.json", "LiveInfo/Manifest.csv"]
+            .into_iter()
+            .map(|name| (name, collect::hash_file(&root.join(name)).unwrap().1))
+            .collect();
+    collect::write_json_new(
+        &live.join("Seal.json"),
+        &serde_json::json!({"SchemaVersion":1,"FileSHA256":hashes}),
+    )
+    .unwrap();
+    // The same sealed inventory is valid as standalone live-info output.
+    assert_eq!(kumade::verify::verify(root).unwrap(), (0, true));
+    // Early capture writes this marker before providers. Without its outer seal,
+    // an interrupted acquisition must not masquerade as a finished standalone run.
+    collect::write_json_new(&root.join("MemoryRequest.json"), &serde_json::Value::Null).unwrap();
+    assert!(kumade::verify::verify(root).is_err());
+}

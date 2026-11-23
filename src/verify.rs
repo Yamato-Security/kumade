@@ -31,6 +31,7 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
     // Inventory-only output from `live-info` has no Run.json. A collection that
     // stopped before writing its outer seal must not pass on the inner seal alone.
     if !root.join("Run.json").exists()
+        && !root.join("MemoryRequest.json").exists()
         && !root.join("Seal.json").exists()
         && root.join("LiveInfo/Seal.json").is_file()
     {
