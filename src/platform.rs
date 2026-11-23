@@ -317,9 +317,7 @@ pub fn validate_open_file(file: &File, root: &Path) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("Unsupported source-root name"))?;
         // Compare paths in the same volume namespace. DOS-name lookup fails
         // for an accessible recovery/EFI volume that has no drive letter.
-        let shadow = root
-            .to_ascii_lowercase()
-            .starts_with("\\\\?\\globalroot\\device\\harddiskvolumeshadowcopy");
+        let shadow = windows::is_shadow_path(root);
         let flags = if shadow {
             windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_NT
         } else if root.to_ascii_lowercase().starts_with("\\\\?\\volume{") {
@@ -424,21 +422,41 @@ mod windows {
         Ok(std::ffi::OsString::from_wide(&buffer[..length as usize]).into())
     }
 
+    /// A VSS snapshot path: `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyN\...`.
+    pub(super) fn is_shadow_path(text: &str) -> bool {
+        text.to_ascii_lowercase()
+            .starts_with("\\\\?\\globalroot\\device\\harddiskvolumeshadowcopy")
+    }
+
+    /// Opening with zero desired access resolves identity without reading payloads.
+    /// Follow the explicitly supplied root, just as canonicalize normally does.
+    fn identity_handle(path: &Path) -> std::io::Result<File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .access_mode(0)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+    }
+
     pub(super) fn canonicalize_with(
         path: &Path,
         normal: impl FnOnce(&Path) -> std::io::Result<std::path::PathBuf>,
     ) -> std::io::Result<std::path::PathBuf> {
+        // A snapshot root has neither a DOS name nor a volume GUID, so both of
+        // those lookups fail. Resolve it in the NT namespace and keep the
+        // GLOBALROOT prefix that planned snapshot paths carry.
+        if path.to_str().is_some_and(is_shadow_path) {
+            let file = identity_handle(path)?;
+            let actual = final_path(&file, VOLUME_NAME_NT)?;
+            let mut text = std::ffi::OsString::from("\\\\?\\GLOBALROOT");
+            text.push(actual);
+            return Ok(PathBuf::from(text));
+        }
         match normal(path) {
             Ok(path) => Ok(path),
             Err(error) if error.raw_os_error() == Some(ERROR_PATH_NOT_FOUND as i32) => {
-                use std::os::windows::fs::OpenOptionsExt;
-                // Opening with zero desired access resolves identity without reading payloads.
-                // Follow the explicitly supplied root, just as canonicalize normally does.
-                let file = OpenOptions::new()
-                    .access_mode(0)
-                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-                    .open(path)?;
+                let file = identity_handle(path)?;
                 final_path(&file, VOLUME_NAME_GUID)
             }
             Err(error) => Err(error),
