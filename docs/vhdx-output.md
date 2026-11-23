@@ -182,8 +182,8 @@ An unset or unsupported timestamp, EFS state without the original key, an
 unsupported attribute, a reparse-backed object or unavailable metadata is
 reported explicitly. Stored source metadata remains available even when native
 restoration cannot reproduce it. Collection is not an atomic snapshot; live
-sources can change during planning and acquisition. RAM capture uses an external DumpIt toolkit; other provider capabilities remain
-outside the currently implemented collection scope.
+sources can change during planning and acquisition. For optional physical RAM
+capture with an external DumpIt toolkit, see [RAM acquisition](memory-acquisition.md).
 
 ## References
 
