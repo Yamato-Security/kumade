@@ -135,7 +135,8 @@ must continue to be treated as untrusted evidence.
 The receipt confirms server readback, separately from acquisition completeness.
 A successful upload exits 0 only if acquisition did not report a partial state;
 server verification is still required. `kumade verify` intentionally refuses a
-remote delivery's metadata directory; use the trusted server receipt instead.
+remote delivery's metadata directory; use `kumade verify-delivery` or the Python
+restorer on the trusted server and keep its receipt instead.
 
 Named NTFS streams are exported into the disjoint `_KumadeStreams/<drive>/...`
 namespace and retain `StreamName`/source mappings. They are not recreated as native

@@ -22,13 +22,13 @@ use russh::{
     keys::{HashAlg, PublicKeyOrCertificate},
 };
 use russh_sftp::{
-    client::{RawSftpSession, error::Error as SftpError},
+    client::{RawSftpSession, error::Error as SftpError, rawsession::PendingWrite},
     protocol::{FileAttributes, OpenFlags, SftpHandle, StatusCode},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -198,55 +198,92 @@ impl Network {
         result
     }
 }
+/// Each write request carries 32 KiB, the size OpenSSH's own client uses. The
+/// gzip encoder hands over much smaller pieces (a median of 79 bytes on an
+/// incompressible input), so they are coalesced into full requests first.
+const REQUEST_BYTES: usize = 32 * 1024;
+/// Requests in flight per open object before the oldest acknowledgement is
+/// awaited. A bounded sliding window keeps every worker streaming without
+/// the bursts that make other workers' control and journal requests wait.
+const IN_FLIGHT: usize = 16;
 struct NetworkFile {
     connection: Arc<Network>,
     handle: SftpHandle,
     offset: u64,
+    buffer: Vec<u8>,
+    in_flight: VecDeque<PendingWrite>,
+}
+impl NetworkFile {
+    fn broken<T>(&mut self, error: anyhow::Error) -> io::Result<T> {
+        self.connection.broken.store(true, Ordering::Relaxed);
+        self.in_flight.clear();
+        Err(io::Error::other(format!("{error:#}")))
+    }
+    /// Sends the coalesced piece at the next sequential offset.
+    fn send_piece(&mut self) -> io::Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        if self.connection.broken.load(Ordering::Relaxed) {
+            return self.broken(anyhow::anyhow!("SFTP connection is unusable"));
+        }
+        let pending = match self.connection.raw.write_nowait(
+            self.handle.as_bytes(),
+            self.offset,
+            &self.buffer,
+        ) {
+            Ok(pending) => pending,
+            Err(error) => return self.broken(error.into()),
+        };
+        self.offset = match self.offset.checked_add(self.buffer.len() as u64) {
+            Some(offset) => offset,
+            None => return self.broken(anyhow::anyhow!("SFTP offset overflow")),
+        };
+        self.buffer.clear();
+        self.in_flight.push_back(pending);
+        if self.in_flight.len() >= IN_FLIGHT {
+            self.drain(IN_FLIGHT - 1)?;
+        }
+        Ok(())
+    }
+    /// Waits for acknowledgements, oldest first, until at most `keep` requests
+    /// remain in flight. A request that makes no progress within the operation
+    /// deadline fails the connection; nothing is retried or rewritten.
+    fn drain(&mut self, keep: usize) -> io::Result<()> {
+        while self.in_flight.len() > keep {
+            let pending = self.in_flight.pop_front().expect("in-flight request");
+            let c = &self.connection;
+            let result = c.runtime.block_on(async {
+                tokio::time::timeout(c.timeout, pending)
+                    .await
+                    .context("SFTP write timed out")?
+                    .map_err(anyhow::Error::from)
+            });
+            if let Err(error) = result {
+                return self.broken(error);
+            }
+        }
+        Ok(())
+    }
 }
 impl Write for NetworkFile {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         if data.is_empty() {
             return Ok(0);
         }
-        let n = data.len().min(256 * 1024);
-        let c = &self.connection;
-        let result = (|| -> Result<()> {
-            ensure!(
-                !c.broken.load(Ordering::Relaxed),
-                "SFTP connection is unusable"
-            );
-            let mut pending = Vec::new();
-            for (i, chunk) in data[..n].chunks(32768).enumerate() {
-                pending.push(c.raw.write_nowait(
-                    self.handle.as_bytes(),
-                    self.offset + (i * 32768) as u64,
-                    chunk,
-                )?);
-            }
-            c.runtime.block_on(async {
-                tokio::time::timeout(c.timeout, async {
-                    for p in pending {
-                        p.await?;
-                    }
-                    Ok::<_, SftpError>(())
-                })
-                .await
-                .context("SFTP write timed out")??;
-                Ok::<_, anyhow::Error>(())
-            })?;
-            Ok(())
-        })();
-        if let Err(e) = result {
-            c.broken.store(true, Ordering::Relaxed);
-            return Err(io::Error::other(format!("{e:#}")));
+        if self.connection.broken.load(Ordering::Relaxed) {
+            return Err(io::Error::other("SFTP connection is unusable"));
         }
-        self.offset = self
-            .offset
-            .checked_add(n as u64)
-            .ok_or_else(|| io::Error::other("SFTP offset overflow"))?;
+        let n = data.len().min(REQUEST_BYTES - self.buffer.len());
+        self.buffer.extend_from_slice(&data[..n]);
+        if self.buffer.len() >= REQUEST_BYTES {
+            self.send_piece()?;
+        }
         Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
+        self.send_piece()?;
+        self.drain(0)?;
         self.connection
             .wait(self.connection.raw.fsync(&self.handle))
             .map(|_| ())
@@ -284,6 +321,8 @@ impl Store for NetworkStore {
             connection: self.connection.clone(),
             handle,
             offset: 0,
+            buffer: Vec::with_capacity(REQUEST_BYTES),
+            in_flight: VecDeque::new(),
         }))
     }
 }
@@ -523,6 +562,11 @@ impl Target {
                 let config = client::Config {
                     keepalive_interval: Some(Duration::from_secs(15)),
                     keepalive_max: 3,
+                    // russh leaves Nagle's algorithm on by default. Every SFTP
+                    // request is a small trailing segment after its payload, so
+                    // the delayed-ACK interaction costs tens of milliseconds per
+                    // request; OpenSSH's own clients disable it as well.
+                    nodelay: true,
                     ..Default::default()
                 };
                 let mut session = client::connect(
