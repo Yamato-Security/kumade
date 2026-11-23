@@ -133,8 +133,8 @@ try {
     // Ordinary test file, not an OS-configured pagefile. The acquisition policy
     // must refuse its reserved paging name and account for that refusal.
     fs::write(source_root.join("pagefile.sys"), b"excluded paging fixture")?;
-    // A packed-looking PE outside the catalog: the deferred entropy walk must
-    // find it on the frozen snapshot root, which has no DOS or GUID name.
+    // A packed-looking PE outside the catalog: the entropy walk must find it on
+    // the frozen snapshot root, which has no DOS or GUID name.
     fs::create_dir_all(source_root.join("Windows/System32"))?;
     fs::write(source_root.join("Windows/System32/packed.exe"), packed_pe())?;
     let path = prefetch.join("LOCKED.pf");
@@ -298,6 +298,31 @@ try {
         "{}",
         canonical.display()
     );
+    // Plan-time scan over the snapshot root (`plan --high-entropy` on a snapshot source).
+    let mut scanned = plan.clone();
+    kumade::entropy::augment_plan(
+        &mut scanned,
+        &kumade::entropy::Settings::default(),
+        &temp.path().join("planned"),
+        2,
+        true,
+    )?;
+    let planned = scanned
+        .entropy_scan
+        .as_ref()
+        .context("Entropy report missing")?;
+    assert!(
+        planned
+            .observations
+            .iter()
+            .any(|o| o.relative_path == "Windows/System32/packed.exe" && o.status == "Selected"),
+        "{planned:?}"
+    );
+    assert!(
+        planned.observations.iter().all(|o| o.status != "Error"),
+        "{planned:?}"
+    );
+    // Deferred scan after the selected artifacts, as `collect --high-entropy` runs it.
     let mut with_entropy = options.clone();
     with_entropy.entropy = Some(kumade::entropy::Settings::default());
     let (root, summary) = collect::collect(&plan, &temp.path().join("entropy"), &with_entropy)?;
