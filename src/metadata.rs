@@ -365,6 +365,67 @@ fn same_identity(captured: Option<&str>, acquired: Option<&str>) -> bool {
     false
 }
 
+/// Keep remote metadata as an inventory, and bind file generations without
+/// pretending to have restored permissions or independently verified payloads.
+pub(crate) fn remote_inventory(snapshots: &mut [Snapshot], records: &[Record]) -> usize {
+    let mut files = HashMap::<(&str, &str), Vec<&Record>>::new();
+    let mut directories = BTreeSet::new();
+    for record in records
+        .iter()
+        .filter(|r| r.relative_output_path.is_some() && r.status != "NotPresent")
+    {
+        files
+            .entry((&record.source_id, &record.source_path))
+            .or_default()
+            .push(record);
+        for parent in Path::new(&record.source_path).ancestors().skip(1) {
+            directories.insert((record.source_id.as_str(), parent.to_owned()));
+        }
+    }
+    let mut errors = 0;
+    for snapshot in snapshots {
+        let matching = files.get(&(snapshot.source_id.as_str(), snapshot.source_path.as_str()));
+        let relevant = if snapshot.directory {
+            directories.contains(&(
+                snapshot.source_id.as_str(),
+                PathBuf::from(&snapshot.source_path),
+            ))
+        } else {
+            matching.is_some()
+        };
+        if !relevant {
+            snapshot.restore_status = "PayloadUnavailable".into();
+            continue;
+        }
+        if matches!(snapshot.capture_status.as_str(), "Failed" | "Partial") {
+            snapshot.restore_status = "CaptureFailed".into();
+            errors += 1;
+            continue;
+        }
+        if !snapshot.directory
+            && matching.is_some_and(|rows| {
+                rows.iter()
+                    .filter(|r| matches!(r.status.as_str(), "Transferred" | "Partial"))
+                    .any(|r| {
+                        !same_identity(
+                            snapshot.source_file_id.as_deref(),
+                            r.source_file_id.as_deref(),
+                        )
+                    })
+            })
+        {
+            snapshot.restore_status = "SourceChanged".into();
+            snapshot
+                .problems
+                .push_str(" Metadata identity does not match the streamed file generation");
+            errors += 1;
+        } else {
+            snapshot.restore_status = "InventoryOnly".into();
+        }
+    }
+    errors
+}
+
 pub(crate) fn restore(root: &Path, snapshots: &mut [Snapshot], records: &[Record]) -> usize {
     let available: BTreeSet<_> = records
         .iter()
@@ -731,6 +792,49 @@ pub fn sddl_equivalent(captured: &str, actual: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_inventory_binds_generations_and_does_not_turn_absence_into_damage() {
+        use super::*;
+        let mut record: Record = serde_json::from_value(serde_json::json!({
+            "SchemaVersion":1,"ObservationId":"id","Computer":"HOST","SourceId":"C",
+            "SourcePath":"C/file","StreamName":null,"ArtifactIds":"test",
+            "RelativeOutputPath":"C/file","Method":"RawNTFS","Status":"Transferred",
+            "Reason":"pending","StartedUtc":"","FinishedUtc":"","LogicalSize":1,
+            "BytesRead":1,"SHA-256":null,"Verified":false,"ChangedDuringRead":false,
+            "CreatedUtc":null,"ModifiedUtc":null,"AccessedUtc":null,"SourceFileId":"ntfs:2:3"
+        }))
+        .unwrap();
+        let snapshot = Snapshot {
+            source_id: "C".into(),
+            source_path: "C/file".into(),
+            capture_status: "Captured".into(),
+            source_file_id: Some("win:1234:0003000000000002".into()),
+            ..Default::default()
+        };
+        let mut rows = vec![snapshot.clone()];
+        assert_eq!(
+            remote_inventory(&mut rows, std::slice::from_ref(&record)),
+            0
+        );
+        assert_eq!(rows[0].restore_status, "InventoryOnly");
+        record.source_file_id = Some("ntfs:2:4".into());
+        assert_eq!(
+            remote_inventory(&mut rows, std::slice::from_ref(&record)),
+            1
+        );
+        assert_eq!(rows[0].restore_status, "SourceChanged");
+        rows[0].capture_status = "Failed".into();
+        record.status = "NotPresent".into();
+        assert_eq!(
+            remote_inventory(&mut rows, std::slice::from_ref(&record)),
+            0
+        );
+        assert_eq!(rows[0].restore_status, "PayloadUnavailable");
+        record.status = "Transferred".into();
+        assert_eq!(remote_inventory(&mut rows, &[record]), 1);
+        assert_eq!(rows[0].restore_status, "CaptureFailed");
+    }
+
     use super::*;
     #[cfg(windows)]
     #[test]

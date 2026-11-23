@@ -139,7 +139,8 @@ Payloads are streamed without local staging, including locked-file raw NTFS
 fallback. **Metadata is staged locally** in a private directory: plans, manifests,
 seals, live inventory and optional entropy/YARA reports. These can be substantial
 for a comprehensive entropy inventory. Prefer an external drive or a preconfigured
-RAM-backed directory with sufficient capacity. They are removed only after the
+RAM-backed directory with sufficient capacity and access controls (NTFS on Windows;
+FAT/exFAT staging is refused on Windows). They are removed only after the
 final delivery acknowledges durability; failures retain metadata for recovery.
 No silent fallback writes evidence payloads to the source disk.
 

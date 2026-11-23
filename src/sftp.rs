@@ -688,7 +688,7 @@ pub(crate) fn acquire(
             source,
             item,
             cache,
-            false,
+            cfg!(windows),
             &mut record.method,
             &mut upload,
             |_, _| Ok(()),
@@ -767,7 +767,11 @@ impl Staging {
         let directory = tempfile::Builder::new()
             .prefix("kumade-sftp-metadata-")
             .tempdir_in(parent)?;
-        if let Err(e) = crate::platform::protect_output_root(directory.path()) {
+        let protection = crate::platform::protect_output_root(directory.path()).and_then(|policy| {
+            ensure!(policy != "FilesystemHasNoPersistentACLs", "Metadata staging requires persistent access controls; choose an NTFS or other protected staging filesystem");
+            Ok(())
+        });
+        if let Err(e) = protection {
             let retained = directory.keep();
             bail!(
                 "Cannot protect metadata staging {}: {e:#}",

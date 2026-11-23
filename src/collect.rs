@@ -1053,16 +1053,14 @@ pub fn collect_with_capacity(
         .finish()?;
     if let Some(snapshots) = ntfs_metadata.as_mut() {
         if !options.quiet {
-            ui::status("Restoring NTFS metadata and original permissions…");
+            ui::status(if options.remote.is_some() {
+                "Sealing NTFS metadata inventory (no server-side restoration)…"
+            } else {
+                "Restoring NTFS metadata and original permissions…"
+            });
         }
         if options.remote.is_some() {
-            for snapshot in snapshots.iter_mut() {
-                snapshot.restore_status = "InventoryOnly".into();
-            }
-            summary.metadata_errors = snapshots
-                .iter()
-                .filter(|s| s.capture_status == "Failed")
-                .count() as u64;
+            summary.metadata_errors = metadata::remote_inventory(snapshots, &records) as u64;
         } else {
             summary.metadata_errors = metadata::restore(&root, snapshots, &records) as u64;
         }
