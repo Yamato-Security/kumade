@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Validate CLR header sizes, metadata bounds/signature and complete managed
+  resource ranges before excluding bytes from PE section entropy. Invalid or
+  overlapping declarations keep the original bytes in scoring. Clarify that
+  the renamed UPX `.dat` example requires comprehensive extension coverage.
+
 - Add opt-in `--high-entropy` drive discovery and collection of PE packing
   candidates, including binaries with misleading filename extensions. Measure
   whole-file and executable-section Shannon entropy with streaming SHA-256,

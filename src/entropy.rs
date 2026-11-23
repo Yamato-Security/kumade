@@ -273,10 +273,76 @@ struct Layout {
 }
 /// File offset of `need` bytes at `rva`, when they are backed by a section's raw data.
 fn rva_to_offset(layout: &[Layout], rva: u64, need: u64) -> Option<u64> {
+    // PE32 and PE32+ both encode RVAs in 32 bits.
+    if rva.checked_add(need)? > u64::from(u32::MAX) + 1 {
+        return None;
+    }
     layout.iter().find_map(|s| {
         let delta = rva.checked_sub(s.va)?;
         (delta < s.extent && delta.checked_add(need)? <= s.raw_size).then(|| s.raw_offset + delta)
     })
+}
+
+struct ManagedLayout {
+    resources: Option<(u64, u64)>,
+}
+
+/// Resource exclusion requires bounded CLR/metadata structures, not just a CLR
+/// directory pointer. Invalid declarations leave the original bytes in scoring.
+/// These are structural checks for this heuristic, not complete CLR loader validation.
+fn managed_layout(
+    reader: &mut dyn ReadSeek,
+    size: u64,
+    layout: &[Layout],
+    rva: u64,
+    length: u64,
+) -> Result<Option<ManagedLayout>> {
+    if rva == 0 || length < 72 {
+        return Ok(None);
+    }
+    let Some(offset) = rva_to_offset(layout, rva, length) else {
+        return Ok(None);
+    };
+    let mut clr = [0; 72];
+    read_at(reader, size, offset, &mut clr)?;
+    let header_size = u64::from(le32(&clr, 0));
+    if header_size < 72 || header_size > length {
+        return Ok(None);
+    }
+    let metadata_rva = u64::from(le32(&clr, 8));
+    let metadata_len = u64::from(le32(&clr, 12));
+    if metadata_rva == 0 || metadata_len < 16 {
+        return Ok(None);
+    }
+    let Some(metadata) = rva_to_offset(layout, metadata_rva, metadata_len) else {
+        return Ok(None);
+    };
+    let overlaps = |a: u64, b: u64, x: u64, y: u64| a < y && x < b;
+    if overlaps(offset, offset + length, metadata, metadata + metadata_len) {
+        return Ok(None);
+    }
+    let mut signature = [0; 4];
+    read_at(reader, size, metadata, &mut signature)?;
+    if signature != *b"BSJB" {
+        return Ok(None);
+    }
+    let mut managed = ManagedLayout { resources: None };
+    let resources_rva = u64::from(le32(&clr, 24));
+    let resources_len = u64::from(le32(&clr, 28));
+    if resources_rva == 0 || resources_len == 0 {
+        return Ok(Some(managed));
+    }
+    // Validate the whole declaration. Clipping an invalid length to a section
+    // boundary would let arbitrary header bytes hide that section from scoring.
+    if let Some(start) = rva_to_offset(layout, resources_rva, resources_len) {
+        let end = start + resources_len;
+        if !overlaps(start, end, offset, offset + length)
+            && !overlaps(start, end, metadata, metadata + metadata_len)
+        {
+            managed.resources = Some((start, end));
+        }
+    }
+    Ok(Some(managed))
 }
 /// Header checks use seeked bounded reads. Histograms and hash then read the complete
 /// logical file once; sections are measured from on-disk bytes, never virtual zero padding.
@@ -381,27 +447,9 @@ pub fn analyze(
     if optional_len >= directory + 120 && le32(&optional, directory - 4) > 14 {
         let rva = u64::from(le32(&optional, directory + 112));
         let length = u64::from(le32(&optional, directory + 116));
-        if rva > 0
-            && length >= 72
-            && let Some(offset) = rva_to_offset(&layout, rva, 72)
-        {
-            let mut clr = [0; 72];
-            read_at(reader, size, offset, &mut clr)?;
+        if let Some(validated) = managed_layout(reader, size, &layout, rva, length)? {
             managed = true;
-            let resources_rva = u64::from(le32(&clr, 24));
-            let resources_len = u64::from(le32(&clr, 28));
-            if resources_rva > 0
-                && resources_len > 0
-                && let Some(start) = rva_to_offset(&layout, resources_rva, 1)
-                && let Some(owner) = layout
-                    .iter()
-                    .find(|s| start >= s.raw_offset && start < s.raw_offset + s.raw_size)
-            {
-                let end = start
-                    .saturating_add(resources_len)
-                    .min(owner.raw_offset + owner.raw_size);
-                resources = Some((start, end));
-            }
+            resources = validated.resources;
         }
     }
     // The byte ranges each section is measured over: its raw data minus the managed resources.

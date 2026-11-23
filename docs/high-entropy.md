@@ -119,17 +119,20 @@ executable flag and individual entropy.
 Managed assemblies need one adjustment. The .NET runtime stores an assembly's
 embedded resources (compressed satellite strings, images, serialized objects)
 inside the executable `.text` section, so a harmless `*.resources.dll` would
-reach the threshold on its resources alone. When an image has a CLR header,
-the managed resources byte range it describes is left out of the section
-measurement; `MeasuredSize` in the section list shows what was measured. The
+reach the threshold on its resources alone. When an image has a bounded CLR
+header and metadata with the `BSJB` signature, a fully backed managed resource
+range is left out of the section measurement. The resource range must not
+overlap the CLR header or metadata; invalid declarations leave those bytes in
+scoring instead of clipping the range. `MeasuredSize` shows what was measured. The
 IL and metadata stay in, because packed and crypted .NET payloads show up there.
 Whole-file entropy is not adjusted. On a stock developer image this removed
 most of the satellite assemblies from the candidate list.
 
 For example, validation with an inert generated Windows x64 program and UPX
-4.2.4 produced:
+4.2.4 produced the results below using `--entropy-coverage comprehensive`.
+That level opens the renamed `.dat`; the standard default skips it by extension.
 
-| File | Whole-file entropy | Largest eligible executable-section entropy | Default result |
+| File | Whole-file entropy | Largest eligible executable-section entropy | Result with comprehensive coverage |
 |---|---:|---:|---|
 | Original benign PE | 7.953 | None (code section smaller than minimum) | BelowThreshold |
 | UPX-packed copy, renamed `.dat` | 7.137 | 7.589 | Selected |
@@ -170,7 +173,7 @@ entropy fields or report files.
 | `Size`, `SHA256` | Logical length and SHA-256 of the complete analyzed file |
 | `FileEntropy`, `MaxExecutableEntropy` | Whole-file entropy and maximum executable-section entropy meeting minimum size; null/empty when unavailable |
 | `Machine`, `IsDLL` | COFF machine code and DLL characteristic; PE signatures drive recognition, not `.exe` extensions |
-| `IsManaged` | The image has a CLR header (a .NET or mixed-mode assembly); its managed resources were left out of the section measurement |
+| `IsManaged` | CLR header and metadata passed basic bounds/signature checks; resource bounds are checked separately. This is not full CLR loader validation |
 | `HasCertificateTable` | A positive in-bounds certificate-table range exists; **not** signature validation or publisher trust |
 | `Sections` | JSON array of `Name`, `RawOffset`, `RawSize`, `MeasuredSize`, `Executable`, `Entropy`; `MeasuredSize` is smaller than `RawSize` where managed resources were skipped |
 | `ObservationId` | Join key to `Manifest.csv`/`Manifest.jsonl` for selected files |
@@ -200,6 +203,10 @@ disagrees with the analysis hash.
   inspected unless `--entropy-coverage`, `--entropy-extension` or
   `--entropy-all-files` says otherwise. `.mui` resource libraries and .NET Native
   tables are the largest groups of PE-format files left closed by default.
+- Validated managed resources can also contain encrypted or embedded payloads.
+  Their exclusion reduces benign resource-related hits but can miss packing
+  concentrated there. `--entropy-scope file` or `either` includes those bytes in
+  whole-file scoring, at the cost of more resource-related candidates.
 - The directory walk skips symlinks and reparse points rather than traversing
   other volumes or aliases. Cloud-only placeholders and WOF/reparse files may
   therefore be excluded. Excluded directories count as one exclusion, not an
