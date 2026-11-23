@@ -382,6 +382,7 @@ mod windows {
             let mut length = (path_buffer.len() * 2) as u32;
             // SAFETY: this guard exclusively owns the created virtual-disk handle and output buffer.
             win(
+                // SAFETY: owned live disk handle and correctly byte-sized UTF-16 output buffer.
                 unsafe {
                     GetVirtualDiskPhysicalPath(self.handle, &mut length, path_buffer.as_mut_ptr())
                 },
@@ -394,6 +395,7 @@ mod windows {
             let number = physical_disk_number(&String::from_utf16(&path_buffer[..end])?)?;
             // SAFETY: increase only this run's owned VHDX, with bounded, versioned parameters.
             win(
+                // SAFETY: this newly created destination handle and valid versioned resize parameters.
                 unsafe {
                     ResizeVirtualDisk(
                         self.handle,
