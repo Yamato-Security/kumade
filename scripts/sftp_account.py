@@ -8,6 +8,7 @@ Install the fragment and validate with sshd -t before enabling external access.
 """
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import grp
 import os
 from pathlib import Path
@@ -27,8 +28,10 @@ def provision(base, ttl):
     if os.geteuid() != 0:
         raise ValueError("Run as root on a dedicated Linux evidence server")
     base = Path(base).absolute()
-    if any(c.isspace() or c in '"\\' for c in str(base)):
-        raise ValueError("Base path cannot contain whitespace, quotes or backslashes")
+    if any(c.isspace() or c in '"\\%$' for c in str(base)):
+        raise ValueError(
+            "Base path cannot contain whitespace, quotes, backslashes, % or $"
+        )
     if not base.is_dir() or base.is_symlink():
         raise ValueError("Base must be an existing root-owned directory")
     for p in [base, *base.parents]:
@@ -37,7 +40,7 @@ def provision(base, ttl):
             raise ValueError(
                 "Base and every ancestor must be root-owned, not group/other writable"
             )
-    if not shutil.which("setfacl") or not shutil.which("systemd-run"):
+    if not shutil.which("setfacl") or not shutil.which("systemctl"):
         raise ValueError("Install acl and use a systemd server for enforced TTL")
     username = "ku" + secrets.token_hex(6)
     case = base / username
@@ -95,17 +98,33 @@ Match all
             encoding="ascii",
         )
         revoke.chmod(0o700)
-        # Start expiry before unlocking credentials. Ending sessions matters: expiry
+        # Install persistent expiry before unlocking credentials. Ending sessions matters: expiry
         # alone does not invalidate already-open writable SFTP file descriptors.
-        run(
-            "systemd-run",
-            "--quiet",
-            "--unit",
-            f"kumade-sftp-{username}-expiry",
-            f"--on-active={ttl}s",
-            "/bin/sh",
-            str(revoke),
-        )
+        expires = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+        unit_name = f"kumade-sftp-{username}-expiry"
+        units = Path("/etc/systemd/system")
+        service = units / (unit_name + ".service")
+        timer = units / (unit_name + ".timer")
+        with service.open("x", encoding="ascii") as f:
+            f.write(
+                f"[Unit]\nDescription=Revoke temporary Kumade SFTP account\n"
+                f"[Service]\nType=oneshot\nExecStart=/bin/sh {revoke}\n"
+            )
+        service.chmod(0o600)
+        with timer.open("x", encoding="ascii") as f:
+            f.write(
+                f"[Unit]\nDescription=Expire temporary Kumade SFTP account\n"
+                f"[Timer]\nOnCalendar={expires.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                f"Persistent=true\nAccuracySec=1s\nUnit={unit_name}.service\n"
+                f"[Install]\nWantedBy=timers.target\n"
+            )
+        timer.chmod(0o600)
+        run("systemctl", "daemon-reload")
+        run("systemctl", "enable", "--now", timer.name)
+        # Coarse shadow expiry is a second, boot-independent upper bound if
+        # systemd is disabled. The persistent timer supplies the precise TTL.
+        shadow_expiry = (expires + timedelta(days=1)).date().isoformat()
+        run("chage", "--expiredate", shadow_expiry, username)
         password = secrets.token_urlsafe(32)
         run("chpasswd", input=f"{username}:{password}\n", text=True)
         print(

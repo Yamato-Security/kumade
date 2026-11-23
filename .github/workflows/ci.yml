@@ -29,6 +29,7 @@ jobs:
       # An isolated localhost sshd and random account, removed by the test.
       # Does not edit or reload the runner's system sshd configuration.
       - run: sudo python3 scripts/test_sftp_openssh.py --binary target/debug/kumade
+      - run: sudo python3 scripts/test_sftp_expiry.py
 
   windows-x86:
     name: Test (Windows x86)

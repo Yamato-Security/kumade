@@ -18,6 +18,7 @@ an elevated Windows terminal:
   --sftp-staging-dir E:\Metadata --yes
 ```
 
+Create the metadata staging parent directory first on a protected filesystem.
 The password is prompted without echo. For automation, `--sftp-password-stdin`
 reads only the first stdin line; supply it from your secret manager. There is no
 password command-line option or password environment variable. Do not put secrets
@@ -55,7 +56,11 @@ the server. Deliver it through a trusted channel, separately from the password.
 
 This creates a random account/password, a chroot and a root-owned incoming
 directory with mode `1733`. It removes inherited/default ACLs and schedules a
-systemd timer to lock the account **and kill existing sessions**. Install the
+persistent systemd timer to lock the account **and kill existing sessions**, with
+a shadow-account expiry as a coarse backup. The timer survives a server reboot;
+keep the server clock synchronized. The helper installs its expiry service/timer
+under `/etc/systemd/system` and retains the locked account to avoid UID reuse.
+Install the
 printed `sshd-match.conf` as an SSH configuration fragment, validate with
 `sudo sshd -t`, and reload SSH after reviewing it. The helper does not alter/reload
 your running SSH configuration. Restrict network access to collectors; use
