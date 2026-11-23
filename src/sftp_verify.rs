@@ -492,7 +492,8 @@ pub(crate) fn verify(
                 plan.memory_requested
                     && !memory
                     && record.source_id == "Memory"
-                    && record.status == "Failed",
+                    && record.artifact_ids == "windows.memory"
+                    && matches!(record.status.as_str(), "Transferred" | "Partial" | "Failed"),
                 "Unexpected acquisition record"
             );
             memory = true;

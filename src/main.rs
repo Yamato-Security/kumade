@@ -151,9 +151,11 @@ struct CollectionArgs {
     /// Keep this much destination space free (MiB)
     #[arg(long, default_value_t = 2048)]
     reserve_mib: u64,
-    /// Request RAM; this prototype records an explicit unsupported/partial result
+    /// Acquire physical RAM first with a separately supplied DumpIt toolkit
     #[arg(short = 'm', long)]
     memory: bool,
+    #[command(flatten)]
+    memory_options: kumade::memory::Args,
     /// Suppress progress and routine console messages
     #[arg(short, long)]
     quiet: bool,
@@ -418,7 +420,10 @@ fn run() -> Result<u8> {
                     "Requires Windows"
                 },
             );
-            ui::field("RAM acquisition", "Not implemented");
+            ui::field(
+                "RAM acquisition",
+                "External DumpIt (--memory; toolkit required)",
+            );
             ui::field(
                 "VSS acquisition",
                 "--vss; native elevated Windows, crash-consistent snapshots without application writers",
@@ -576,6 +581,8 @@ fn run() -> Result<u8> {
         )?;
         let sizes = kumade::wizard::Sizes::discover(&preflight);
         let choices = kumade::wizard::Choices {
+            memory: options.memory,
+            memory_bytes: kumade::memory::physical_bytes().ok(),
             artifacts: defaults,
             restrict_artifacts: !options.artifacts.is_empty(),
             live_info: !options.no_live_info,
@@ -640,6 +647,7 @@ fn run() -> Result<u8> {
             })?;
             return Ok(0);
         }
+        options.memory = choices.memory;
         selected = choices.artifacts;
         options.no_live_info = !choices.live_info;
         options.vss = choices.vss;
@@ -669,6 +677,14 @@ fn run() -> Result<u8> {
             || options.memory
             || (options.sources.is_empty() && !options.no_live_info),
         "Nothing selected for collection; use --paging or --artifact to select evidence"
+    );
+    ensure!(
+        !options.memory
+            || !options.sources.is_empty()
+            || options.sftp.sftp.is_none()
+            || options.memory_options.memory_staging_dir.is_some()
+            || plan_only,
+        "DumpIt needs a staged RAM file for SFTP; specify --memory-staging-dir <external-directory>"
     );
     // Authenticate and verify the upload-only policy before collecting evidence.
     let remote = if options.sftp.sftp.is_some() {
@@ -739,7 +755,9 @@ fn run() -> Result<u8> {
     };
     // A sibling image may share the source's parent. Validate the actual output,
     // rather than rejecting its parent: fresh UUID staging remains a sibling.
-    let early_parent = if options.vhdx.is_some() || options.e01.is_some() {
+    let early_parent = if let Some(parent) = &options.memory_options.memory_staging_dir {
+        paths::resolve_future(parent)?
+    } else if options.vhdx.is_some() || options.e01.is_some() {
         early_output
             .parent()
             .context("Image output has no parent")?
@@ -758,15 +776,21 @@ fn run() -> Result<u8> {
     let early = if plan_only {
         None
     } else {
-        kumade::early::prepare(
+        kumade::early::prepare_configured(
             &early_parent,
             computer,
             options.memory,
             live_options.as_ref(),
+            Some(kumade::early::MemoryConfig {
+                live: options.sources.is_empty(),
+                args: &options.memory_options,
+                reserve_bytes,
+                quiet: options.quiet,
+            }),
         )?
     };
     if let (Some(target), Some(capture)) = (&remote, &early) {
-        target.upload_tree(capture.path(), "Early")?;
+        target.upload_early(capture)?;
     }
     // Revalidate choices before creating a snapshot or output container.
     if options.vss {
@@ -935,9 +959,6 @@ fn run() -> Result<u8> {
             anyhow::bail!("Acquisition failed: {error:#}; VSS cleanup also failed: {cleanup:#}")
         }
     };
-    if let Some(capture) = early {
-        capture.cleanup()?;
-    }
     if options.vss && !options.quiet {
         ui::field("VSS cleanup", "Owned snapshot set released");
     }
@@ -956,6 +977,10 @@ fn run() -> Result<u8> {
         if let Some(staging) = staging.as_mut() {
             staging.cleanup()?;
         }
+    }
+    // A remote publication failure retains the original RAM stage, not just metadata.
+    if let Some(capture) = early {
+        capture.cleanup()?;
     }
     Ok(if summary.completeness == "Partial" {
         3

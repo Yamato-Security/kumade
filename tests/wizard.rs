@@ -42,6 +42,8 @@ fn fixture() -> (tempfile::TempDir, Plan, Rules) {
 }
 fn choices() -> Choices {
     Choices {
+        memory: false,
+        memory_bytes: None,
         artifacts: vec!["windows.prefetch".into()],
         restrict_artifacts: false,
         local_yara: false,

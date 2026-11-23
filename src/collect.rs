@@ -639,7 +639,11 @@ pub fn collect_with_capacity(
         fs2::available_space(&parent)?
             >= required_payload
                 .saturating_add(options.reserve_bytes)
-                .saturating_add(early.as_ref().map_or(0, |e| e.bytes)),
+                .saturating_add(early.as_ref().map_or(0, |e| if options.remote.is_some() {
+                    e.metadata_bytes()
+                } else {
+                    e.bytes
+                })),
         "Insufficient space to preserve the early volatile capture and selected artifacts"
     );
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -711,15 +715,27 @@ pub fn collect_with_capacity(
     let progress = ui::progress_bar(plan.files.len() as u64, options.quiet || options.verbose);
     let started = plan.created_utc.clone();
     let timer = Instant::now();
-    if let Some(memory) = early.as_ref().and_then(|e| e.memory.clone()) {
+    let memory_record = early
+        .as_ref()
+        .map(|e| {
+            e.import_memory(
+                &root,
+                options.remote.as_deref(),
+                options.reserve_bytes,
+                options.host_reserve.as_ref(),
+            )
+        })
+        .transpose()?
+        .flatten();
+    if let Some(memory) = &memory_record {
         journal
             .lock()
             .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
-            .append(&memory)?;
+            .append(memory)?;
         records
             .lock()
             .map_err(|_| anyhow::anyhow!("Record state poisoned"))?
-            .push(memory);
+            .push(memory.clone());
     }
     let mut reserve = options.reserve_bytes;
     let mut host_reserve = options.host_reserve.clone();
@@ -1038,12 +1054,26 @@ pub fn collect_with_capacity(
             source_id: "Memory".into(),
             artifact_id: "windows.memory".into(),
             planned: 1,
-            acquired: 0,
-            partial: 0,
-            failed: 1,
+            acquired: u64::from(
+                memory_record
+                    .as_ref()
+                    .is_some_and(|r| matches!(r.status.as_str(), "Acquired" | "Transferred")),
+            ),
+            partial: u64::from(
+                memory_record
+                    .as_ref()
+                    .is_some_and(|r| r.status == "Partial"),
+            ),
+            failed: u64::from(memory_record.as_ref().is_none_or(|r| r.status == "Failed")),
             not_present: 0,
-            status: "Failed".into(),
-            reason: "RAM acquisition is not implemented in this prototype".into(),
+            status: memory_record
+                .as_ref()
+                .map_or("Failed", |r| r.status.as_str())
+                .into(),
+            reason: memory_record
+                .as_ref()
+                .map_or("RAM capture missing", |r| r.reason.as_str())
+                .into(),
         })?;
     }
     coverage.flush()?;
@@ -1095,6 +1125,17 @@ pub fn collect_with_capacity(
         "Summary.json",
     ] {
         metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
+    }
+    if plan.memory_requested {
+        for entry in fs::read_dir(root.join("Memory"))? {
+            let entry = entry?;
+            if entry.file_name() != "Memory.dmp" {
+                metadata.insert(
+                    format!("Memory/{}", entry.file_name().to_string_lossy()),
+                    hash_file(&entry.path())?.1,
+                );
+            }
+        }
     }
     if options.entropy.is_some() {
         metadata.insert(
@@ -1182,7 +1223,10 @@ pub fn collect_with_capacity(
         ui::field("Completeness", &summary.completeness);
         ui::field("Elapsed", format!("{:.3}s", timer.elapsed().as_secs_f64()));
     }
-    if owned_early && let Some(capture) = early {
+    if owned_early
+        && options.remote.is_none()
+        && let Some(capture) = early
+    {
         capture.cleanup()?;
     }
     Ok((root, summary))

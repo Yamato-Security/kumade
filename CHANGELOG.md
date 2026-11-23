@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Acquire physical RAM first with a separately supplied, hash/architecture-checked
+  DumpIt toolkit (`--memory`, `--dumpit`). Disable vendor analytics, validate full
+  dump structure/length, hash captured bytes and retain failed/partial captures.
+  Support directory, VHDX/E01 and SFTP delivery with explicit remote RAM staging,
+  bounded diagnostics, deadlines and free-space reserves. No vendor tools bundled.
+
 - Add a built-in `receive` command with ephemeral SFTP credentials, append-only
   uploads, expiry/session revocation, quotas and optional source-IP restrictions.
   Verify disk readback automatically and reconstruct exports without Python
@@ -21,8 +27,7 @@
   paths by `SourceId` in `Settings.OutputExcludes` and accept older settings
   without that optional field.
 
-- Acquire in volatility order: handle RAM requests first (actual RAM capture is
-  still unimplemented), preserve process/network/DNS/logon state before VSS and
+- Acquire in volatility order: handle RAM requests first, preserve process/network/DNS/logon state before VSS and
   disk planning, then prioritize USN, `$LogFile`, `$MFT`, event logs, registry and
   active databases. Use parallel workers inside priority barriers; keep native
   base files and their ADS together so USN `$J` is not postponed behind bulk
