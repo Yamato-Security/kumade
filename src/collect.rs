@@ -1162,7 +1162,7 @@ pub fn collect_with_capacity(
                 ui::count(summary.live_info_failed_providers),
             );
         }
-        if options.ntfs_metadata {
+        if capture_metadata {
             ui::field("Metadata errors", ui::count(summary.metadata_errors));
         }
         if !options.ntfs_metadata && options.remote.is_none() {

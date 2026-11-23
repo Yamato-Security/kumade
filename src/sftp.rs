@@ -119,6 +119,11 @@ impl Args {
     }
     pub fn password(&self) -> Result<Zeroizing<String>> {
         let password = if self.sftp_password_stdin {
+            // A terminal would echo the typed password; the hidden prompt is for that.
+            ensure!(
+                !std::io::stdin().is_terminal(),
+                "--sftp-password-stdin expects a piped password; omit it to use the hidden prompt"
+            );
             let mut bytes = Zeroizing::new(Vec::new());
             let mut input = std::io::stdin().lock();
             for _ in 0..4097 {
@@ -362,14 +367,32 @@ pub struct Object {
     pub stored_bytes: u64,
     pub stored_sha256: String,
 }
+/// The remote object is created on the first stored byte (or at `finish` for an
+/// empty object), so a source that turns out to be absent leaves nothing behind.
 struct Counted {
     sink: Option<Box<dyn RemoteWrite>>,
+    pending: Option<(Arc<dyn Store>, String)>,
     hash: Sha256,
     bytes: u64,
 }
+impl Counted {
+    fn sink(&mut self) -> io::Result<&mut Box<dyn RemoteWrite>> {
+        if self.sink.is_none() {
+            let (store, name) = self
+                .pending
+                .take()
+                .ok_or_else(|| io::Error::other("Remote object was discarded"))?;
+            let sink = store
+                .create(&name, 0)
+                .map_err(|e| io::Error::other(format!("{e:#}")))?;
+            self.sink = Some(sink);
+        }
+        Ok(self.sink.as_mut().expect("created sink"))
+    }
+}
 impl Write for Counted {
     fn write(&mut self, b: &[u8]) -> io::Result<usize> {
-        let n = self.sink.as_mut().expect("live sink").write(b)?;
+        let n = self.sink()?.write(b)?;
         self.hash.update(&b[..n]);
         self.bytes = self
             .bytes
@@ -378,7 +401,10 @@ impl Write for Counted {
         Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.sink.as_mut().expect("live sink").flush()
+        match self.sink.as_mut() {
+            Some(sink) => sink.flush(),
+            None => Ok(()),
+        }
     }
 }
 enum Encoded {
@@ -419,6 +445,8 @@ impl Upload {
             Encoded::Plain(w) => w,
             Encoded::Gzip(w) => w.finish()?,
         };
+        // An empty source still becomes an (empty) exclusive remote object.
+        stored.sink()?;
         stored.sink.take().context("Missing SFTP sink")?.finish()?;
         Ok(Object {
             name: self.name,
@@ -429,6 +457,25 @@ impl Upload {
             stored_bytes: stored.bytes,
             stored_sha256: hex(&stored.hash.finalize()),
         })
+    }
+    /// Abandon an upload before any byte reached the server: no remote object
+    /// is created, so an absent source is not represented by a stub object.
+    fn discard(self) -> Result<()> {
+        ensure!(
+            self.bytes == 0,
+            "Cannot discard a partially streamed object"
+        );
+        let created = match self.encoded {
+            Encoded::Plain(counted) => counted.sink.is_some(),
+            Encoded::Gzip(mut encoder) => {
+                // Drop writes the gzip trailer; without a pending object that
+                // write fails harmlessly instead of creating the object late.
+                encoder.get_mut().pending = None;
+                encoder.get_ref().sink.is_some()
+            }
+        };
+        ensure!(!created, "Remote object already exists; cannot discard");
+        Ok(())
     }
 }
 
@@ -543,9 +590,9 @@ impl Target {
     fn begin(&self, suffix: String, relative: String, gzip: bool) -> Result<Upload> {
         let name = format!("{}-{suffix}", self.id);
         validate_object_name(&name)?;
-        let sink = self.store.create(&name, 0)?;
         let counted = Counted {
-            sink: Some(sink),
+            sink: None,
+            pending: Some((self.store.clone(), name.clone())),
             hash: Sha256::new(),
             bytes: 0,
         };
@@ -695,6 +742,28 @@ pub(crate) fn acquire(
         );
         record.bytes_read = upload.bytes;
         record.sha256 = Some(hex(&upload.logical.clone().finalize()));
+        if let Err(e) = &copied {
+            // Opening a missing raw device also returns NotFound. Only a
+            // successfully opened provider can establish a missing NTFS
+            // object/stream; never count provider failure as artifact absence.
+            let raw_available = source
+                .raw_device
+                .as_ref()
+                .is_none_or(|device| cache.contains_key(device));
+            if item.before.is_none()
+                && crate::raw::is_missing(e)
+                && record.bytes_read == 0
+                && raw_available
+                && source.root.is_dir()
+            {
+                // Nothing was streamed: no remote object, output path or hash.
+                upload.discard()?;
+                record.sha256 = None;
+                record.status = "NotPresent".into();
+                record.reason = format!("{e:#}");
+                return Ok(());
+            }
+        }
         let mut object = upload.finish()?;
         match copied {
             Ok((before, after)) => {
@@ -722,21 +791,7 @@ pub(crate) fn acquire(
                 record.reason=if record.status=="Partial"{"Source metadata/content changed; streamed version retained; server readback is pending"}else{"SFTP write/fsync/close acknowledged; trusted server readback is pending"}.into();
             }
             Err(e) => {
-                let raw_available = source
-                    .raw_device
-                    .as_ref()
-                    .is_none_or(|device| cache.contains_key(device));
-                record.status = if item.before.is_none()
-                    && crate::raw::is_missing(&e)
-                    && record.bytes_read == 0
-                    && raw_available
-                    && source.root.is_dir()
-                {
-                    "NotPresent"
-                } else {
-                    "Failed"
-                }
-                .into();
+                record.status = "Failed".into();
                 object.relative_path = format!("{relative}.{}.partial", item.id);
                 record.reason = format!("{e:#}; partial remote content retained");
             }
