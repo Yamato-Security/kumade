@@ -641,8 +641,11 @@ mod tests {
         };
         assert!(trusted_tool(&args, Architecture::Arm64).is_err());
         args.dumpit_sha256 = Some(collect::hash_file(&p).unwrap().1);
-        assert!(trusted_tool(&args, Architecture::Arm64).is_ok());
+        let guard = trusted_tool(&args, Architecture::Arm64).unwrap();
+        #[cfg(windows)]
+        assert!(fs::write(&p, b"cannot replace a trusted tool while it is running").is_err());
         assert!(trusted_tool(&args, Architecture::X64).is_err());
+        drop(guard);
         assert!(parse_digest("1234").is_err());
         assert!(parse_digest(&"z".repeat(64)).is_err());
         assert_eq!(parse_digest(&"A".repeat(64)).unwrap(), "a".repeat(64));
