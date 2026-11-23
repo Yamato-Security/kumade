@@ -697,6 +697,7 @@ pub fn augment_streams(plan: &mut Plan) -> Result<()> {
                         let mut item = file.clone();
                         item.id = uuid::Uuid::new_v4().to_string();
                         item.stream = Some(stream.into());
+                        item.expected_sha256 = None; // The entropy digest belongs to unnamed DATA, not this ADS.
                         let size = data.StreamSize as u64;
                         item.before = Some(Fingerprint {
                             size,

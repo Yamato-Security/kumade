@@ -132,7 +132,20 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         "Run identity mismatch"
     );
     let plan: Plan = serde_json::from_reader(File::open(root.join("Plan.json"))?)?;
+    if plan.entropy_scan.is_some() {
+        for name in crate::entropy::FILES {
+            ensure!(
+                digests.contains_key(*name),
+                "Missing sealed entropy report: {name}"
+            );
+        }
+    }
     let expected: HashSet<_> = plan.files.iter().map(|f| f.id.clone()).collect();
+    let entropy_hashes: std::collections::HashMap<_, _> = plan
+        .files
+        .iter()
+        .filter_map(|f| f.expected_sha256.as_ref().map(|h| (&f.id, h)))
+        .collect();
     let reader = BufReader::new(File::open(root.join("Manifest.jsonl"))?);
     let mut observations = HashSet::new();
     let mut checked = 0;
@@ -157,6 +170,14 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
             ensure!(
                 expected.contains(&record.observation_id),
                 "Manifest observation is absent from the plan"
+            );
+        }
+        if record.status == "Acquired"
+            && let Some(expected_hash) = entropy_hashes.get(&record.observation_id)
+        {
+            ensure!(
+                record.sha256.as_ref() == Some(*expected_hash),
+                "Acquired binary differs from the entropy analysis hash"
             );
         }
         match record.status.as_str() {

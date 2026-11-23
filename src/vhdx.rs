@@ -603,7 +603,10 @@ mod windows {
             .known_bytes
             .checked_add(raw_known)
             .context("Known evidence size overflow")?;
-        let reserve = metadata_reserve(plan.files.len(), options.threads);
+        let entropy_reserve = crate::entropy::metadata_reserve(plan)?;
+        let reserve = metadata_reserve(plan.files.len(), options.threads)
+            .checked_add(entropy_reserve)
+            .context("Container metadata reserve overflow")?;
         let bytes = capacity(
             known,
             sizes.unknown,
@@ -620,7 +623,8 @@ mod windows {
         let parent = path.parent().context("VHDX output has no parent")?;
         fs::create_dir_all(parent)?;
         let required = known
-            .checked_add(512 * MIB)
+            .checked_add(entropy_reserve)
+            .and_then(|v| v.checked_add(512 * MIB))
             .and_then(|v| v.checked_add(options.reserve_bytes))
             .context("Host free-space estimate overflow")?;
         ensure!(

@@ -93,3 +93,18 @@ No live company system or private company evidence is used in platform CI.
 
 All proposed full-profile definitions should receive positive/versioned fixtures
 and independent comparison before a release claims broad production coverage.
+
+
+## High-entropy PE discovery
+
+`--high-entropy` adds an optional full selected-source walk before collection.
+The scanner opens files whose extension is on the selected list (`standard`
+PE names by default, `broad` and `comprehensive` levels, added names, or every
+file with `--entropy-all-files`), recognizes PE32/PE32+ by header signatures
+regardless of what the name claims, measures logical on-disk bytes, hashes each
+analyzed PE and adds qualifying unnamed streams to the existing acquisition plan. Directory, VHDX and E01
+share that plan and sealed reports. An acquired-content mismatch is partial.
+The default evaluates executable sections of at least 4096 bytes at 7.2
+bits/byte; whole-file/either criteria and explicit resource limits are available.
+It does not unpack binaries, validate Authenticode signatures, enumerate deleted
+files or interpret entropy as a malware verdict. See [the guide](high-entropy.md).

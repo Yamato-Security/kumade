@@ -156,3 +156,31 @@ successful acquisition capabilities.
 
 Rust also reports a future-compatibility warning for transitive dependency
 `binrw 0.11.3` through `ntfs 0.4`; current checks and builds succeed.
+
+## High-entropy binary collection
+
+`tests/entropy.rs` checks exact histograms and SHA-256, PE32/PE32+, resource-only
+negative controls, minimum-region size, malformed/truncated offsets and headers,
+optional caps, deterministic selection, catalogue deduplication, exclusions,
+symlinks, raw resident/nonresident/sparse stream inspection, backward-compatible
+plans, copy/seal verification and same-size analysis/acquisition changes, the
+extension sets (`standard`, `broad`, `comprehensive`, `--entropy-extension`,
+`--entropy-all-files`), non-image
+and malformed PE handling, a managed assembly whose CLR resources are left out of
+the section measurement, and `plan` mode writing the report files beside a
+`Plan.json` that carries no per-file rows. CLI
+tests reject invalid thresholds, missing opt-in and overflowing limits. Unit
+tests also exercise the raw inspection fallback without extracting a file;
+Windows-only tests compare locked-file PE analysis with native reads, explicitly
+force an I/O-failure fallback against that real file, and ensure
+ADS do not inherit the unnamed-stream digest. The existing Windows x86/x64 CI
+runs these tests and still performs its native NTFS VHDX round trips.
+
+A local independent smoke test compiled an inert Windows x64 PE with clang/lld,
+packed a second copy with UPX 4.2.4, and renamed that copy `.dat`. The default
+7.2 executable-section criterion selected only the packed copy (section entropy
+7.588684); the original had high-entropy non-executable data (7.954131) but no
+eligible high-entropy executable section. Normal directory collection and
+`verify` confirmed matching analysis/copy hashes and sealed reports. Neither
+program was executed. This is functional validation, not a malware-detection
+accuracy benchmark.

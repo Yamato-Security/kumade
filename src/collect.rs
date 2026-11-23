@@ -389,7 +389,14 @@ fn acquire_one_inner(
                     "Stored payload failed hash verification"
                 );
                 record.verified = true;
-                if record.changed_during_read {
+                if item
+                    .expected_sha256
+                    .as_ref()
+                    .is_some_and(|expected| record.sha256.as_ref() != Some(expected))
+                {
+                    record.status = "Partial".into();
+                    record.reason = "Acquired content differs from the entropy analysis SHA256; captured bytes are retained".into();
+                } else if record.changed_during_read {
                     record.status = "Partial".into();
                     record.reason="Source metadata changed since planning or during read; captured bytes are retained".into();
                 } else {
@@ -812,6 +819,9 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         }
         metadata::write_inventory(&root, snapshots)?;
     }
+    if let Some(report) = &plan.entropy_scan {
+        crate::entropy::write_report(&root, report, &records)?;
+    }
     write_json_new(&root.join("Summary.json"), &summary)?;
     let (_, manifest_hash) = hash_file(&root.join("Manifest.jsonl"))?;
     let mut metadata = std::collections::BTreeMap::new();
@@ -827,6 +837,11 @@ pub fn collect(plan: &Plan, parent: &Path, options: &Options) -> Result<(PathBuf
         "Summary.json",
     ] {
         metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
+    }
+    if plan.entropy_scan.is_some() {
+        for name in crate::entropy::FILES {
+            metadata.insert((*name).into(), hash_file(&root.join(name))?.1);
+        }
     }
     if options.ntfs_metadata {
         for name in metadata::FILES {

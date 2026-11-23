@@ -199,6 +199,7 @@ pub fn build_plan(
         known_bytes: 0,
         unknown_sizes: 0,
         memory_requested: memory,
+        entropy_scan: None,
     };
     let mut files: BTreeMap<(String, PathBuf, Option<String>), PlannedFile> = BTreeMap::new();
     for source in &plan.sources {
@@ -336,6 +337,7 @@ pub fn build_plan(
                     stream: None,
                     artifacts: ids,
                     before: meta,
+                    expected_sha256: None,
                 },
             );
         }
@@ -372,6 +374,7 @@ pub fn build_plan(
                             stream,
                             artifacts: vec![d.id.clone()],
                             before: None,
+                            expected_sha256: None,
                         },
                     );
                     counts[i] += 1;

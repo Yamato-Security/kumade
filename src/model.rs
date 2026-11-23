@@ -77,6 +77,13 @@ pub struct PlannedFile {
     pub stream: Option<String>,
     pub artifacts: Vec<String>,
     pub before: Option<Fingerprint>,
+    /// Hash of content analyzed by an opt-in discovery filter; acquisition must agree.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "ExpectedSHA256"
+    )]
+    pub expected_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +132,8 @@ pub struct Plan {
     pub known_bytes: u64,
     pub unknown_sizes: u64,
     pub memory_requested: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entropy_scan: Option<crate::entropy::Report>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
