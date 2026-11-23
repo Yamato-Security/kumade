@@ -927,6 +927,13 @@ mod tests {
             vec!["kumade", "--entropy-exclude", "Windows/**"],
             vec!["kumade", "--entropy-extension", "toc"],
             vec!["kumade", "--entropy-all-files"],
+            vec!["kumade", "--entropy-coverage", "broad"],
+            vec![
+                "kumade",
+                "--high-entropy",
+                "--entropy-coverage",
+                "everything",
+            ],
         ] {
             assert!(Cli::try_parse_from(args).is_err());
         }
@@ -942,6 +949,18 @@ mod tests {
         let settings = cli.options.entropy.settings();
         assert_eq!(settings.extensions, ["toc", "mibc"]);
         assert!(!settings.all_files);
+        assert_eq!(settings.coverage, kumade::entropy::ExtensionSet::Standard);
+        for (flag, level) in [
+            ("broad", kumade::entropy::ExtensionSet::Broad),
+            (
+                "comprehensive",
+                kumade::entropy::ExtensionSet::Comprehensive,
+            ),
+        ] {
+            let cli = Cli::try_parse_from(["kumade", "--high-entropy", "--entropy-coverage", flag])
+                .unwrap();
+            assert_eq!(cli.options.entropy.settings().coverage, level);
+        }
         assert!(
             Cli::try_parse_from(["kumade", "--high-entropy", "--entropy-all-files"])
                 .unwrap()

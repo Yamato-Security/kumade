@@ -16,7 +16,7 @@ use kumade::{
     catalog::Rules,
     collect::{self, Options},
     discovery,
-    entropy::{self, Scope, Settings},
+    entropy::{self, ExtensionSet, Scope, Settings},
     model::*,
     verify,
 };
@@ -66,7 +66,7 @@ fn fixture() -> (TempDir, kumade::model::Plan, PathBuf) {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("source");
     fs::create_dir_all(root.join("OddLocation")).unwrap();
-    fs::write(root.join("OddLocation/payload.dat"), pe(true, false, true)).unwrap();
+    fs::write(root.join("OddLocation/payload.cpl"), pe(true, false, true)).unwrap();
     fs::write(
         root.join("OddLocation/resources.exe"),
         pe(false, true, false),
@@ -108,6 +108,8 @@ fn section_entropy_and_hash_are_exact_for_pe32_and_pe32_plus() {
         assert_eq!(a.sha256, sha256(&b));
         assert_eq!(a.machine, if plus { "0x8664" } else { "0x014C" });
         assert!(!a.has_certificate_table);
+        assert!(!a.is_managed);
+        assert_eq!(a.sections[0].measured_size, 4096);
     }
 }
 #[test]
@@ -211,13 +213,14 @@ fn discovery_collects_renamed_pe_once_and_seals_reports() {
     assert_eq!(plan.files.len(), 1);
     assert_eq!(
         plan.files[0].relative_path,
-        Path::new("OddLocation/payload.dat")
+        Path::new("OddLocation/payload.cpl")
     );
     assert!(plan.files[0].expected_sha256.is_some());
     let r = plan.entropy_scan.as_ref().unwrap();
     assert_eq!(r.counts.files_seen, 3);
     assert_eq!(r.counts.pe_analyzed, 2);
-    assert_eq!(r.counts.non_pe, 1);
+    assert_eq!(r.counts.non_pe, 0);
+    assert_eq!(r.counts.other_extension, 1, "text.txt is not opened");
     assert!(entropy::metadata_reserve(&plan).unwrap() > 1024 * 1024);
     let (root, summary) = collect::collect(&plan, &out, &options()).unwrap();
     assert_eq!(summary.collected, 1);
@@ -241,7 +244,7 @@ fn discovery_collects_renamed_pe_once_and_seals_reports() {
 fn existing_catalog_candidate_is_deduplicated_and_not_limited() {
     let (_temp, mut plan, out) = fixture();
     let source = plan.sources[0].clone();
-    let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['OddLocation/payload.dat']}\n").unwrap();
+    let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['OddLocation/payload.cpl']}\n").unwrap();
     plan = discovery::build_plan(vec![source], &rules, &[], false).unwrap();
     scan(
         &mut plan,
@@ -291,7 +294,7 @@ fn changed_bytes_are_partial_even_without_a_size_change() {
 fn candidate_limits_are_deterministic_and_report_incomplete_coverage() {
     let (_temp, mut plan, out) = fixture();
     fs::write(
-        plan.sources[0].root.join("OddLocation/z.dat"),
+        plan.sources[0].root.join("OddLocation/z.scr"),
         pe(true, false, true),
     )
     .unwrap();
@@ -306,7 +309,7 @@ fn candidate_limits_are_deterministic_and_report_incomplete_coverage() {
     assert_eq!(plan.files.len(), 1);
     assert_eq!(
         plan.files[0].relative_path,
-        Path::new("OddLocation/payload.dat")
+        Path::new("OddLocation/payload.cpl")
     );
     assert!(
         plan.coverage
@@ -456,59 +459,68 @@ fn total_collection_cap_does_not_silently_discard_candidates() {
 }
 
 #[test]
-fn only_listed_extensions_are_opened_unless_asked_otherwise() {
+fn extension_sets_open_their_names_and_nothing_else() {
     let (_temp, plan, out) = fixture();
     let root = plan.sources[0].root.clone();
-    // The same high-entropy PE under names outside the list is never opened by default,
-    // while the comparison of listed names ignores case.
-    fs::write(root.join("OddLocation/table.toc"), pe(true, false, true)).unwrap();
-    fs::write(root.join("OddLocation/kernel"), pe(true, false, true)).unwrap();
-    fs::write(root.join("OddLocation/UPPER.EXE"), pe(true, false, true)).unwrap();
+    // The same high-entropy PE under a name from each tier, outside every tier, without an
+    // extension, and in upper case.
+    for name in ["driver.efi", "blob.dat", "table.toc", "kernel", "UPPER.EXE"] {
+        fs::write(root.join("OddLocation").join(name), pe(true, false, true)).unwrap();
+    }
     let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['absent']}\n").unwrap();
     let fresh =
         || discovery::build_plan(vec![plan.sources[0].clone()], &rules, &[], false).unwrap();
-    let mut p = fresh();
-    scan(&mut p, &out, &Settings::default());
-    let c = &p.entropy_scan.as_ref().unwrap().counts;
+    let counts = |settings: &Settings| {
+        let mut p = fresh();
+        scan(&mut p, &out, settings);
+        let c = &p.entropy_scan.as_ref().unwrap().counts;
+        (
+            c.files_seen,
+            c.pe_analyzed,
+            c.non_pe,
+            c.other_extension,
+            p.files.len(),
+        )
+    };
+    // Standard opens payload.cpl, resources.exe and UPPER.EXE; text.txt, driver.efi, blob.dat,
+    // table.toc and kernel stay closed.
+    assert_eq!(counts(&Settings::default()), (8, 3, 0, 5, 2));
     assert_eq!(
-        (c.files_seen, c.other_extension, c.pe_analyzed, c.non_pe),
-        (6, 2, 3, 1)
+        counts(&Settings {
+            coverage: ExtensionSet::Broad,
+            ..Default::default()
+        }),
+        (8, 4, 0, 4, 3)
     );
-    assert_eq!(p.files.len(), 2);
-    assert!(
-        p.entropy_scan
-            .as_ref()
-            .unwrap()
-            .observations
-            .iter()
-            .all(|o| !o.relative_path.ends_with(".toc") && o.relative_path != "OddLocation/kernel")
+    assert_eq!(
+        counts(&Settings {
+            coverage: ExtensionSet::Comprehensive,
+            ..Default::default()
+        }),
+        (8, 5, 0, 3, 4)
     );
-    let mut p = fresh();
-    scan(
-        &mut p,
-        &out,
-        &Settings {
+    assert_eq!(
+        counts(&Settings {
             extensions: vec!["toc".into()],
             ..Default::default()
-        },
+        }),
+        (8, 4, 0, 4, 3)
     );
-    assert_eq!(p.entropy_scan.as_ref().unwrap().counts.pe_analyzed, 4);
-    assert_eq!(p.files.len(), 3);
-    let mut p = fresh();
-    scan(
-        &mut p,
-        &out,
-        &Settings {
+    assert_eq!(
+        counts(&Settings {
             all_files: true,
             ..Default::default()
-        },
+        }),
+        (8, 7, 1, 0, 6)
     );
-    let c = &p.entropy_scan.as_ref().unwrap().counts;
-    assert_eq!((c.other_extension, c.pe_analyzed), (0, 5));
-    assert_eq!(p.files.len(), 4);
-    assert!(entropy::DEFAULT_EXTENSIONS.contains(&"appref-ms"));
-    assert!(!entropy::DEFAULT_EXTENSIONS.contains(&"toc"));
-    assert_eq!(entropy::DEFAULT_EXTENSIONS.len(), 228);
+    assert_eq!(entropy::STANDARD_EXTENSIONS.len(), 11);
+    assert_eq!(ExtensionSet::Broad.extensions().count(), 18);
+    assert_eq!(ExtensionSet::Comprehensive.extensions().count(), 26);
+    assert!(
+        ExtensionSet::Standard
+            .extensions()
+            .all(|e| e == e.to_ascii_lowercase())
+    );
 }
 
 #[test]
@@ -529,7 +541,7 @@ fn non_image_pe_counts_as_non_pe_and_malformed_pe_is_not_a_failure() {
     )
     .unwrap();
     fs::write(
-        plan.sources[0].root.join("OddLocation/table.dat"),
+        plan.sources[0].root.join("OddLocation/table.cpl"),
         container,
     )
     .unwrap();
@@ -542,7 +554,8 @@ fn non_image_pe_counts_as_non_pe_and_malformed_pe_is_not_a_failure() {
             r.counts.non_pe,
             r.counts.pe_analyzed
         ),
-        (1, 0, 2, 2)
+        (1, 0, 1, 2),
+        "malformed, errors, non-PE (table.cpl; text.txt is not opened), analyzed"
     );
     let row = r
         .observations
@@ -612,4 +625,282 @@ fn plan_json_omits_the_inventory_and_plan_mode_writes_the_reports() {
             .iter()
             .any(|f| f["ExpectedSHA256"].is_string())
     );
+}
+
+/// A PE32 assembly: data directory 14 points at a CLR header at the start of `.text`
+/// (RVA 0x1000, file 0x200) whose managed resources cover `resources_len` bytes from
+/// RVA 0x1100. The rest of `.text` keeps the high-entropy pattern of `pe()`.
+fn managed_pe(resources_len: u32) -> Vec<u8> {
+    managed_pe_with_format(resources_len, false)
+}
+fn managed_pe_with_format(resources_len: u32, plus: bool) -> Vec<u8> {
+    let mut b = pe(true, false, plus);
+    let optional = 0x98;
+    let directory = optional + if plus { 112 } else { 96 };
+    b[directory - 4..directory].copy_from_slice(&16u32.to_le_bytes());
+    b[directory + 112..directory + 116].copy_from_slice(&0x1000u32.to_le_bytes());
+    b[directory + 116..directory + 120].copy_from_slice(&72u32.to_le_bytes());
+    for (i, va) in [0x1000u32, 0x2000].into_iter().enumerate() {
+        let s = optional + if plus { 240 } else { 224 } + i * 40;
+        b[s + 8..s + 12].copy_from_slice(&4096u32.to_le_bytes());
+        b[s + 12..s + 16].copy_from_slice(&va.to_le_bytes());
+    }
+    b[0x200..0x248].fill(0);
+    b[0x200..0x204].copy_from_slice(&72u32.to_le_bytes());
+    b[0x204..0x206].copy_from_slice(&2u16.to_le_bytes());
+    b[0x206..0x208].copy_from_slice(&5u16.to_le_bytes());
+    b[0x208..0x20c].copy_from_slice(&0x1050u32.to_le_bytes());
+    b[0x20c..0x210].copy_from_slice(&64u32.to_le_bytes());
+    b[0x210..0x214].copy_from_slice(&1u32.to_le_bytes());
+    b[0x218..0x21c].copy_from_slice(&0x1100u32.to_le_bytes());
+    b[0x21c..0x220].copy_from_slice(&resources_len.to_le_bytes());
+    b[0x250..0x290].fill(0);
+    b[0x250..0x254].copy_from_slice(b"BSJB");
+    b[0x254..0x256].copy_from_slice(&1u16.to_le_bytes());
+    b[0x256..0x258].copy_from_slice(&1u16.to_le_bytes());
+    b[0x25c..0x260].copy_from_slice(&12u32.to_le_bytes());
+    b[0x260..0x26c].copy_from_slice(b"v4.0.30319\0\0");
+    b[0x26e..0x270].copy_from_slice(&1u16.to_le_bytes());
+    b[0x270..0x274].copy_from_slice(&0x30u32.to_le_bytes());
+    b[0x274..0x278].copy_from_slice(&4u32.to_le_bytes());
+    b[0x278..0x27c].copy_from_slice(b"#~\0\0");
+    b
+}
+
+#[test]
+fn invalid_clr_headers_do_not_remove_bytes_from_entropy_scoring() {
+    for plus in [false, true] {
+        let good = managed_pe_with_format(4096 - 0x100, plus);
+        let directory = 0x98 + if plus { 112 } else { 96 };
+        for (offset, value) in [
+            (0x200, 0),
+            (0x200, 71),
+            (0x200, u32::MAX),
+            (directory + 116, 71),
+            (directory + 116, u32::MAX),
+            (0x208, 0),
+            (0x20c, u32::MAX),
+            (0x250, 0),
+        ] {
+            let mut b = good.clone();
+            b[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            let a = analyze(&b, &Settings::default()).unwrap();
+            assert!(
+                a.candidate,
+                "PE32+={plus}, offset={offset:#x}, value={value}: {a:?}"
+            );
+            assert!(!a.is_managed);
+            assert_eq!(a.sections[0].measured_size, 4096);
+        }
+    }
+}
+
+#[test]
+fn invalid_managed_resource_ranges_keep_the_full_section_measurement() {
+    for plus in [false, true] {
+        for (rva, len) in [
+            (0x1100u32, 4096 - 0x100 + 1),
+            (0x1100, u32::MAX),
+            (0x1000, 4096), // Overlaps the CLR header and metadata.
+            (0x1050, 128),  // Overlaps metadata only.
+        ] {
+            let mut b = managed_pe_with_format(0, plus);
+            b[0x218..0x21c].copy_from_slice(&rva.to_le_bytes());
+            b[0x21c..0x220].copy_from_slice(&len.to_le_bytes());
+            let a = analyze(&b, &Settings::default()).unwrap();
+            assert!(
+                a.candidate,
+                "PE32+={plus}, RVA={rva:#x}, length={len}: {a:?}"
+            );
+            assert!(a.is_managed);
+            assert_eq!(a.sections[0].measured_size, 4096);
+            assert_eq!(a.sha256, sha256(&b));
+        }
+    }
+}
+
+#[test]
+fn managed_resource_rvas_cannot_wrap_the_pe_address_space() {
+    for plus in [false, true] {
+        let mut b = managed_pe_with_format(0, plus);
+        let directory = 0x98 + if plus { 112 } else { 96 };
+        let section = 0x98 + if plus { 240 } else { 224 };
+        b[section + 12..section + 16].copy_from_slice(&0xffff_f100u32.to_le_bytes());
+        b[directory + 112..directory + 116].copy_from_slice(&0xffff_f100u32.to_le_bytes());
+        b[0x208..0x20c].copy_from_slice(&0xffff_f150u32.to_le_bytes());
+        b[0x218..0x21c].copy_from_slice(&0xffff_ff00u32.to_le_bytes());
+        b[0x21c..0x220].copy_from_slice(&512u32.to_le_bytes());
+        let a = analyze(&b, &Settings::default()).unwrap();
+        assert!(a.is_managed && a.candidate);
+        assert_eq!(a.sections[0].measured_size, 4096);
+    }
+}
+
+#[test]
+fn invalid_managed_metadata_is_scored_and_acquired_in_sealed_reports() {
+    let (_temp, mut plan, out) = fixture();
+    let source = plan.sources[0].root.clone();
+    let mut bad_header = managed_pe(4096 - 0x100);
+    bad_header[0x200..0x204].fill(0);
+    fs::write(source.join("invalid-header.exe"), bad_header).unwrap();
+    fs::write(source.join("invalid-resources.exe"), managed_pe(u32::MAX)).unwrap();
+    fs::write(
+        source.join("strings.resources.dll"),
+        managed_pe(4096 - 0x100),
+    )
+    .unwrap();
+    scan(&mut plan, &out, &Settings::default());
+    assert_eq!(plan.files.len(), 3);
+    let report = plan.entropy_scan.as_ref().unwrap();
+    assert_eq!(report.counts.errors, 0);
+    assert_eq!(report.counts.malformed, 0);
+    let (root, summary) = collect::collect(&plan, &out, &options()).unwrap();
+    assert_eq!(summary.collected, 3);
+    assert_eq!(verify::verify(&root).unwrap(), (3, true));
+    let rows: Vec<serde_json::Value> = fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    for name in ["invalid-header.exe", "invalid-resources.exe"] {
+        let row = rows.iter().find(|r| r["RelativePath"] == name).unwrap();
+        assert_eq!(row["AnalysisStatus"], "Selected");
+        assert_eq!(row["AcquisitionStatus"], "Acquired");
+        assert_eq!(row["HashMatchesAnalysis"], true);
+    }
+    let satellite = rows
+        .iter()
+        .find(|r| r["RelativePath"] == "strings.resources.dll")
+        .unwrap();
+    assert_eq!(satellite["AnalysisStatus"], "BelowThreshold");
+}
+
+#[test]
+fn cli_requires_comprehensive_coverage_for_a_renamed_dat_binary() {
+    let (temp, plan, _) = fixture();
+    let source = &plan.sources[0].root;
+    fs::write(source.join("packed.dat"), pe(true, false, true)).unwrap();
+    for comprehensive in [false, true] {
+        let output = temp.path().join(if comprehensive {
+            "comprehensive"
+        } else {
+            "standard"
+        });
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_kumade"));
+        cmd.args(["plan", "-d"])
+            .arg(source)
+            .args([
+                "--artifact",
+                "windows.prefetch",
+                "--high-entropy",
+                "-q",
+                "-o",
+            ])
+            .arg(&output);
+        if comprehensive {
+            cmd.args(["--entropy-coverage", "comprehensive"]);
+        }
+        let run = cmd.output().unwrap();
+        assert!(
+            run.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let saved: Plan =
+            serde_json::from_reader(fs::File::open(output.join("Plan.json")).unwrap()).unwrap();
+        assert_eq!(
+            saved
+                .files
+                .iter()
+                .any(|f| f.relative_path == Path::new("packed.dat")),
+            comprehensive
+        );
+    }
+}
+
+#[test]
+fn validated_managed_resources_still_reduce_false_positives_in_both_pe_formats() {
+    let settings = Settings {
+        min_bytes: 1024,
+        ..Default::default()
+    };
+    for plus in [false, true] {
+        let b = managed_pe_with_format(4096 - 0x100, plus);
+        let a = analyze(&b, &settings).unwrap();
+        assert!(a.is_managed && !a.candidate);
+        assert_eq!(a.sections[0].measured_size, 256);
+        assert_eq!(a.sha256, sha256(&b));
+        let whole = analyze(
+            &b,
+            &Settings {
+                scope: Scope::File,
+                threshold: 4.0,
+                ..settings.clone()
+            },
+        )
+        .unwrap();
+        assert!(whole.candidate);
+        assert_eq!(whole.file_entropy, a.file_entropy);
+    }
+}
+
+#[test]
+fn managed_resources_are_left_out_of_the_executable_section_measurement() {
+    let settings = Settings {
+        min_bytes: 1024,
+        ..Default::default()
+    };
+    // Satellite assembly: everything after the CLR header is compressed resources. Only the
+    // 256 header bytes remain, below the minimum, so the file is no longer a candidate.
+    let satellite = analyze(&managed_pe(4096 - 0x100), &settings).unwrap();
+    assert!(satellite.is_managed);
+    assert_eq!(satellite.sections[0].raw_size, 4096);
+    assert_eq!(satellite.sections[0].measured_size, 0x100);
+    assert_eq!(satellite.max_executable_entropy, None);
+    assert!(!satellite.candidate);
+    // Whole-file entropy still counts the resources: with the uniform resource bytes, the
+    // constant `.rsrc` section and the headers it lands well above the low-entropy sections.
+    assert!(satellite.file_entropy > 4.0 && satellite.file_entropy < 7.0);
+    // A crypted assembly: the IL region itself is high entropy and stays a candidate.
+    let crypted = analyze(&managed_pe(512), &settings).unwrap();
+    assert!(crypted.is_managed);
+    assert_eq!(crypted.sections[0].measured_size, 4096 - 512);
+    assert!(crypted.max_executable_entropy.unwrap() > 7.9);
+    assert!(crypted.candidate);
+    // No resources at all: measured like a native image.
+    let plain = analyze(&managed_pe(0), &settings).unwrap();
+    assert!(plain.is_managed && plain.candidate);
+    assert_eq!(plain.sections[0].measured_size, 4096);
+    // Exported through the scan: the column and the per-section measured size are visible.
+    let (_temp, mut plan, out) = fixture();
+    fs::write(
+        plan.sources[0]
+            .root
+            .join("OddLocation/strings.resources.dll"),
+        managed_pe(4096 - 0x100),
+    )
+    .unwrap();
+    scan(&mut plan, &out, &settings);
+    assert_eq!(
+        plan.files.len(),
+        1,
+        "the satellite assembly is not selected"
+    );
+    let (root, _) = collect::collect(&plan, &out, &options()).unwrap();
+    let rows: Vec<serde_json::Value> = fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let row = rows
+        .iter()
+        .find(|r| r["RelativePath"] == "OddLocation/strings.resources.dll")
+        .unwrap();
+    assert_eq!(row["AnalysisStatus"], "BelowThreshold");
+    assert_eq!(row["IsManaged"], true);
+    let sections: serde_json::Value =
+        serde_json::from_str(row["Sections"].as_str().unwrap()).unwrap();
+    assert_eq!(sections[0]["MeasuredSize"], 0x100);
+    assert_eq!(rows.iter().filter(|r| r["IsManaged"] == false).count(), 2);
 }

@@ -39,270 +39,41 @@ pub const FILES: &[&str] = &[
     "HighEntropyBinaries.jsonl",
     "EntropySummary.json",
 ];
-/// File types opened for PE recognition by default: executable images plus the script,
-/// document, archive, package, image and data names that malware is dropped or renamed as.
-/// Other names are counted and never opened; `--entropy-extension` adds names and
-/// `--entropy-all-files` opens every regular file.
-pub const DEFAULT_EXTENSIONS: &[&str] = &[
-    // Executable images and loadable code
-    "exe",
-    "dll",
-    "sys",
-    "scr",
-    "cpl",
-    "ocx",
-    "com",
-    "drv",
-    "ax",
-    "acm",
-    "tsp",
-    "efi",
-    "pyd",
-    "node",
-    "xll",
-    "wll",
-    // PowerShell
-    "ps1",
-    "psm1",
-    "psd1",
-    "ps1xml",
-    "psc1",
-    "pssc",
-    "psrc",
-    "clixml",
-    // Windows Script Host
-    "vbs",
-    "vbe",
-    "wsf",
-    "wsh",
-    "wsc",
-    "sct",
-    // JavaScript
-    "js",
-    "jse",
-    "mjs",
-    "cjs",
-    // Batch
-    "bat",
-    "cmd",
-    // HTML applications and documents
-    "hta",
-    "html",
-    "htm",
-    "xhtml",
-    "mht",
-    "mhtml",
-    "svg",
-    // Shortcuts and launchers
-    "lnk",
-    "url",
-    "scf",
-    "pif",
-    "msc",
-    "job",
-    "rdp",
-    "application",
-    "appref-ms",
-    // Shell item files
-    "settingcontent-ms",
-    "library-ms",
-    "search-ms",
-    "searchconnector-ms",
-    // Registry, setup, WMI and XML text
-    "reg",
-    "inf",
-    "mof",
-    "mfl",
-    "xml",
-    "xsl",
-    "xslt",
-    // Configuration
-    "ini",
-    "cfg",
-    "conf",
-    "config",
-    "json",
-    "yaml",
-    "yml",
-    "ovpn",
-    // Build and source
-    "proj",
-    "csproj",
-    "vbproj",
-    "targets",
-    "tasks",
-    "cs",
-    "vb",
-    "bas",
-    "vba",
-    // Scripting languages
-    "py",
-    "pyw",
-    "pyc",
-    "pyo",
-    "rb",
-    "pl",
-    "pm",
-    "lua",
-    "ahk",
-    "au3",
-    "a3x",
-    "tcl",
-    "sh",
-    "bash",
-    // ASP web pages
-    "asp",
-    "aspx",
-    "ashx",
-    "asmx",
-    "ascx",
-    "asa",
-    "asax",
-    // PHP web pages
-    "php",
-    "php3",
-    "php4",
-    "php5",
-    "php7",
-    "php8",
-    "phtml",
-    // JSP, ColdFusion and CGI
-    "jsp",
-    "jspx",
-    "jspf",
-    "cfm",
-    "cfml",
-    "cgi",
-    // Word
-    "doc",
-    "dot",
-    "docx",
-    "docm",
-    "dotx",
-    "dotm",
-    "rtf",
-    // Excel
-    "xls",
-    "xlt",
-    "xla",
-    "xlsx",
-    "xlsm",
-    "xlsb",
-    "xltx",
-    "xltm",
-    "xlam",
-    "xlm",
-    // Spreadsheet and query files
-    "slk",
-    "csv",
-    "iqy",
-    "dqy",
-    "oqy",
-    "rqy",
-    "odc",
-    // PowerPoint
-    "ppt",
-    "pps",
-    "pot",
-    "ppa",
-    "pptx",
-    "pptm",
-    "ppsx",
-    "ppsm",
-    "potx",
-    "potm",
-    "ppam",
-    "sldx",
-    "sldm",
-    // PDF and OneNote
-    "pdf",
-    "one",
-    "onepkg",
-    // Publisher, Visio and Access
-    "pub",
-    "vsd",
-    "vsdx",
-    "vsdm",
-    "mdb",
-    "mde",
-    "accdb",
-    "accde",
-    // OpenDocument and HWP
-    "odt",
-    "ods",
-    "odp",
-    "ott",
-    "ots",
-    "otp",
-    "hwp",
-    "hwpx",
-    // Help files
-    "chm",
-    "hlp",
-    // Mail messages
-    "eml",
-    "msg",
-    "oft",
-    // Archives
-    "zip",
-    "rar",
-    "7z",
-    "tar",
-    "gz",
-    "tgz",
-    "bz2",
-    "tbz2",
-    "xz",
-    "txz",
-    "zst",
-    // Installers and packages
-    "msi",
-    "msp",
-    "mst",
-    "cab",
-    "msu",
-    "appx",
-    "appxbundle",
-    "msix",
-    "msixbundle",
-    // Application packages
-    "jar",
-    "war",
-    "ear",
-    "pyz",
-    "whl",
-    "nupkg",
-    "vsix",
-    "crx",
-    "xpi",
-    "phar",
-    // Disk and system images
-    "iso",
-    "img",
-    "vhd",
-    "vhdx",
-    "vmdk",
-    "vdi",
-    "wim",
-    "esd",
-    // Mailboxes
-    "pst",
-    "ost",
-    "mbox",
-    // Data and temporary names that hide payloads
-    "bin",
-    "dat",
-    "tmp",
-    "temp",
-    "txt",
-    "log",
-    "bak",
-    "old",
-    "cache",
-    "dmp",
-    "dump",
-    "raw",
+/// Extensions opened for PE recognition by default: the names Windows loads code from.
+pub const STANDARD_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "sys", "scr", "com", "cpl", "ocx", "xll", "drv", "pyd", "node",
 ];
+/// Added by `--entropy-coverage broad`: less common loadable-code names.
+pub const BROAD_EXTENSIONS: &[&str] = &["wll", "ax", "acm", "tsp", "ime", "bpl", "efi"];
+/// Added by `--entropy-coverage comprehensive`: data and temporary names that renamed
+/// executables are hidden under.
+pub const COMPREHENSIVE_EXTENSIONS: &[&str] =
+    &["bin", "dat", "tmp", "ini", "cfg", "png", "jpg", "cmd"];
+
+/// Which built-in extension list the walk opens. `--entropy-extension` adds names to any
+/// level and `--entropy-all-files` opens every regular file.
+#[derive(Clone, Copy, Debug, Default, ValueEnum, Serialize, Deserialize, PartialEq)]
+pub enum ExtensionSet {
+    #[default]
+    Standard,
+    Broad,
+    Comprehensive,
+}
+impl ExtensionSet {
+    /// The extensions this level opens, lower-case and without the dot.
+    pub fn extensions(self) -> impl Iterator<Item = &'static str> {
+        let tiers: &[&[&str]] = match self {
+            Self::Standard => &[STANDARD_EXTENSIONS],
+            Self::Broad => &[STANDARD_EXTENSIONS, BROAD_EXTENSIONS],
+            Self::Comprehensive => &[
+                STANDARD_EXTENSIONS,
+                BROAD_EXTENSIONS,
+                COMPREHENSIVE_EXTENSIONS,
+            ],
+        };
+        tiers.iter().flat_map(|tier| tier.iter().copied())
+    }
+}
 
 #[derive(Clone, Debug, Default, ValueEnum, Serialize, Deserialize, PartialEq)]
 pub enum Scope {
@@ -321,7 +92,9 @@ pub struct Settings {
     pub max_candidates: Option<u64>,
     pub max_collect_mib: Option<u64>,
     pub excludes: Vec<String>,
-    /// Extensions opened in addition to `DEFAULT_EXTENSIONS`, lower-case, without the dot.
+    /// Which built-in extension list is opened.
+    pub coverage: ExtensionSet,
+    /// Extensions opened in addition to that list, lower-case, without the dot.
     pub extensions: Vec<String>,
     /// Open every regular file whatever its name.
     pub all_files: bool,
@@ -336,6 +109,7 @@ impl Default for Settings {
             max_candidates: None,
             max_collect_mib: None,
             excludes: vec![],
+            coverage: ExtensionSet::Standard,
             extensions: vec![],
             all_files: false,
         }
@@ -367,6 +141,10 @@ pub struct EntropyArgs {
     /// Exclude a source-relative glob from entropy discovery; repeat as needed
     #[arg(long, requires = "high_entropy", value_name = "GLOB")]
     pub entropy_exclude: Vec<String>,
+    /// Built-in extension list to open: standard (exe dll sys scr com cpl ocx xll drv pyd node),
+    /// broad (adds wll ax acm tsp ime bpl efi) or comprehensive (adds bin dat tmp ini cfg png jpg cmd)
+    #[arg(long, value_enum, requires = "high_entropy")]
+    pub entropy_coverage: Option<ExtensionSet>,
     /// Also open files with this extension (case-insensitive, dot optional); repeat as needed
     #[arg(long, requires = "high_entropy", value_name = "EXT")]
     pub entropy_extension: Vec<String>,
@@ -397,6 +175,7 @@ impl EntropyArgs {
             max_candidates: self.entropy_max_candidates,
             max_collect_mib: self.entropy_max_collect_mib,
             excludes: self.entropy_exclude.clone(),
+            coverage: self.entropy_coverage.unwrap_or(d.coverage),
             extensions: self
                 .entropy_extension
                 .iter()
@@ -413,6 +192,9 @@ pub struct Section {
     pub name: String,
     pub raw_offset: u64,
     pub raw_size: u64,
+    /// Bytes the entropy was measured over: the raw size minus a managed assembly's embedded
+    /// resources, which sit inside `.text` without being code.
+    pub measured_size: u64,
     pub executable: bool,
     pub entropy: f64,
 }
@@ -427,6 +209,8 @@ pub struct Analysis {
     pub machine: String,
     #[serde(rename = "IsDLL")]
     pub is_dll: bool,
+    /// The image has a CLR header: a .NET assembly or mixed-mode image.
+    pub is_managed: bool,
     pub has_certificate_table: bool,
     pub candidate: bool,
     pub sections: Vec<Section>,
@@ -479,6 +263,86 @@ fn read_at(reader: &mut dyn ReadSeek, size: u64, offset: u64, buffer: &mut [u8])
     reader.seek(SeekFrom::Start(offset))?;
     reader.read_exact(buffer)?;
     Ok(())
+}
+/// Raw layout of one section: virtual address and extent, raw offset and size.
+struct Layout {
+    va: u64,
+    extent: u64,
+    raw_offset: u64,
+    raw_size: u64,
+}
+/// File offset of `need` bytes at `rva`, when they are backed by a section's raw data.
+fn rva_to_offset(layout: &[Layout], rva: u64, need: u64) -> Option<u64> {
+    // PE32 and PE32+ both encode RVAs in 32 bits.
+    if rva.checked_add(need)? > u64::from(u32::MAX) + 1 {
+        return None;
+    }
+    layout.iter().find_map(|s| {
+        let delta = rva.checked_sub(s.va)?;
+        (delta < s.extent && delta.checked_add(need)? <= s.raw_size).then(|| s.raw_offset + delta)
+    })
+}
+
+struct ManagedLayout {
+    resources: Option<(u64, u64)>,
+}
+
+/// Resource exclusion requires bounded CLR/metadata structures, not just a CLR
+/// directory pointer. Invalid declarations leave the original bytes in scoring.
+/// These are structural checks for this heuristic, not complete CLR loader validation.
+fn managed_layout(
+    reader: &mut dyn ReadSeek,
+    size: u64,
+    layout: &[Layout],
+    rva: u64,
+    length: u64,
+) -> Result<Option<ManagedLayout>> {
+    if rva == 0 || length < 72 {
+        return Ok(None);
+    }
+    let Some(offset) = rva_to_offset(layout, rva, length) else {
+        return Ok(None);
+    };
+    let mut clr = [0; 72];
+    read_at(reader, size, offset, &mut clr)?;
+    let header_size = u64::from(le32(&clr, 0));
+    if header_size < 72 || header_size > length {
+        return Ok(None);
+    }
+    let metadata_rva = u64::from(le32(&clr, 8));
+    let metadata_len = u64::from(le32(&clr, 12));
+    if metadata_rva == 0 || metadata_len < 16 {
+        return Ok(None);
+    }
+    let Some(metadata) = rva_to_offset(layout, metadata_rva, metadata_len) else {
+        return Ok(None);
+    };
+    let overlaps = |a: u64, b: u64, x: u64, y: u64| a < y && x < b;
+    if overlaps(offset, offset + length, metadata, metadata + metadata_len) {
+        return Ok(None);
+    }
+    let mut signature = [0; 4];
+    read_at(reader, size, metadata, &mut signature)?;
+    if signature != *b"BSJB" {
+        return Ok(None);
+    }
+    let mut managed = ManagedLayout { resources: None };
+    let resources_rva = u64::from(le32(&clr, 24));
+    let resources_len = u64::from(le32(&clr, 28));
+    if resources_rva == 0 || resources_len == 0 {
+        return Ok(Some(managed));
+    }
+    // Validate the whole declaration. Clipping an invalid length to a section
+    // boundary would let arbitrary header bytes hide that section from scoring.
+    if let Some(start) = rva_to_offset(layout, resources_rva, resources_len) {
+        let end = start + resources_len;
+        if !overlaps(start, end, offset, offset + length)
+            && !overlaps(start, end, metadata, metadata + metadata_len)
+        {
+            managed.resources = Some((start, end));
+        }
+    }
+    Ok(Some(managed))
 }
 /// Header checks use seeked bounded reads. Histograms and hash then read the complete
 /// logical file once; sections are measured from on-disk bytes, never virtual zero padding.
@@ -539,6 +403,7 @@ pub fn analyze(
         false
     };
     let mut sections = Vec::with_capacity(n);
+    let mut layout = Vec::with_capacity(n);
     for index in 0..n {
         let mut s = [0; 40];
         read_at(
@@ -556,14 +421,53 @@ pub fn analyze(
         {
             return Err(Malformed("PE section raw bytes are truncated or out of bounds").into());
         }
+        layout.push(Layout {
+            va: u64::from(le32(&s, 12)),
+            extent: u64::from(le32(&s, 8)).max(length),
+            raw_offset: offset,
+            raw_size: length,
+        });
         sections.push(Section {
             name: String::from_utf8_lossy(&s[..s[..8].iter().position(|b| *b == 0).unwrap_or(8)])
                 .into_owned(),
             raw_offset: offset,
             raw_size: length,
+            measured_size: length,
             executable: le32(&s, 36) & 0x2000_0000 != 0,
             entropy: 0.0,
         });
+    }
+    // IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR (14) points at the CLR header of a managed assembly.
+    // Its embedded resources (compressed satellite strings, images, serialized objects) are
+    // stored inside the executable `.text` section without being code, so that byte range is
+    // left out of the section measurement. IL and metadata stay in it, because packed and
+    // crypted .NET payloads show up there.
+    let mut managed = false;
+    let mut resources = None;
+    if optional_len >= directory + 120 && le32(&optional, directory - 4) > 14 {
+        let rva = u64::from(le32(&optional, directory + 112));
+        let length = u64::from(le32(&optional, directory + 116));
+        if let Some(validated) = managed_layout(reader, size, &layout, rva, length)? {
+            managed = true;
+            resources = validated.resources;
+        }
+    }
+    // The byte ranges each section is measured over: its raw data minus the managed resources.
+    let pieces: Vec<Vec<(u64, u64)>> = sections
+        .iter()
+        .map(|s| {
+            let (a, b) = (s.raw_offset, s.raw_offset + s.raw_size);
+            match resources {
+                Some((x, y)) if x < b && y > a => [(a, x.max(a)), (y.min(b), b)]
+                    .into_iter()
+                    .filter(|(p, q)| p < q)
+                    .collect(),
+                _ => vec![(a, b)],
+            }
+        })
+        .collect();
+    for (s, ranges) in sections.iter_mut().zip(&pieces) {
+        s.measured_size = ranges.iter().map(|(p, q)| q - p).sum();
     }
     if settings
         .max_file_mib
@@ -591,12 +495,14 @@ pub fn analyze(
             .checked_add(read as u64)
             .context("File position overflow")?;
         ensure!(end <= size, "File grew during entropy analysis");
-        for (section, counts) in sections.iter().zip(per.iter_mut()) {
-            let start = position.max(section.raw_offset);
-            let stop = end.min(section.raw_offset + section.raw_size);
-            if start < stop {
-                for b in &data[(start - position) as usize..(stop - position) as usize] {
-                    counts[*b as usize] += 1;
+        for (ranges, counts) in pieces.iter().zip(per.iter_mut()) {
+            for (from, to) in ranges {
+                let start = position.max(*from);
+                let stop = end.min(*to);
+                if start < stop {
+                    for b in &data[(start - position) as usize..(stop - position) as usize] {
+                        counts[*b as usize] += 1;
+                    }
                 }
             }
         }
@@ -604,11 +510,11 @@ pub fn analyze(
     }
     ensure!(position == size, "File shortened during entropy analysis");
     for (s, counts) in sections.iter_mut().zip(&per) {
-        s.entropy = entropy(counts, s.raw_size);
+        s.entropy = entropy(counts, s.measured_size);
     }
     let maximum = sections
         .iter()
-        .filter(|s| s.executable && s.raw_size >= settings.min_bytes)
+        .filter(|s| s.executable && s.measured_size >= settings.min_bytes)
         .map(|s| s.entropy)
         .reduce(f64::max);
     let file_entropy = entropy(&full, size);
@@ -626,6 +532,7 @@ pub fn analyze(
         max_executable_entropy: maximum,
         machine: format!("0x{:04X}", le16(&coff, 4)),
         is_dll: le16(&coff, 22) & 0x2000 != 0,
+        is_managed: managed,
         has_certificate_table: cert,
         candidate,
         sections,
@@ -832,9 +739,10 @@ pub fn augment_with_copies(
         );
     }
     let excludes = builder.build()?;
-    let extensions: HashSet<String> = DEFAULT_EXTENSIONS
-        .iter()
-        .map(|e| (*e).to_owned())
+    let extensions: HashSet<String> = settings
+        .coverage
+        .extensions()
+        .map(str::to_owned)
         .chain(settings.extensions.iter().cloned())
         .collect();
     let pool = rayon::ThreadPoolBuilder::new()
@@ -1278,6 +1186,7 @@ struct Export<'a> {
     machine: Option<&'a str>,
     #[serde(rename = "IsDLL")]
     is_dll: Option<bool>,
+    is_managed: Option<bool>,
     has_certificate_table: Option<bool>,
     sections: String,
     observation_id: Option<&'a str>,
@@ -1313,6 +1222,7 @@ pub fn write_report(root: &Path, report: &Report, records: &[Record]) -> Result<
         "MaxExecutableEntropy",
         "Machine",
         "IsDLL",
+        "IsManaged",
         "HasCertificateTable",
         "Sections",
         "ObservationId",
@@ -1341,6 +1251,7 @@ pub fn write_report(root: &Path, report: &Report, records: &[Record]) -> Result<
             max_executable_entropy: a.and_then(|a| a.max_executable_entropy),
             machine: a.map(|a| a.machine.as_str()),
             is_dll: a.map(|a| a.is_dll),
+            is_managed: a.map(|a| a.is_managed),
             has_certificate_table: a.map(|a| a.has_certificate_table),
             sections: serde_json::to_string(&a.map(|a| &a.sections))?,
             observation_id: row.observation_id.as_deref(),
@@ -1524,7 +1435,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let root = t.path().join("source");
         std::fs::create_dir(&root).unwrap();
-        let path = root.join("test.dat");
+        let path = root.join("test.scr");
         std::fs::write(&path, high_pe()).unwrap();
         std::fs::write(
             format!("{}:Zone.Identifier", path.display()),

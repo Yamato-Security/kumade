@@ -24,20 +24,29 @@
   verification and locked-file fallback enabled. Seal embedded YARA results
   and report incomplete/failed scans as partial, including container output.
 
+- Validate CLR header sizes, metadata bounds/signature and complete managed
+  resource ranges before excluding bytes from PE section entropy. Invalid or
+  overlapping declarations keep the original bytes in scoring. Clarify that
+  the renamed UPX `.dat` example requires comprehensive extension coverage.
+
 - Add opt-in `--high-entropy` drive discovery and collection of PE packing
   candidates, including binaries with misleading filename extensions. Measure
   whole-file and executable-section Shannon entropy with streaming SHA-256,
   bounded scan workers, configurable thresholds/exclusions and optional limits.
   Reuse locked-file raw NTFS and VSS sources; seal PascalCase CSV/JSONL reports,
   detect analysis/acquisition hash changes, and include candidates in directory,
-  VHDX and E01 output. Only files with a built-in list of executable, script,
-  document, archive, package, image and data extensions are opened
-  (`--entropy-extension` adds names, `--entropy-all-files` opens everything).
+  VHDX and E01 output. Only files whose extension is on the selected list are
+  opened: `--entropy-coverage standard` (default: exe dll sys scr com cpl ocx xll
+  drv pyd node), `broad` (adds wll ax acm tsp ime bpl efi) or `comprehensive`
+  (adds bin dat tmp ini cfg png jpg cmd); `--entropy-extension` adds names and
+  `--entropy-all-files` opens everything.
   PE-format files that are not executable images count as non-PE, a malformed
   PE header gets a `Malformed` row instead of failing the run, and `Plan.json`
   keeps settings and counters while the per-file inventory lives only in the
-  sealed reports, which `plan` writes beside the plan. High entropy is a
-  heuristic, not a malware verdict.
+  sealed reports, which `plan` writes beside the plan. Managed assemblies are
+  measured without their embedded CLR resources, so satellite `.resources.dll`
+  files no longer qualify on compressed strings alone, and `IsManaged` is
+  reported. High entropy is a heuristic, not a malware verdict.
 
 - Add opt-in `scan-processes` with Boreal, YARA Forge Core/Extended/Full, local rule sources, CSV/JSONL matches, explicit coverage failures, deadlines and resource measurements. VSS acquisition and process scanning share one native-architecture check, which also rejects the x64 build under the x64 emulation of Windows on ARM64 (not reported as WOW64).
 

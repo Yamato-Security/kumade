@@ -53,21 +53,21 @@ copied once and receives both artifact identifiers.
 ### Which files are opened
 
 The walk visits every regular file under the selected roots, but it only opens
-files whose extension is on a built-in list: executable images (`.exe`, `.dll`,
-`.sys`, `.scr`, `.cpl`, `.ocx`, `.com`, `.drv`, `.efi`, `.pyd`, …), scripts
-(PowerShell, WSH, JavaScript, batch, HTA, Python, shell, …), shortcuts and
-launchers, registry/configuration/XML text, web pages, Office and other
-documents, mail, archives, installers and packages, disk images, mailboxes, and
-the data and temporary names that payloads are hidden under (`.bin`, `.dat`,
-`.tmp`, `.txt`, `.log`, `.bak`, `.old`, `.cache`, `.dmp`, `.raw`, …). The full
-list is `DEFAULT_EXTENSIONS` in `src/entropy.rs`. The comparison ignores case
-and looks at the final extension only. Recognition inside an opened file is
-still by PE header, so a renamed executable is found under any listed name.
+files whose extension is on the selected list. `--entropy-coverage` picks it:
 
-Files with other names, and files without an extension, are counted in
-`EntropySummary.json` as `OtherExtension` and are not opened. Add names with
-`--entropy-extension <EXT>` (repeatable), or open every regular file with
-`--entropy-all-files`, which is the slower, exhaustive mode.
+| Level | Opens | Meant for |
+|---|---|---|
+| `standard` (default) | `.exe .dll .sys .scr .com .cpl .ocx .xll .drv .pyd .node` | The names Windows loads code from |
+| `broad` | standard plus `.wll .ax .acm .tsp .ime .bpl .efi` | Less common loadable-code names |
+| `comprehensive` | broad plus `.bin .dat .tmp .ini .cfg .png .jpg .cmd` | Data and temporary names that renamed executables hide under |
+
+The comparison ignores case and looks at the final extension only.
+Recognition inside an opened file is still by PE header, so a renamed
+executable is found under any listed name. Files with other names, and files
+without an extension, are counted in `EntropySummary.json` as `OtherExtension`
+and are not opened. Add names to any level with `--entropy-extension <EXT>`
+(repeatable), or open every regular file with `--entropy-all-files`, the
+slowest, exhaustive mode.
 
 ## Tuning
 
@@ -81,6 +81,7 @@ Files with other names, and files without an extension, are counted in
 | `--entropy-max-candidates <COUNT>` | No cap | Limit additional selected binary files |
 | `--entropy-max-collect-mib <MiB>` | No cap | Limit logical bytes of additional selected binary files |
 | `--entropy-exclude <GLOB>` | None | Repeatable, case-insensitive source-relative exclusion |
+| `--entropy-coverage <LEVEL>` | `standard` | `standard`, `broad` or `comprehensive` extension list, see above |
 | `--entropy-extension <EXT>` | None | Repeatable; also open files with this extension (dot optional, case ignored) |
 | `--entropy-all-files` | Off | Open every regular file instead of only the built-in extension list |
 | `-T, --threads <COUNT>` | Available logical CPUs, capped at 4; explicit maximum 128 | Parallel scan/acquisition workers |
@@ -115,10 +116,23 @@ logical file instead, including headers, overlays and certificate bytes.
 as section data. All PE sections are reported with their sizes, offsets,
 executable flag and individual entropy.
 
-For example, validation with an inert generated Windows x64 program and UPX
-4.2.4 produced:
+Managed assemblies need one adjustment. The .NET runtime stores an assembly's
+embedded resources (compressed satellite strings, images, serialized objects)
+inside the executable `.text` section, so a harmless `*.resources.dll` would
+reach the threshold on its resources alone. When an image has a bounded CLR
+header and metadata with the `BSJB` signature, a fully backed managed resource
+range is left out of the section measurement. The resource range must not
+overlap the CLR header or metadata; invalid declarations leave those bytes in
+scoring instead of clipping the range. `MeasuredSize` shows what was measured. The
+IL and metadata stay in, because packed and crypted .NET payloads show up there.
+Whole-file entropy is not adjusted. On a stock developer image this removed
+most of the satellite assemblies from the candidate list.
 
-| File | Whole-file entropy | Largest eligible executable-section entropy | Default result |
+For example, validation with an inert generated Windows x64 program and UPX
+4.2.4 produced the results below using `--entropy-coverage comprehensive`.
+That level opens the renamed `.dat`; the standard default skips it by extension.
+
+| File | Whole-file entropy | Largest eligible executable-section entropy | Result with comprehensive coverage |
 |---|---:|---:|---|
 | Original benign PE | 7.953 | None (code section smaller than minimum) | BelowThreshold |
 | UPX-packed copy, renamed `.dat` | 7.137 | 7.589 | Selected |
@@ -159,8 +173,9 @@ entropy fields or report files.
 | `Size`, `SHA256` | Logical length and SHA-256 of the complete analyzed file |
 | `FileEntropy`, `MaxExecutableEntropy` | Whole-file entropy and maximum executable-section entropy meeting minimum size; null/empty when unavailable |
 | `Machine`, `IsDLL` | COFF machine code and DLL characteristic; PE signatures drive recognition, not `.exe` extensions |
+| `IsManaged` | CLR header and metadata passed basic bounds/signature checks; resource bounds are checked separately. This is not full CLR loader validation |
 | `HasCertificateTable` | A positive in-bounds certificate-table range exists; **not** signature validation or publisher trust |
-| `Sections` | JSON array of `Name`, `RawOffset`, `RawSize`, `Executable`, `Entropy` |
+| `Sections` | JSON array of `Name`, `RawOffset`, `RawSize`, `MeasuredSize`, `Executable`, `Entropy`; `MeasuredSize` is smaller than `RawSize` where managed resources were skipped |
 | `ObservationId` | Join key to `Manifest.csv`/`Manifest.jsonl` for selected files |
 | `AcquisitionStatus`, `CollectedSHA256`, `RelativeOutputPath` | Actual copy result and output location; unavailable if not selected |
 | `HashMatchesAnalysis` | Whether the copied content matches the analyzed content; blank/null without an acquired hash |
@@ -184,8 +199,14 @@ disagrees with the analysis hash.
   find scripts, ELF, archives, embedded PE payloads, deleted files, or PE content
   hidden only in named streams. It does not promise Windows loader validation.
 - Only files with a listed extension are opened. A payload stored under a name
-  outside the list, or without an extension, is counted but not inspected unless
-  `--entropy-all-files` or `--entropy-extension` says otherwise.
+  outside the selected level, or without an extension, is counted but not
+  inspected unless `--entropy-coverage`, `--entropy-extension` or
+  `--entropy-all-files` says otherwise. `.mui` resource libraries and .NET Native
+  tables are the largest groups of PE-format files left closed by default.
+- Validated managed resources can also contain encrypted or embedded payloads.
+  Their exclusion reduces benign resource-related hits but can miss packing
+  concentrated there. `--entropy-scope file` or `either` includes those bytes in
+  whole-file scoring, at the cost of more resource-related candidates.
 - The directory walk skips symlinks and reparse points rather than traversing
   other volumes or aliases. Cloud-only placeholders and WOF/reparse files may
   therefore be excluded. Excluded directories count as one exclusion, not an

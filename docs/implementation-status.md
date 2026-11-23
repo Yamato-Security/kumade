@@ -98,8 +98,8 @@ and independent comparison before a release claims broad production coverage.
 ## High-entropy PE discovery
 
 `--high-entropy` adds an optional full selected-source walk before collection.
-The scanner opens files whose extension is on a built-in list of executable,
-script, document, archive, package, image and data names (extendable, or every
+The scanner opens files whose extension is on the selected list (`standard`
+PE names by default, `broad` and `comprehensive` levels, added names, or every
 file with `--entropy-all-files`), recognizes PE32/PE32+ by header signatures
 regardless of what the name claims, measures logical on-disk bytes, hashes each
 analyzed PE and adds qualifying unnamed streams to the existing acquisition plan. Directory, VHDX and E01
