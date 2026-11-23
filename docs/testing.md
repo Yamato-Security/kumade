@@ -164,7 +164,8 @@ negative controls, minimum-region size, malformed/truncated offsets and headers,
 optional caps, deterministic selection, catalogue deduplication, exclusions,
 symlinks, raw resident/nonresident/sparse stream inspection, backward-compatible
 plans, copy/seal verification and same-size analysis/acquisition changes, the
-extension list (default, `--entropy-extension`, `--entropy-all-files`), non-image
+extension sets (`standard`, `broad`, `comprehensive`, `--entropy-extension`,
+`--entropy-all-files`), non-image
 and malformed PE handling, a managed assembly whose CLR resources are left out of
 the section measurement, and `plan` mode writing the report files beside a
 `Plan.json` that carries no per-file rows. CLI

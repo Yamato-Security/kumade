@@ -8,9 +8,11 @@
   bounded scan workers, configurable thresholds/exclusions and optional limits.
   Reuse locked-file raw NTFS and VSS sources; seal PascalCase CSV/JSONL reports,
   detect analysis/acquisition hash changes, and include candidates in directory,
-  VHDX and E01 output. Only files with a built-in list of executable, script,
-  document, archive, package, image and data extensions are opened
-  (`--entropy-extension` adds names, `--entropy-all-files` opens everything).
+  VHDX and E01 output. Only files whose extension is on the selected list are
+  opened: `--entropy-coverage standard` (default: exe dll sys scr com cpl ocx xll
+  drv pyd node), `broad` (adds wll ax acm tsp ime bpl efi) or `comprehensive`
+  (adds bin dat tmp ini cfg png jpg cmd); `--entropy-extension` adds names and
+  `--entropy-all-files` opens everything.
   PE-format files that are not executable images count as non-PE, a malformed
   PE header gets a `Malformed` row instead of failing the run, and `Plan.json`
   keeps settings and counters while the per-file inventory lives only in the

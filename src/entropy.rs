@@ -39,270 +39,41 @@ pub const FILES: &[&str] = &[
     "HighEntropyBinaries.jsonl",
     "EntropySummary.json",
 ];
-/// File types opened for PE recognition by default: executable images plus the script,
-/// document, archive, package, image and data names that malware is dropped or renamed as.
-/// Other names are counted and never opened; `--entropy-extension` adds names and
-/// `--entropy-all-files` opens every regular file.
-pub const DEFAULT_EXTENSIONS: &[&str] = &[
-    // Executable images and loadable code
-    "exe",
-    "dll",
-    "sys",
-    "scr",
-    "cpl",
-    "ocx",
-    "com",
-    "drv",
-    "ax",
-    "acm",
-    "tsp",
-    "efi",
-    "pyd",
-    "node",
-    "xll",
-    "wll",
-    // PowerShell
-    "ps1",
-    "psm1",
-    "psd1",
-    "ps1xml",
-    "psc1",
-    "pssc",
-    "psrc",
-    "clixml",
-    // Windows Script Host
-    "vbs",
-    "vbe",
-    "wsf",
-    "wsh",
-    "wsc",
-    "sct",
-    // JavaScript
-    "js",
-    "jse",
-    "mjs",
-    "cjs",
-    // Batch
-    "bat",
-    "cmd",
-    // HTML applications and documents
-    "hta",
-    "html",
-    "htm",
-    "xhtml",
-    "mht",
-    "mhtml",
-    "svg",
-    // Shortcuts and launchers
-    "lnk",
-    "url",
-    "scf",
-    "pif",
-    "msc",
-    "job",
-    "rdp",
-    "application",
-    "appref-ms",
-    // Shell item files
-    "settingcontent-ms",
-    "library-ms",
-    "search-ms",
-    "searchconnector-ms",
-    // Registry, setup, WMI and XML text
-    "reg",
-    "inf",
-    "mof",
-    "mfl",
-    "xml",
-    "xsl",
-    "xslt",
-    // Configuration
-    "ini",
-    "cfg",
-    "conf",
-    "config",
-    "json",
-    "yaml",
-    "yml",
-    "ovpn",
-    // Build and source
-    "proj",
-    "csproj",
-    "vbproj",
-    "targets",
-    "tasks",
-    "cs",
-    "vb",
-    "bas",
-    "vba",
-    // Scripting languages
-    "py",
-    "pyw",
-    "pyc",
-    "pyo",
-    "rb",
-    "pl",
-    "pm",
-    "lua",
-    "ahk",
-    "au3",
-    "a3x",
-    "tcl",
-    "sh",
-    "bash",
-    // ASP web pages
-    "asp",
-    "aspx",
-    "ashx",
-    "asmx",
-    "ascx",
-    "asa",
-    "asax",
-    // PHP web pages
-    "php",
-    "php3",
-    "php4",
-    "php5",
-    "php7",
-    "php8",
-    "phtml",
-    // JSP, ColdFusion and CGI
-    "jsp",
-    "jspx",
-    "jspf",
-    "cfm",
-    "cfml",
-    "cgi",
-    // Word
-    "doc",
-    "dot",
-    "docx",
-    "docm",
-    "dotx",
-    "dotm",
-    "rtf",
-    // Excel
-    "xls",
-    "xlt",
-    "xla",
-    "xlsx",
-    "xlsm",
-    "xlsb",
-    "xltx",
-    "xltm",
-    "xlam",
-    "xlm",
-    // Spreadsheet and query files
-    "slk",
-    "csv",
-    "iqy",
-    "dqy",
-    "oqy",
-    "rqy",
-    "odc",
-    // PowerPoint
-    "ppt",
-    "pps",
-    "pot",
-    "ppa",
-    "pptx",
-    "pptm",
-    "ppsx",
-    "ppsm",
-    "potx",
-    "potm",
-    "ppam",
-    "sldx",
-    "sldm",
-    // PDF and OneNote
-    "pdf",
-    "one",
-    "onepkg",
-    // Publisher, Visio and Access
-    "pub",
-    "vsd",
-    "vsdx",
-    "vsdm",
-    "mdb",
-    "mde",
-    "accdb",
-    "accde",
-    // OpenDocument and HWP
-    "odt",
-    "ods",
-    "odp",
-    "ott",
-    "ots",
-    "otp",
-    "hwp",
-    "hwpx",
-    // Help files
-    "chm",
-    "hlp",
-    // Mail messages
-    "eml",
-    "msg",
-    "oft",
-    // Archives
-    "zip",
-    "rar",
-    "7z",
-    "tar",
-    "gz",
-    "tgz",
-    "bz2",
-    "tbz2",
-    "xz",
-    "txz",
-    "zst",
-    // Installers and packages
-    "msi",
-    "msp",
-    "mst",
-    "cab",
-    "msu",
-    "appx",
-    "appxbundle",
-    "msix",
-    "msixbundle",
-    // Application packages
-    "jar",
-    "war",
-    "ear",
-    "pyz",
-    "whl",
-    "nupkg",
-    "vsix",
-    "crx",
-    "xpi",
-    "phar",
-    // Disk and system images
-    "iso",
-    "img",
-    "vhd",
-    "vhdx",
-    "vmdk",
-    "vdi",
-    "wim",
-    "esd",
-    // Mailboxes
-    "pst",
-    "ost",
-    "mbox",
-    // Data and temporary names that hide payloads
-    "bin",
-    "dat",
-    "tmp",
-    "temp",
-    "txt",
-    "log",
-    "bak",
-    "old",
-    "cache",
-    "dmp",
-    "dump",
-    "raw",
+/// Extensions opened for PE recognition by default: the names Windows loads code from.
+pub const STANDARD_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "sys", "scr", "com", "cpl", "ocx", "xll", "drv", "pyd", "node",
 ];
+/// Added by `--entropy-coverage broad`: less common loadable-code names.
+pub const BROAD_EXTENSIONS: &[&str] = &["wll", "ax", "acm", "tsp", "ime", "bpl", "efi"];
+/// Added by `--entropy-coverage comprehensive`: data and temporary names that renamed
+/// executables are hidden under.
+pub const COMPREHENSIVE_EXTENSIONS: &[&str] =
+    &["bin", "dat", "tmp", "ini", "cfg", "png", "jpg", "cmd"];
+
+/// Which built-in extension list the walk opens. `--entropy-extension` adds names to any
+/// level and `--entropy-all-files` opens every regular file.
+#[derive(Clone, Copy, Debug, Default, ValueEnum, Serialize, Deserialize, PartialEq)]
+pub enum ExtensionSet {
+    #[default]
+    Standard,
+    Broad,
+    Comprehensive,
+}
+impl ExtensionSet {
+    /// The extensions this level opens, lower-case and without the dot.
+    pub fn extensions(self) -> impl Iterator<Item = &'static str> {
+        let tiers: &[&[&str]] = match self {
+            Self::Standard => &[STANDARD_EXTENSIONS],
+            Self::Broad => &[STANDARD_EXTENSIONS, BROAD_EXTENSIONS],
+            Self::Comprehensive => &[
+                STANDARD_EXTENSIONS,
+                BROAD_EXTENSIONS,
+                COMPREHENSIVE_EXTENSIONS,
+            ],
+        };
+        tiers.iter().flat_map(|tier| tier.iter().copied())
+    }
+}
 
 #[derive(Clone, Debug, Default, ValueEnum, Serialize, Deserialize, PartialEq)]
 pub enum Scope {
@@ -321,7 +92,9 @@ pub struct Settings {
     pub max_candidates: Option<u64>,
     pub max_collect_mib: Option<u64>,
     pub excludes: Vec<String>,
-    /// Extensions opened in addition to `DEFAULT_EXTENSIONS`, lower-case, without the dot.
+    /// Which built-in extension list is opened.
+    pub coverage: ExtensionSet,
+    /// Extensions opened in addition to that list, lower-case, without the dot.
     pub extensions: Vec<String>,
     /// Open every regular file whatever its name.
     pub all_files: bool,
@@ -336,6 +109,7 @@ impl Default for Settings {
             max_candidates: None,
             max_collect_mib: None,
             excludes: vec![],
+            coverage: ExtensionSet::Standard,
             extensions: vec![],
             all_files: false,
         }
@@ -367,6 +141,10 @@ pub struct EntropyArgs {
     /// Exclude a source-relative glob from entropy discovery; repeat as needed
     #[arg(long, requires = "high_entropy", value_name = "GLOB")]
     pub entropy_exclude: Vec<String>,
+    /// Built-in extension list to open: standard (exe dll sys scr com cpl ocx xll drv pyd node),
+    /// broad (adds wll ax acm tsp ime bpl efi) or comprehensive (adds bin dat tmp ini cfg png jpg cmd)
+    #[arg(long, value_enum, requires = "high_entropy")]
+    pub entropy_coverage: Option<ExtensionSet>,
     /// Also open files with this extension (case-insensitive, dot optional); repeat as needed
     #[arg(long, requires = "high_entropy", value_name = "EXT")]
     pub entropy_extension: Vec<String>,
@@ -397,6 +175,7 @@ impl EntropyArgs {
             max_candidates: self.entropy_max_candidates,
             max_collect_mib: self.entropy_max_collect_mib,
             excludes: self.entropy_exclude.clone(),
+            coverage: self.entropy_coverage.unwrap_or(d.coverage),
             extensions: self
                 .entropy_extension
                 .iter()
@@ -866,9 +645,10 @@ pub fn augment_plan(
         );
     }
     let excludes = builder.build()?;
-    let extensions: HashSet<String> = DEFAULT_EXTENSIONS
-        .iter()
-        .map(|e| (*e).to_owned())
+    let extensions: HashSet<String> = settings
+        .coverage
+        .extensions()
+        .map(str::to_owned)
         .chain(settings.extensions.iter().cloned())
         .collect();
     let pool = rayon::ThreadPoolBuilder::new()
@@ -1462,7 +1242,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let root = t.path().join("source");
         std::fs::create_dir(&root).unwrap();
-        let path = root.join("test.dat");
+        let path = root.join("test.scr");
         std::fs::write(&path, high_pe()).unwrap();
         std::fs::write(
             format!("{}:Zone.Identifier", path.display()),

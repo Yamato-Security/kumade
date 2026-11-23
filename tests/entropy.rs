@@ -16,7 +16,7 @@ use kumade::{
     catalog::Rules,
     collect::{self, Options},
     discovery,
-    entropy::{self, Scope, Settings},
+    entropy::{self, ExtensionSet, Scope, Settings},
     model::*,
     verify,
 };
@@ -66,7 +66,7 @@ fn fixture() -> (TempDir, kumade::model::Plan, PathBuf) {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("source");
     fs::create_dir_all(root.join("OddLocation")).unwrap();
-    fs::write(root.join("OddLocation/payload.dat"), pe(true, false, true)).unwrap();
+    fs::write(root.join("OddLocation/payload.cpl"), pe(true, false, true)).unwrap();
     fs::write(
         root.join("OddLocation/resources.exe"),
         pe(false, true, false),
@@ -210,13 +210,14 @@ fn discovery_collects_renamed_pe_once_and_seals_reports() {
     assert_eq!(plan.files.len(), 1);
     assert_eq!(
         plan.files[0].relative_path,
-        Path::new("OddLocation/payload.dat")
+        Path::new("OddLocation/payload.cpl")
     );
     assert!(plan.files[0].expected_sha256.is_some());
     let r = plan.entropy_scan.as_ref().unwrap();
     assert_eq!(r.counts.files_seen, 3);
     assert_eq!(r.counts.pe_analyzed, 2);
-    assert_eq!(r.counts.non_pe, 1);
+    assert_eq!(r.counts.non_pe, 0);
+    assert_eq!(r.counts.other_extension, 1, "text.txt is not opened");
     assert!(entropy::metadata_reserve(&plan).unwrap() > 1024 * 1024);
     let (root, summary) = collect::collect(&plan, &out, &options()).unwrap();
     assert_eq!(summary.collected, 1);
@@ -240,7 +241,7 @@ fn discovery_collects_renamed_pe_once_and_seals_reports() {
 fn existing_catalog_candidate_is_deduplicated_and_not_limited() {
     let (_temp, mut plan, out) = fixture();
     let source = plan.sources[0].clone();
-    let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['OddLocation/payload.dat']}\n").unwrap();
+    let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['OddLocation/payload.cpl']}\n").unwrap();
     plan = discovery::build_plan(vec![source], &rules, &[], false).unwrap();
     scan(
         &mut plan,
@@ -290,7 +291,7 @@ fn changed_bytes_are_partial_even_without_a_size_change() {
 fn candidate_limits_are_deterministic_and_report_incomplete_coverage() {
     let (_temp, mut plan, out) = fixture();
     fs::write(
-        plan.sources[0].root.join("OddLocation/z.dat"),
+        plan.sources[0].root.join("OddLocation/z.scr"),
         pe(true, false, true),
     )
     .unwrap();
@@ -305,7 +306,7 @@ fn candidate_limits_are_deterministic_and_report_incomplete_coverage() {
     assert_eq!(plan.files.len(), 1);
     assert_eq!(
         plan.files[0].relative_path,
-        Path::new("OddLocation/payload.dat")
+        Path::new("OddLocation/payload.cpl")
     );
     assert!(
         plan.coverage
@@ -455,59 +456,68 @@ fn total_collection_cap_does_not_silently_discard_candidates() {
 }
 
 #[test]
-fn only_listed_extensions_are_opened_unless_asked_otherwise() {
+fn extension_sets_open_their_names_and_nothing_else() {
     let (_temp, plan, out) = fixture();
     let root = plan.sources[0].root.clone();
-    // The same high-entropy PE under names outside the list is never opened by default,
-    // while the comparison of listed names ignores case.
-    fs::write(root.join("OddLocation/table.toc"), pe(true, false, true)).unwrap();
-    fs::write(root.join("OddLocation/kernel"), pe(true, false, true)).unwrap();
-    fs::write(root.join("OddLocation/UPPER.EXE"), pe(true, false, true)).unwrap();
+    // The same high-entropy PE under a name from each tier, outside every tier, without an
+    // extension, and in upper case.
+    for name in ["driver.efi", "blob.dat", "table.toc", "kernel", "UPPER.EXE"] {
+        fs::write(root.join("OddLocation").join(name), pe(true, false, true)).unwrap();
+    }
     let rules=Rules::load("SchemaVersion: 1\nArtifacts:\n - {Id: test, Name: Test, Category: Test, Patterns: ['absent']}\n").unwrap();
     let fresh =
         || discovery::build_plan(vec![plan.sources[0].clone()], &rules, &[], false).unwrap();
-    let mut p = fresh();
-    scan(&mut p, &out, &Settings::default());
-    let c = &p.entropy_scan.as_ref().unwrap().counts;
+    let counts = |settings: &Settings| {
+        let mut p = fresh();
+        scan(&mut p, &out, settings);
+        let c = &p.entropy_scan.as_ref().unwrap().counts;
+        (
+            c.files_seen,
+            c.pe_analyzed,
+            c.non_pe,
+            c.other_extension,
+            p.files.len(),
+        )
+    };
+    // Standard opens payload.cpl, resources.exe and UPPER.EXE; text.txt, driver.efi, blob.dat,
+    // table.toc and kernel stay closed.
+    assert_eq!(counts(&Settings::default()), (8, 3, 0, 5, 2));
     assert_eq!(
-        (c.files_seen, c.other_extension, c.pe_analyzed, c.non_pe),
-        (6, 2, 3, 1)
+        counts(&Settings {
+            coverage: ExtensionSet::Broad,
+            ..Default::default()
+        }),
+        (8, 4, 0, 4, 3)
     );
-    assert_eq!(p.files.len(), 2);
-    assert!(
-        p.entropy_scan
-            .as_ref()
-            .unwrap()
-            .observations
-            .iter()
-            .all(|o| !o.relative_path.ends_with(".toc") && o.relative_path != "OddLocation/kernel")
+    assert_eq!(
+        counts(&Settings {
+            coverage: ExtensionSet::Comprehensive,
+            ..Default::default()
+        }),
+        (8, 5, 0, 3, 4)
     );
-    let mut p = fresh();
-    scan(
-        &mut p,
-        &out,
-        &Settings {
+    assert_eq!(
+        counts(&Settings {
             extensions: vec!["toc".into()],
             ..Default::default()
-        },
+        }),
+        (8, 4, 0, 4, 3)
     );
-    assert_eq!(p.entropy_scan.as_ref().unwrap().counts.pe_analyzed, 4);
-    assert_eq!(p.files.len(), 3);
-    let mut p = fresh();
-    scan(
-        &mut p,
-        &out,
-        &Settings {
+    assert_eq!(
+        counts(&Settings {
             all_files: true,
             ..Default::default()
-        },
+        }),
+        (8, 7, 1, 0, 6)
     );
-    let c = &p.entropy_scan.as_ref().unwrap().counts;
-    assert_eq!((c.other_extension, c.pe_analyzed), (0, 5));
-    assert_eq!(p.files.len(), 4);
-    assert!(entropy::DEFAULT_EXTENSIONS.contains(&"appref-ms"));
-    assert!(!entropy::DEFAULT_EXTENSIONS.contains(&"toc"));
-    assert_eq!(entropy::DEFAULT_EXTENSIONS.len(), 228);
+    assert_eq!(entropy::STANDARD_EXTENSIONS.len(), 11);
+    assert_eq!(ExtensionSet::Broad.extensions().count(), 18);
+    assert_eq!(ExtensionSet::Comprehensive.extensions().count(), 26);
+    assert!(
+        ExtensionSet::Standard
+            .extensions()
+            .all(|e| e == e.to_ascii_lowercase())
+    );
 }
 
 #[test]
@@ -528,7 +538,7 @@ fn non_image_pe_counts_as_non_pe_and_malformed_pe_is_not_a_failure() {
     )
     .unwrap();
     fs::write(
-        plan.sources[0].root.join("OddLocation/table.dat"),
+        plan.sources[0].root.join("OddLocation/table.cpl"),
         container,
     )
     .unwrap();
@@ -541,7 +551,8 @@ fn non_image_pe_counts_as_non_pe_and_malformed_pe_is_not_a_failure() {
             r.counts.non_pe,
             r.counts.pe_analyzed
         ),
-        (1, 0, 2, 2)
+        (1, 0, 1, 2),
+        "malformed, errors, non-PE (table.cpl; text.txt is not opened), analyzed"
     );
     let row = r
         .observations
