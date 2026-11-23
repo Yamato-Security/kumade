@@ -67,6 +67,10 @@ impl Store for MemoryStore {
     }
 }
 fn options(remote: Arc<Target>) -> Options {
+    // Match the CLI's elevated Windows metadata-capture precondition. Without
+    // SeSecurityPrivilege, ACCESS_SYSTEM_SECURITY is correctly a partial result.
+    #[cfg(windows)]
+    kumade::metadata::enable_privileges().unwrap();
     Options {
         remote: Some(remote),
         threads: 4,
@@ -101,7 +105,13 @@ fn direct_streaming_roundtrip_seals_and_server_restorer() {
         &options(target.clone()),
     )
     .unwrap();
-    assert_eq!(summary.completeness, "PendingServerReadbackVerification");
+    assert_eq!(
+        summary.completeness,
+        "PendingServerReadbackVerification",
+        "{summary:?}\n{}\n{}",
+        fs::read_to_string(root.join("Manifest.jsonl")).unwrap(),
+        fs::read_to_string(root.join("NTFS-Metadata.jsonl")).unwrap_or_default()
+    );
     assert!(!root.join("C").exists());
     let records: Vec<Record> = fs::read_to_string(root.join("Manifest.jsonl"))
         .unwrap()
