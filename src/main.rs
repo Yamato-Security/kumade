@@ -654,8 +654,8 @@ fn run() -> Result<u8> {
         .first()
         .map(|s| s.computer.as_str())
         .unwrap_or("UnknownComputer");
-    let early_parent = if options.vhdx.is_some() || options.e01.is_some() {
-        let path = paths::image_destination(
+    let early_output = if options.vhdx.is_some() || options.e01.is_some() {
+        paths::image_destination(
             &destination,
             &paths::run_name(computer, &started_utc)?,
             if options.vhdx.is_some() {
@@ -663,18 +663,25 @@ fn run() -> Result<u8> {
             } else {
                 "E01"
             },
-        )?;
-        path.parent()
+        )?
+    } else {
+        destination.clone()
+    };
+    // A sibling image may share the source's parent. Validate the actual output,
+    // rather than rejecting its parent: fresh UUID staging remains a sibling.
+    let early_parent = if options.vhdx.is_some() || options.e01.is_some() {
+        early_output
+            .parent()
             .context("Image output has no parent")?
             .to_owned()
     } else {
-        destination.clone()
+        early_output.clone()
     };
     for source in &discovered.sources {
         ensure!(
             source.live
-                || (!early_parent.starts_with(&source.root)
-                    && !source.root.starts_with(&early_parent)),
+                || (!early_output.starts_with(&source.root)
+                    && !source.root.starts_with(&early_output)),
             "Source and output directory trees must not overlap"
         );
     }
