@@ -206,4 +206,6 @@ Use `kumade scan-processes -o Yara-Results` for an opt-in live memory scan with 
 
 ## Remote SFTP delivery
 
+Start a built-in receiver with `kumade receive --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. It generates temporary upload-only credentials and verifies received evidence automatically. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).
+
 Use `collect --sftp HOST --sftp-user USER --sftp-host-key "SHA256:..."` to stream payloads without local copies. A hardened temporary upload-only account and trusted server readback are required. See [setup, integrity verification and forensic footprint](docs/SFTP.md).

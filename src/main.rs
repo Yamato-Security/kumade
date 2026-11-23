@@ -59,6 +59,10 @@ enum Command {
     },
     /// Discover files and write a plan without copying evidence
     Plan(CollectionArgs),
+    /// Receive evidence through a temporary upload-only SFTP account
+    Receive(kumade::sftp_receive::Options),
+    /// Verify an SFTP delivery locally and optionally reconstruct files
+    VerifyDelivery(kumade::sftp_verify::Options),
     /// Scan running Windows processes with YARA Forge or local YARA rules
     ScanProcesses(kumade::yara_scan::Options),
     /// Verify the seal and every stored payload; never reads original sources
@@ -333,6 +337,8 @@ fn run() -> Result<u8> {
         Err(error) => error.exit(),
     };
     let (mut options, plan_only) = match cli.command {
+        Some(Command::Receive(args)) => return kumade::sftp_receive::run(&args),
+        Some(Command::VerifyDelivery(args)) => return kumade::sftp_verify::run(&args),
         Some(Command::ScanProcesses(args)) => return kumade::yara_scan::run(&args),
         Some(Command::ForensicCopy(args)) => {
             kumade::forensic_copy::run(&kumade::forensic_copy::Options {

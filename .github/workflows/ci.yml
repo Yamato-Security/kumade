@@ -26,6 +26,7 @@ jobs:
       - run: cargo test --locked --all-targets
       - run: python3 scripts/test_sftp_restore.py
       - run: cargo build --locked
+      - run: python3 scripts/test_sftp_receiver.py --binary target/debug/kumade
       # An isolated localhost sshd and random account, removed by the test.
       # Does not edit or reload the runner's system sshd configuration.
       - run: sudo python3 scripts/test_sftp_openssh.py --binary target/debug/kumade
@@ -48,6 +49,8 @@ jobs:
       - name: Acquisition ordering regressions
         run: cargo test --locked --test ordering --target i686-pc-windows-msvc
       - run: cargo test --locked --all-targets --target i686-pc-windows-msvc
+      - name: Built-in receiver and native readback (x86)
+        run: python scripts/test_sftp_receiver.py --binary target/i686-pc-windows-msvc/debug/kumade.exe
       - name: NTFS VHDX round trip (x86 collector)
         shell: pwsh
         run: ./scripts/test_vhdx.ps1 -Binary ./target/i686-pc-windows-msvc/debug/kumade.exe -WorkDirectory "$env:RUNNER_TEMP/kumade-vhdx-roundtrip"
@@ -73,6 +76,8 @@ jobs:
         run: cargo test --locked --test vss_windows
       - name: Remaining regression tests
         run: cargo test --locked --all-targets -- --skip locked_file_snapshot_content_raw_ntfs_cleanup_and_cli_backends
+      - name: Built-in receiver and native readback (x64)
+        run: python scripts/test_sftp_receiver.py --binary target/debug/kumade.exe
       - name: NTFS VHDX round trip
         shell: pwsh
         run: ./scripts/test_vhdx.ps1 -Binary ./target/debug/kumade.exe -WorkDirectory "$env:RUNNER_TEMP/kumade-vhdx-roundtrip"
