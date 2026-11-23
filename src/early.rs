@@ -394,6 +394,7 @@ mod memory_tests {
     fn fixture(parent: &Path) -> Arc<Capture> {
         let root = parent.join("stage");
         fs::create_dir(&root).unwrap();
+        let root = platform::canonicalize(&root).unwrap();
         let mut row = crate::memory::unavailable(&root, "RAMHOST", "fixture").unwrap();
         let path = root.join("Memory/Memory.dmp");
         fs::write(&path, b"fixture captured RAM").unwrap();
