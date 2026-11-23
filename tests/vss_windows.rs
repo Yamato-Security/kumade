@@ -246,6 +246,7 @@ try {
     )?;
     plan.issues.extend(discovered.issues);
     let options = collect::Options {
+        remote: None,
         threads: 2,
         reserve_bytes: 0,
         quiet: true,

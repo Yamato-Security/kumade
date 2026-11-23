@@ -397,6 +397,7 @@ pub fn collect(
                 .and_then(|n| n.checked_add(options.reserve_bytes))
                 .context("E01 staging space estimate overflow")?;
             let stage_options = Options {
+                remote: None,
                 threads: options.threads,
                 reserve_bytes: output_headroom,
                 quiet: options.quiet,
@@ -479,6 +480,7 @@ mod tests {
 
     fn options() -> Options {
         Options {
+            remote: None,
             threads: 2,
             reserve_bytes: 0,
             quiet: true,

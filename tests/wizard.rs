@@ -239,6 +239,7 @@ fn failed_embedded_process_scan_remains_sealed_and_partial() {
     let local = t.path().join("bad.yar");
     fs::write(&local, b"invalid YARA source").unwrap();
     let options = kumade::collect::Options {
+        remote: None,
         threads: 1,
         reserve_bytes: 0,
         quiet: true,
@@ -314,6 +315,7 @@ fn successful_embedded_process_scan_is_sealed_and_verified() {
     )
     .unwrap();
     let options = kumade::collect::Options {
+        remote: None,
         threads: 1,
         reserve_bytes: 0,
         quiet: true,

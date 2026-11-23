@@ -77,6 +77,10 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         );
     }
     let run: serde_json::Value = serde_json::from_reader(File::open(root.join("Run.json"))?)?;
+    ensure!(
+        run["RemoteDelivery"].is_null(),
+        "SFTP collections require scripts/sftp_restore.py on the trusted server; uploader acknowledgements are not readback verification"
+    );
     if run["EvidenceLayout"] == "DriveRoots" {
         ensure!(
             digests.contains_key("client_info.json"),

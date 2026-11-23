@@ -775,6 +775,7 @@ mod windows {
             )?;
         }
         let inner = Options {
+            remote: None,
             threads: options.threads,
             reserve_bytes: reserve,
             quiet: options.quiet,

@@ -26,6 +26,7 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Output {
     Directory,
+    Sftp,
     Vhdx,
     E01,
 }
@@ -269,7 +270,12 @@ pub fn run<R: BufRead, W: Write>(
     )?;
     writeln!(
         prompt.output,
-        "Raw locked-file fallback, SHA-256 and copied-file verification: enabled (required)."
+        "{}",
+        if choices.output == Output::Sftp {
+            "Raw locked-file fallback and SHA-256: enabled. SFTP delivery requires separate trusted server readback verification."
+        } else {
+            "Raw locked-file fallback, SHA-256 and copied-file verification: enabled (required)."
+        }
     )?;
     writeln!(
         prompt.output,

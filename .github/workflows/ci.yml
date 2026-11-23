@@ -12,6 +12,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  sftp:
+    name: Test (upload-only OpenSSH)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: 1.100.0
+      - run: sudo apt-get update && sudo apt-get install -y openssh-server acl
+      - run: cargo test --locked --all-targets
+      - run: python3 scripts/test_sftp_restore.py
+      - run: cargo build --locked
+      # An isolated localhost sshd and random account, removed by the test.
+      # Does not edit or reload the runner's system sshd configuration.
+      - run: sudo python3 scripts/test_sftp_openssh.py --binary target/debug/kumade
+
   windows-x86:
     name: Test (Windows x86)
     runs-on: windows-latest

@@ -52,6 +52,7 @@ fn fixture() -> (tempfile::TempDir, Plan) {
 }
 fn options() -> Options {
     Options {
+        remote: None,
         threads: 4,
         reserve_bytes: 0,
         quiet: true,

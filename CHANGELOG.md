@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add direct SFTP streaming with pinned SSH host keys, hidden/stdin passwords,
+  bounded gzip compression and exclusive remote objects. Preserve locked-file
+  acquisition and volatility ordering without local payload staging. Retain
+  private metadata on failure; distinguish upload acknowledgements from trusted
+  server readback. Include temporary upload-only OpenSSH account provisioning,
+  expiry/session revocation, a hash-verifying safe restorer and interoperability
+  tests. See `docs/SFTP.md` for setup and forensic footprint limitations.
+
 - Scope automatic entropy output exclusions by source volume, including snapshot
   reads and preserved-copy analysis. Excluding `C:\Evidence` no longer hides
   `D:\Evidence`; explicit user exclusion globs remain global. Record automatic

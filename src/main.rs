@@ -155,6 +155,8 @@ struct CollectionArgs {
     quiet: bool,
     #[command(flatten)]
     entropy: kumade::entropy::EntropyArgs,
+    #[command(flatten)]
+    sftp: kumade::sftp::Args,
     /// List each file being copied instead of displaying a progress bar
     #[arg(short = 'v', long, conflicts_with = "quiet")]
     verbose: bool,
@@ -242,7 +244,11 @@ fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscove
             options.computer.is_none(),
             "--computer applies to offline --source inputs"
         );
-        return platform::live_sources(Some(destination));
+        return platform::live_sources(if options.sftp.sftp.is_some() {
+            None
+        } else {
+            Some(destination)
+        });
     }
     let computer = options.computer.as_deref().unwrap_or("OfflineComputer");
     ensure!(
@@ -411,7 +417,10 @@ fn run() -> Result<u8> {
                 "VSS acquisition",
                 "--vss; native elevated Windows, crash-consistent snapshots without application writers",
             );
-            ui::field("Cloud transport", "Not implemented");
+            ui::field(
+                "Remote transport",
+                "--sftp; pinned host key and hardened upload-only account required",
+            );
             ui::field(
                 "VHDX output",
                 if cfg!(windows) {
@@ -466,6 +475,11 @@ fn run() -> Result<u8> {
         Some(Command::Collect(options)) => (options, false),
         None => (cli.options, false),
     };
+    options.sftp.validate()?;
+    ensure!(
+        !plan_only || options.sftp.sftp.is_none(),
+        "SFTP is a collect destination; plan uses -o DIR"
+    );
     ensure!(
         !plan_only || !options.vss,
         "plan does not create VSS snapshots; use collect --vss"
@@ -503,12 +517,20 @@ fn run() -> Result<u8> {
     let rules = rules(options.catalog.as_deref())?;
     // The destination is resolved before discovery so that live discovery can
     // leave the volume holding it out of scope.
-    let destination = options
-        .vhdx
-        .clone()
-        .or_else(|| options.e01.clone())
-        .unwrap_or_else(|| options.output.clone())
-        .unwrap_or_else(default_results_dir);
+    let destination = if options.sftp.sftp.is_some() {
+        options
+            .sftp
+            .sftp_staging_dir
+            .clone()
+            .unwrap_or_else(std::env::temp_dir)
+    } else {
+        options
+            .vhdx
+            .clone()
+            .or_else(|| options.e01.clone())
+            .unwrap_or_else(|| options.output.clone())
+            .unwrap_or_else(default_results_dir)
+    };
     let destination = paths::resolve_future(&destination)?;
     let mut discovered = sources(&options, &destination)?;
     kumade::vss::select_sources(&mut discovered, &options.volumes)?;
@@ -564,14 +586,18 @@ fn run() -> Result<u8> {
             yara_ruleset: options
                 .yara_ruleset
                 .unwrap_or(kumade::yara_scan::RuleSet::Core),
-            output: if options.e01.is_some() {
+            output: if options.sftp.sftp.is_some() {
+                kumade::wizard::Output::Sftp
+            } else if options.e01.is_some() {
                 kumade::wizard::Output::E01
             } else if options.vhdx.is_some() {
                 kumade::wizard::Output::Vhdx
             } else {
                 kumade::wizard::Output::Directory
             },
-            output_explicit: options.e01.is_some() || options.vhdx.is_some(),
+            output_explicit: options.sftp.sftp.is_some()
+                || options.e01.is_some()
+                || options.vhdx.is_some(),
             threads: options.threads,
             image_source: None,
         };
@@ -615,9 +641,9 @@ fn run() -> Result<u8> {
         options.scan_processes = choices.yara;
         options.yara_ruleset = Some(choices.yara_ruleset);
         options.threads = choices.threads;
-        if options.e01.is_none() && options.vhdx.is_none() {
+        if options.sftp.sftp.is_none() && options.e01.is_none() && options.vhdx.is_none() {
             match choices.output {
-                kumade::wizard::Output::Directory => {}
+                kumade::wizard::Output::Directory | kumade::wizard::Output::Sftp => {}
                 kumade::wizard::Output::Vhdx => {
                     options.output = None;
                     options.vhdx = Some(Some(destination.clone()));
@@ -638,6 +664,37 @@ fn run() -> Result<u8> {
             || (options.sources.is_empty() && !options.no_live_info),
         "Nothing selected for collection; use --paging or --artifact to select evidence"
     );
+    // Authenticate and verify the upload-only policy before collecting evidence.
+    let remote = if options.sftp.sftp.is_some() {
+        if !options.quiet {
+            ui::status("Verifying the pinned SFTP server and upload-only protections…");
+        }
+        Some(kumade::sftp::Target::connect(
+            &options.sftp,
+            options.sftp.password()?,
+        )?)
+    } else {
+        None
+    };
+    let mut staging = if remote.is_some() {
+        Some(kumade::sftp::Staging::new(&destination)?)
+    } else {
+        None
+    };
+    let destination = staging
+        .as_ref()
+        .map_or(destination, |s| s.path().to_owned());
+    if remote.is_some() && !options.quiet {
+        ui::field(
+            "Delivery",
+            "SFTP direct streaming; trusted server readback required",
+        );
+        ui::field("Metadata staging", destination.display());
+        ui::field(
+            "Notice",
+            "Local metadata writes and source reads affect a live system. Use external or RAM-backed metadata staging where practical.",
+        );
+    }
     let reserve_bytes = options
         .reserve_mib
         .checked_mul(1024 * 1024)
@@ -702,6 +759,9 @@ fn run() -> Result<u8> {
             live_options.as_ref(),
         )?
     };
+    if let (Some(target), Some(capture)) = (&remote, &early) {
+        target.upload_tree(capture.path(), "Early")?;
+    }
     // Revalidate choices before creating a snapshot or output container.
     if options.vss {
         kumade::vss::check_host()?;
@@ -774,7 +834,7 @@ fn run() -> Result<u8> {
         )?;
     }
     #[cfg(windows)]
-    if options.vhdx.is_some() || options.e01.is_some() {
+    if remote.is_some() || options.vhdx.is_some() || options.e01.is_some() {
         kumade::metadata::enable_privileges()?;
         kumade::metadata::augment_streams(&mut plan)?;
     }
@@ -810,6 +870,7 @@ fn run() -> Result<u8> {
         );
     }
     let collect_options = Options {
+        remote: remote.clone(),
         threads: options.threads,
         reserve_bytes,
         quiet: options.quiet,
@@ -844,12 +905,16 @@ fn run() -> Result<u8> {
             .high_entropy
             .then(|| options.entropy.settings()),
     };
+    let mut remote_root = None;
     let result = if options.e01.is_some() {
         e01::collect(&plan, &output, options.e01_size_gib, &collect_options)
     } else if options.vhdx.is_some() {
         vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)
     } else {
-        collect::collect(&plan, &output, &collect_options).map(|(_, summary)| summary)
+        collect::collect(&plan, &output, &collect_options).map(|(root, summary)| {
+            remote_root = Some(root);
+            summary
+        })
     };
     let cleanup = snapshots.as_mut().map(|s| s.close()).transpose();
     let summary = match (result, cleanup) {
@@ -869,6 +934,22 @@ fn run() -> Result<u8> {
     }
     if options.vss && !options.quiet {
         ui::field("VSS cleanup", "Owned snapshot set released");
+    }
+    if let Some(target) = &remote {
+        let (name, digest) = target.publish(
+            remote_root.as_deref().context("Missing metadata root")?,
+            &summary,
+        )?;
+        // Print the receipt even in quiet mode: it is the operator's trust anchor.
+        ui::field("Remote delivery", name);
+        ui::field("Delivery SHA256", digest);
+        ui::field(
+            "Integrity",
+            "PENDING — revoke the account, then run the trusted server verifier",
+        );
+        if let Some(staging) = staging.as_mut() {
+            staging.cleanup()?;
+        }
     }
     Ok(if summary.completeness == "Partial" {
         3
