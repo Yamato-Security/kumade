@@ -39,6 +39,27 @@ impl Drop for Mounted {
 struct Volumes {
     ntfs: String,
 }
+/// A minimal PE32 whose only section is executable and maximally random.
+fn packed_pe() -> Vec<u8> {
+    let mut b = vec![0u8; 4608];
+    b[..2].copy_from_slice(b"MZ");
+    b[60..64].copy_from_slice(&128u32.to_le_bytes());
+    b[128..132].copy_from_slice(b"PE\0\0");
+    b[132..134].copy_from_slice(&0x14cu16.to_le_bytes());
+    b[134..136].copy_from_slice(&1u16.to_le_bytes());
+    b[148..150].copy_from_slice(&224u16.to_le_bytes());
+    b[150..152].copy_from_slice(&2u16.to_le_bytes());
+    b[152..154].copy_from_slice(&0x10bu16.to_le_bytes());
+    b[376..381].copy_from_slice(b".text");
+    b[392..396].copy_from_slice(&4096u32.to_le_bytes());
+    b[396..400].copy_from_slice(&512u32.to_le_bytes());
+    b[412..416].copy_from_slice(&0x60000020u32.to_le_bytes());
+    for (i, v) in b[512..].iter_mut().enumerate() {
+        *v = (i % 256) as u8;
+    }
+    b
+}
+
 fn record_rows(root: &Path) -> Result<Vec<Record>> {
     fs::read_to_string(root.join("Manifest.jsonl"))?
         .lines()
@@ -112,6 +133,10 @@ try {
     // Ordinary test file, not an OS-configured pagefile. The acquisition policy
     // must refuse its reserved paging name and account for that refusal.
     fs::write(source_root.join("pagefile.sys"), b"excluded paging fixture")?;
+    // A packed-looking PE outside the catalog: the deferred entropy walk must
+    // find it on the frozen snapshot root, which has no DOS or GUID name.
+    fs::create_dir_all(source_root.join("Windows/System32"))?;
+    fs::write(source_root.join("Windows/System32/packed.exe"), packed_pe())?;
     let path = prefetch.join("LOCKED.pf");
     let mut locked = OpenOptions::new()
         .write(true)
@@ -262,6 +287,49 @@ try {
     assert_eq!(
         &fs::read(root.join(mft.relative_output_path.as_ref().unwrap()))?[..4],
         b"FILE"
+    );
+    assert!(verify::verify(&root)?.1);
+    let canonical = platform::canonicalize(&snapshot_root)?;
+    assert!(
+        canonical
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .starts_with("\\\\?\\globalroot\\device\\harddiskvolumeshadowcopy"),
+        "{}",
+        canonical.display()
+    );
+    let mut with_entropy = options.clone();
+    with_entropy.entropy = Some(kumade::entropy::Settings::default());
+    let (root, summary) = collect::collect(&plan, &temp.path().join("entropy"), &with_entropy)?;
+    assert_eq!(summary.completeness, "CompleteWithinSelectedPrototypeScope");
+    let rows = record_rows(&root)?;
+    let packed = rows
+        .iter()
+        .find(|r| r.source_path.ends_with("packed.exe"))
+        .context("Snapshot entropy candidate was not acquired")?;
+    assert_eq!(packed.status, "Acquired");
+    assert!(
+        packed
+            .source_path
+            .starts_with(&*snapshot_root.to_string_lossy()),
+        "{}",
+        packed.source_path
+    );
+    let report: Vec<serde_json::Value> =
+        fs::read_to_string(root.join("HighEntropyBinaries.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+    assert!(
+        report
+            .iter()
+            .any(|r| r["RelativePath"] == "Windows/System32/packed.exe"
+                && r["AnalysisStatus"] == "Selected"),
+        "{report:?}"
+    );
+    assert!(
+        report.iter().all(|r| r["AnalysisStatus"] != "Error"),
+        "{report:?}"
     );
     assert!(verify::verify(&root)?.1);
     // Another requester's snapshot must survive deletion of the first set.

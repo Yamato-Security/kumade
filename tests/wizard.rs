@@ -368,3 +368,26 @@ fn custom_category_cannot_accidentally_enable_paging_by_default() {
     let c = wizard::run(&mut io, &p, &r, &sizes, choices(), false, false).unwrap();
     assert_eq!(c.artifacts, vec!["windows.prefetch"]);
 }
+
+#[test]
+fn cli_wizard_sizes_the_paging_family_added_to_an_explicit_scope() {
+    let (t, _p, _r) = fixture();
+    let o = cli(
+        t.path(),
+        &["--wizard", "--artifact", "windows.prefetch", "--paging"],
+        &"\n".repeat(20),
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let text = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        text.contains(
+            "Paging, swap, hibernation and existing memory dumps (6B; 1 files/streams) (Y/n)"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Estimated transfer: 14B / 2 files/streams"),
+        "{text}"
+    );
+    assert_eq!(manifest(t.path()).len(), 2);
+}

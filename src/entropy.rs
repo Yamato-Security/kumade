@@ -851,9 +851,20 @@ pub fn augment_with_copies(
     }
     let progress = ui::scan_spinner(quiet);
     for source in &plan.sources {
-        let output = paths::resolve_future(destination)?;
-        let root = platform::canonicalize(&source.root)?;
-        let live = platform::canonicalize(source.live_root())?;
+        let output = paths::resolve_future(destination).with_context(|| {
+            format!(
+                "Cannot resolve the entropy output path {}",
+                destination.display()
+            )
+        })?;
+        let root = platform::canonicalize(&source.root)
+            .with_context(|| format!("Cannot resolve the scan root {}", source.root.display()))?;
+        let live = platform::canonicalize(source.live_root()).with_context(|| {
+            format!(
+                "Cannot resolve the live root {}",
+                source.live_root().display()
+            )
+        })?;
         let mapped = output.strip_prefix(&live).ok().map(|r| root.join(r));
         if source.metadata_only {
             let mut s = state.lock().expect("entropy state");

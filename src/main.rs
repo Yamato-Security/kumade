@@ -533,10 +533,17 @@ fn run() -> Result<u8> {
         if !options.quiet {
             ui::status("Estimating transfer sizes from file and NTFS metadata…");
         }
+        // An open scope is sized over the whole catalog so every group has an
+        // estimate; an explicit scope is sized after --paging has been applied.
+        let preflight_ids: &[String] = if options.artifacts.is_empty() {
+            &[]
+        } else {
+            &defaults
+        };
         let preflight = discovery::build_plan(
             discovered.sources.clone(),
             &rules,
-            &options.artifacts,
+            preflight_ids,
             options.memory,
         )?;
         let sizes = kumade::wizard::Sizes::discover(&preflight);

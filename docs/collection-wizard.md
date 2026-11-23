@@ -49,7 +49,8 @@ without starting collection. Invalid yes/no and numeric answers are reprompted.
 The paging change also applies to unattended collection and ordinary `plan`.
 The catalogue still defines paging paths. Existing explicit artifact selections
 are preserved, including paging, and `--paging` adds the paging family to an
-explicit scope when the catalogue contains it. The wizard groups only those
+explicit scope when the catalogue contains it, and the preflight sizes that
+added family as well. The wizard groups only those
 explicitly scoped artifacts when `--artifact` was supplied, preventing an
 explicitly narrow selection from expanding to unrelated artifacts.
 
