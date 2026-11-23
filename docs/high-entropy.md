@@ -153,7 +153,7 @@ entropy fields or report files.
 | Field | Interpretation |
 |---|---|
 | `Computer`, `SourceId`, `RelativePath` | Source computer, selected volume/root and path within it |
-| `Method` | `FileAPI` or `RawNTFS` for a successful analysis |
+| `Method` | `FileAPI`, `RawNTFS` or `CollectedCopy` for a successful analysis |
 | `AnalysisStatus` | `Selected`, `AlreadyPlanned`, `BelowThreshold`, `Malformed`, `SizeLimit`, `SelectionLimit`, `Excluded`, `Error` or `EnumerationError` |
 | `Reason` | Error, exclusion or limit explanation |
 | `Size`, `SHA256` | Logical length and SHA-256 of the complete analyzed file |
@@ -201,9 +201,10 @@ disagrees with the analysis hash.
 - Live files can change. File identity/size/timestamps are compared across
   analysis, and hashes link analysis to acquisition. These checks do not make
   an unsnapshotted live read atomic. Prefer `--vss` when appropriate.
-- Entropy discovery runs during planning, before the collection's automatic
-  live-response inventory. For time-sensitive volatile state, run `live-info`
-  first, then start the longer drive scan.
+- During collection, entropy discovery runs after the selected artifacts have
+  been acquired. Already captured files use their verified collected copies.
+  Standalone `plan --high-entropy` still analyzes sources directly. See
+  [acquisition order](acquisition-order.md).
 - All valid discovered PEs are fully read and hashed, regardless of whether
   they pass the heuristic. Qualifying files are then read again for collection
   and readback verification. Large drives, slow disks and many PE files can

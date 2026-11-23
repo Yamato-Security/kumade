@@ -746,6 +746,40 @@ fn inspect(
     }
 }
 
+/// Add only actual collector paths *inside* a source. An output parent equal
+/// to a source root must never exclude the entire source drive.
+pub fn exclude_output_paths(
+    settings: &mut Settings,
+    sources: &[Source],
+    outputs: &[PathBuf],
+) -> Result<()> {
+    for source in sources {
+        let original = platform::canonicalize(source.live_root())
+            .unwrap_or_else(|_| source.live_root().to_owned());
+        for output in outputs {
+            let output = paths::resolve_future(output)?;
+            if let Ok(relative) = output.strip_prefix(&original) {
+                if relative.as_os_str().is_empty() {
+                    continue;
+                }
+                let text = globset::escape(&paths::relative_text(relative)?);
+                settings.excludes.push(text.clone());
+                settings.excludes.push(format!("{text}/**"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Already preserved unnamed streams are analyzed from their verified collected copy.
+#[derive(Clone)]
+pub struct CopyInput {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub sha256: String,
+    pub before: Option<Fingerprint>,
+}
+
 /// Runs before any output directory/container is created, so the scan cannot ingest its own
 /// writes. It shares frozen VSS roots and never falls back to the live origin of a snapshot.
 pub fn augment_plan(
@@ -754,6 +788,17 @@ pub fn augment_plan(
     destination: &Path,
     threads: usize,
     quiet: bool,
+) -> Result<()> {
+    augment_with_copies(plan, settings, destination, threads, quiet, &HashMap::new())
+}
+
+pub fn augment_with_copies(
+    plan: &mut Plan,
+    settings: &Settings,
+    destination: &Path,
+    threads: usize,
+    quiet: bool,
+    copies: &HashMap<(String, PathBuf), CopyInput>,
 ) -> Result<()> {
     ensure!(
         settings.threshold.is_finite() && settings.threshold > 0.0 && settings.threshold <= 8.0,
@@ -869,6 +914,14 @@ pub fn augment_plan(
                     if !entry.file_type().is_file() {
                         return None;
                     }
+                    if entry
+                        .path()
+                        .strip_prefix(&source.root)
+                        .ok()
+                        .is_some_and(|r| copies.contains_key(&(source.id.clone(), r.to_owned())))
+                    {
+                        return None;
+                    }
                     let listed = entry
                         .path()
                         .extension()
@@ -973,6 +1026,86 @@ pub fn augment_plan(
                     }
                 })
         });
+    }
+    // This also covers preserved originals that disappeared from the live directory.
+    for ((source_id, relative), copy) in copies {
+        let Some(source) = plan.sources.iter().find(|s| s.id == *source_id) else {
+            continue;
+        };
+        if source.metadata_only || excludes.is_match(relative) {
+            continue;
+        }
+        let listed = relative
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| extensions.contains(&e.to_ascii_lowercase()));
+        if !settings.all_files && !listed {
+            let mut s = state.lock().expect("entropy state");
+            s.0.files_seen += 1;
+            s.0.other_extension += 1;
+            continue;
+        }
+        let mut input_source = source.clone();
+        input_source.root = copy.root.clone();
+        input_source.raw_device = None;
+        input_source.snapshot = None;
+        let text = paths::relative_text(relative)?;
+        let result = inspect(
+            &input_source,
+            &copy.path,
+            copy.path.strip_prefix(&copy.root)?,
+            settings,
+            &mut HashMap::new(),
+        );
+        let mut s = state.lock().expect("entropy state");
+        s.0.files_seen += 1;
+        match result {
+            Ok((Some(analysis), fingerprint, _)) => {
+                ensure!(
+                    analysis.sha256 == copy.sha256,
+                    "Preserved binary changed before deferred entropy analysis: {text}"
+                );
+                s.0.pe_analyzed += 1;
+                if analysis.candidate {
+                    s.0.candidates += 1;
+                }
+                s.1.push(Observation {
+                    computer: source.computer.clone(),
+                    source_id: source_id.clone(),
+                    relative_path: text,
+                    method: "CollectedCopy".into(),
+                    status: if analysis.candidate {
+                        "Candidate"
+                    } else {
+                        "BelowThreshold"
+                    }
+                    .into(),
+                    reason: "Analyzed the already acquired version; no live-source reread".into(),
+                    analysis: Some(analysis),
+                    observation_id: None,
+                    fingerprint: copy.before.clone().or(Some(fingerprint)),
+                });
+            }
+            Ok((None, _, _)) => s.0.non_pe += 1,
+            Err(e) => {
+                let status = if e.downcast_ref::<SizeLimit>().is_some() {
+                    s.0.skipped += 1;
+                    "SizeLimit"
+                } else if e.downcast_ref::<Malformed>().is_some() {
+                    s.0.malformed += 1;
+                    "Malformed"
+                } else {
+                    s.0.errors += 1;
+                    "Error"
+                };
+                s.1.push(issue(
+                    source,
+                    &text,
+                    status,
+                    &format!("Collected-copy analysis: {e:#}"),
+                ));
+            }
+        }
     }
     progress.finish_and_clear();
     let (mut counts, mut observations) = state.into_inner().expect("entropy state");

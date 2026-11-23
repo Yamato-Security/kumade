@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Acquire in volatility order: handle RAM requests first (actual RAM capture is
+  still unimplemented), preserve process/network/DNS/logon state before VSS and
+  disk planning, then prioritize USN, `$LogFile`, `$MFT`, event logs, registry and
+  active databases. Use parallel workers inside priority barriers; keep native
+  base files and their ADS together so USN `$J` is not postponed behind bulk
+  data. Run slower inventory and optional process YARA after hot disk evidence,
+  and defer full-drive entropy analysis until selected artifacts are acquired.
+  Analyze already collected files from their verified copies. Import protected
+  early live-state staging with hash checks and retain it on failures. Allow
+  only newly owned automatic VHDX/E01 staging containers to grow for late
+  candidates; never resize source disks or silently exceed explicit capacities.
+
 - Add an interactive collection wizard with per-category and deduplicated total
   logical transfer estimates, explicit unknown sizes, optional VSS, entropy and
   live process YARA scanning, output choices and a partition-imaging path.

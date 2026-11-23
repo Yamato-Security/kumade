@@ -246,6 +246,8 @@ fn failed_embedded_process_scan_remains_sealed_and_partial() {
         ntfs_metadata: false,
         host_reserve: None,
         live_info: None,
+        early: None,
+        entropy: None,
         process_scan: Some(kumade::yara_scan::Options {
             output: PathBuf::new(),
             ruleset: kumade::yara_scan::RuleSet::Core,
@@ -319,6 +321,8 @@ fn successful_embedded_process_scan_is_sealed_and_verified() {
         ntfs_metadata: false,
         host_reserve: None,
         live_info: None,
+        early: None,
+        entropy: None,
         process_scan: Some(kumade::yara_scan::Options {
             output: PathBuf::new(),
             ruleset: kumade::yara_scan::RuleSet::Core,

@@ -190,6 +190,8 @@ mod windows {
         attached: bool,
         volume: PathBuf,
         path: PathBuf,
+        capacity: u64,
+        disk_id: String,
     }
     impl Drop for Image {
         fn drop(&mut self) {
@@ -284,6 +286,8 @@ mod windows {
             attached: false,
             volume: PathBuf::new(),
             path: path.to_owned(),
+            capacity: 0,
+            disk_id: String::new(),
         };
         let attach = ATTACH_VIRTUAL_DISK_PARAMETERS {
             Version: ATTACH_VIRTUAL_DISK_VERSION_1,
@@ -334,7 +338,19 @@ mod windows {
         Ok(result)
     }
     fn powershell() -> Result<PathBuf> {
-        let windows = std::env::var_os("SystemRoot").context("SystemRoot is unavailable")?;
+        let mut directory = [0u16; 260];
+        // SAFETY: writable UTF-16 buffer; obtain the trusted OS path rather than caller environment.
+        let length = unsafe {
+            windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
+                directory.as_mut_ptr(),
+                directory.len() as u32,
+            )
+        } as usize;
+        ensure!(
+            length > 0 && length < directory.len(),
+            "Cannot resolve the Windows directory"
+        );
+        let windows = PathBuf::from(String::from_utf16(&directory[..length])?);
         // A 32-bit collector must launch native PowerShell for Storage cmdlets.
         for prefix in ["Sysnative", "System32"] {
             let executable = PathBuf::from(&windows)
@@ -347,6 +363,70 @@ mod windows {
         bail!("Windows PowerShell with Storage cmdlets is required to format a new NTFS VHDX")
     }
     impl Image {
+        fn grow(&mut self, bytes: u64) -> Result<()> {
+            ensure!(
+                self.attached && self.capacity > 0 && !self.disk_id.is_empty(),
+                "Only a newly created writable image may grow"
+            );
+            if bytes <= self.capacity {
+                return Ok(());
+            }
+            ensure!(bytes <= MAX, "Expanded image exceeds capacity limit");
+            let parameters = RESIZE_VIRTUAL_DISK_PARAMETERS {
+                Version: RESIZE_VIRTUAL_DISK_VERSION_1,
+                Anonymous: RESIZE_VIRTUAL_DISK_PARAMETERS_0 {
+                    Version1: RESIZE_VIRTUAL_DISK_PARAMETERS_0_0 { NewSize: bytes },
+                },
+            };
+            let mut path_buffer = vec![0u16; 512];
+            let mut length = (path_buffer.len() * 2) as u32;
+            // SAFETY: this guard exclusively owns the created virtual-disk handle and output buffer.
+            win(
+                unsafe {
+                    GetVirtualDiskPhysicalPath(self.handle, &mut length, path_buffer.as_mut_ptr())
+                },
+                "GetVirtualDiskPhysicalPath (grow)",
+            )?;
+            let end = path_buffer
+                .iter()
+                .position(|c| *c == 0)
+                .context("Unterminated owned disk path")?;
+            let number = physical_disk_number(&String::from_utf16(&path_buffer[..end])?)?;
+            // SAFETY: increase only this run's owned VHDX, with bounded, versioned parameters.
+            win(
+                unsafe {
+                    ResizeVirtualDisk(
+                        self.handle,
+                        RESIZE_VIRTUAL_DISK_FLAG_NONE,
+                        &parameters,
+                        ptr::null(),
+                    )
+                },
+                "ResizeVirtualDisk",
+            )?;
+            let output = Command::new(powershell()?)
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    include_str!("../scripts/grow_vhdx.ps1"),
+                ])
+                .env("KUMADE_VHDX_PATH", &self.path)
+                .env("KUMADE_VHDX_DISK_NUMBER", number.to_string())
+                .env("KUMADE_VHDX_DISK_ID", &self.disk_id)
+                .env("KUMADE_VHDX_VOLUME", &self.volume)
+                .env("KUMADE_VHDX_NEW_SIZE", bytes.to_string())
+                .stdin(Stdio::null())
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "Owned evidence volume expansion failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            self.capacity = bytes;
+            Ok(())
+        }
         fn create(path: &Path, bytes: u64) -> Result<Self> {
             validate_new_image_path(path)?;
             ensure!(
@@ -416,6 +496,8 @@ mod windows {
                 attached: false,
                 volume: PathBuf::new(),
                 path: path.to_owned(),
+                capacity: bytes,
+                disk_id: String::new(),
             };
             let attach = ATTACH_VIRTUAL_DISK_PARAMETERS {
                 Version: ATTACH_VIRTUAL_DISK_VERSION_1,
@@ -480,6 +562,11 @@ mod windows {
                 .context("Missing formatted volume path")?;
             validate_volume_path(volume)?;
             image.volume = PathBuf::from(volume);
+            image.disk_id = result["DiskUniqueId"]
+                .as_str()
+                .context("Missing new disk identity")?
+                .to_owned();
+            ensure!(!image.disk_id.is_empty(), "New disk identity is empty");
             let handle = image.volume_handle()?;
             let mut extents = VOLUME_DISK_EXTENTS::default();
             let mut returned = 0;
@@ -587,6 +674,24 @@ mod windows {
             Ok(())
         }
     }
+
+    #[cfg(test)]
+    #[test]
+    fn owned_dynamic_container_grows_without_changing_saved_payloads() {
+        metadata::enable_privileges().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("owned-grow.vhdx");
+        let mut image = Image::create(&path, GIB).unwrap();
+        let payload = image.volume.join("control.bin");
+        fs::write(&payload, b"preserved evidence").unwrap();
+        let before = collect::hash_file(&payload).unwrap();
+        image.grow(2 * GIB).unwrap();
+        assert!(fs2::total_space(&image.volume).unwrap() > GIB);
+        assert_eq!(collect::hash_file(&payload).unwrap(), before);
+        assert!(image.grow(MAX + GIB).is_err());
+        image.finish().unwrap();
+    }
+
     pub(super) fn collect(
         plan: &Plan,
         path: &Path,
@@ -594,14 +699,32 @@ mod windows {
         options: &Options,
         staging_limit: Option<u64>,
     ) -> Result<Summary> {
+        let mut configured = options.clone();
+        let owns_early = configured.early.is_none();
+        if owns_early {
+            let resolved = paths::resolve_future(path)?;
+            let parent = resolved.parent().context("Image output has no parent")?;
+            configured.early = crate::early::prepare(
+                parent,
+                plan.sources
+                    .first()
+                    .map(|s| s.computer.as_str())
+                    .unwrap_or("UnknownComputer"),
+                plan.memory_requested,
+                configured.live_info.as_ref(),
+            )?;
+        }
+        let options = &configured;
         metadata::enable_privileges()?;
         // Raw-only NTFS candidates have no planning-time size; read them from
         // the raw provider before the container is sized.
         let sizes = metadata::raw_candidate_sizes(plan);
         let raw_known = sizes.known;
+        let early_bytes = options.early.as_ref().map_or(0, |e| e.bytes);
         let known = plan
             .known_bytes
-            .checked_add(raw_known)
+            .checked_add(early_bytes)
+            .and_then(|v| v.checked_add(raw_known))
             .context("Known evidence size overflow")?;
         let entropy_reserve = crate::entropy::metadata_reserve(plan)?;
         let reserve = metadata_reserve(plan.files.len(), options.threads)
@@ -640,7 +763,15 @@ mod windows {
             }
             ui::status("Creating and formatting the new NTFS evidence container…");
         }
-        let image = Image::create(&path, bytes)?;
+        let mut image = Image::create(&path, bytes)?;
+        let mut late_entropy = options.entropy.clone();
+        if let Some(settings) = late_entropy.as_mut() {
+            crate::entropy::exclude_output_paths(
+                settings,
+                &plan.sources,
+                &[path.clone(), parent.to_owned()],
+            )?;
+        }
         let inner = Options {
             threads: options.threads,
             reserve_bytes: reserve,
@@ -648,6 +779,8 @@ mod windows {
             verbose: options.verbose,
             ntfs_metadata: true,
             process_scan: options.process_scan.clone(),
+            early: options.early.clone(),
+            entropy: late_entropy,
             live_info: options.live_info.clone().map(|mut config| {
                 config.reserve_bytes = reserve;
                 config.host_reserve = Some(HostReserve {
@@ -665,8 +798,62 @@ mod windows {
                     .saturating_add(options.threads.min(plan.files.len().max(1)) as u64 * 16 * MIB),
             }),
         };
-        // The planned sources were frozen before this destination was attached.
-        let result = collect::collect(plan, &image.volume, &inner);
+        // Entropy runs after core acquisition. Grow only our own dynamic image
+        // once its additional payload size is known; source disks are never resized.
+        let volume = image.volume.clone();
+        let mut resize = |updated: &Plan| -> Result<collect::CapacityUpdate> {
+            let sizes = metadata::raw_candidate_sizes(updated);
+            let total = updated
+                .known_bytes
+                .checked_add(sizes.known)
+                .and_then(|n| n.checked_add(early_bytes))
+                .context("Expanded evidence size overflow")?;
+            let new_reserve = metadata_reserve(updated.files.len(), options.threads)
+                .checked_add(crate::entropy::metadata_reserve(updated)?)
+                .context("Expanded metadata reserve overflow")?;
+            let wanted = capacity(
+                total,
+                sizes.unknown,
+                explicit_gib,
+                new_reserve,
+                sizes.largest_stream,
+            )?;
+            ensure!(
+                staging_limit.is_none_or(|limit| wanted <= limit),
+                "Expanded NTFS disk exceeds the E01 segment limit"
+            );
+            let extra = total.saturating_sub(known);
+            let host_budget = options
+                .reserve_bytes
+                .checked_add(if staging_limit.is_some() { extra } else { 0 })
+                .context("Expanded host reserve overflow")?;
+            ensure!(
+                fs2::available_space(parent)?
+                    >= extra
+                        .saturating_add(host_budget)
+                        .saturating_add(new_reserve.saturating_sub(reserve)),
+                "Insufficient host space for deferred binary candidates and metadata"
+            );
+            if wanted > image.capacity {
+                if !options.quiet {
+                    ui::field(
+                        "Expanding owned evidence container",
+                        collect::human_bytes(wanted),
+                    );
+                }
+                image.grow(wanted)?;
+            }
+            Ok(collect::CapacityUpdate {
+                reserve: new_reserve,
+                host: Some(HostReserve {
+                    path: parent.to_owned(),
+                    bytes: host_budget.saturating_add(
+                        options.threads.min(updated.files.len().max(1)) as u64 * 16 * MIB,
+                    ),
+                }),
+            })
+        };
+        let result = collect::collect_with_capacity(plan, &volume, &inner, Some(&mut resize));
         let (_, summary) = result.with_context(|| {
             format!(
                 "Collection failed; partial VHDX retained at {}",
@@ -688,6 +875,9 @@ mod windows {
                     collect::human_bytes(fs::metadata(&path)?.len())
                 ),
             );
+        }
+        if owns_early && let Some(capture) = &options.early {
+            capture.cleanup()?;
         }
         Ok(summary)
     }

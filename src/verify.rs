@@ -43,6 +43,9 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
     );
     let seal: serde_json::Value =
         serde_json::from_reader(File::open(paths::safe_join(&root, "Seal.json")?)?)?;
+    if seal["Kind"] == "KumadeEarlyVolatile" {
+        return crate::early::verify(&root);
+    }
     ensure!(
         seal["SchemaVersion"] == SCHEMA_VERSION,
         "Unsupported seal schema"
@@ -132,6 +135,12 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         "Run identity mismatch"
     );
     let plan: Plan = serde_json::from_reader(File::open(root.join("Plan.json"))?)?;
+    if run["EntropyDeferred"] == true {
+        ensure!(
+            digests.contains_key("InitialPlan.json"),
+            "Missing initial acquisition plan"
+        );
+    }
     if plan.entropy_scan.is_some() {
         for name in crate::entropy::FILES {
             ensure!(

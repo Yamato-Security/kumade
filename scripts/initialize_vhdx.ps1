@@ -4,6 +4,7 @@
 # Values are passed through the child environment, never interpolated as code.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$env:PSModulePath=Join-Path $PSHOME 'Modules'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $number = [uint32]::Parse($env:KUMADE_VHDX_DISK_NUMBER)
 $image = Get-DiskImage -ImagePath $env:KUMADE_VHDX_PATH -ErrorAction Stop
@@ -20,4 +21,4 @@ if ($part.DiskNumber -ne $number -or $part.DriveLetter) { throw 'Unexpected new 
 $null = Format-Volume -Partition $part -FileSystem NTFS -NewFileSystemLabel 'KumadeEvidence' -Confirm:$false -Force -ErrorAction Stop
 $volumes = @($part | Get-Volume -ErrorAction Stop)
 if ($volumes.Count -ne 1 -or $volumes[0].FileSystem -ne 'NTFS') { throw 'Expected one NTFS evidence volume' }
-@{ DiskNumber=$number; VolumePath=$volumes[0].UniqueId; FileSystem=$volumes[0].FileSystem } | ConvertTo-Json -Compress
+@{ DiskNumber=$number; DiskUniqueId=(Get-Disk -Number $number -ErrorAction Stop).UniqueId; VolumePath=$volumes[0].UniqueId; FileSystem=$volumes[0].FileSystem } | ConvertTo-Json -Compress

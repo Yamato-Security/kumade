@@ -76,7 +76,7 @@ struct CollectionArgs {
     /// Include paging, swap, hibernation and existing memory dumps (default: off)
     #[arg(long)]
     paging: bool,
-    /// Scan live process memory with YARA before copying artifacts (default: off)
+    /// Scan live process memory after hot disk artifacts (default: off)
     #[arg(long, conflicts_with = "sources")]
     scan_processes: bool,
     /// YARA Forge package for the optional process scan (default: core)
@@ -631,6 +631,63 @@ fn run() -> Result<u8> {
             || (options.sources.is_empty() && !options.no_live_info),
         "Nothing selected for collection; use --paging or --artifact to select evidence"
     );
+    let reserve_bytes = options
+        .reserve_mib
+        .checked_mul(1024 * 1024)
+        .context("Reserve value overflow")?;
+    let live_options = if options.sources.is_empty() && !options.no_live_info {
+        Some(kumade::live_info::Options {
+            format: options.live_info_format,
+            timeout_seconds: options.live_info_timeout,
+            threads: options.threads.min(2),
+            reserve_bytes,
+            quiet: options.quiet,
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+    // Wizard sizing is metadata-only preflight. Actual acquisition begins here:
+    // RAM request first, then volatile live state, before VSS and full file planning.
+    let computer = discovered
+        .sources
+        .first()
+        .map(|s| s.computer.as_str())
+        .unwrap_or("UnknownComputer");
+    let early_parent = if options.vhdx.is_some() || options.e01.is_some() {
+        let path = paths::image_destination(
+            &destination,
+            &paths::run_name(computer, &started_utc)?,
+            if options.vhdx.is_some() {
+                "vhdx"
+            } else {
+                "E01"
+            },
+        )?;
+        path.parent()
+            .context("Image output has no parent")?
+            .to_owned()
+    } else {
+        destination.clone()
+    };
+    for source in &discovered.sources {
+        ensure!(
+            source.live
+                || (!early_parent.starts_with(&source.root)
+                    && !source.root.starts_with(&early_parent)),
+            "Source and output directory trees must not overlap"
+        );
+    }
+    let early = if plan_only {
+        None
+    } else {
+        kumade::early::prepare(
+            &early_parent,
+            computer,
+            options.memory,
+            live_options.as_ref(),
+        )?
+    };
     // Revalidate choices before creating a snapshot or output container.
     if options.vss {
         kumade::vss::check_host()?;
@@ -693,7 +750,7 @@ fn run() -> Result<u8> {
         }
     }
     plan.issues.extend(discovered.issues);
-    if options.entropy.high_entropy {
+    if plan_only && options.entropy.high_entropy {
         kumade::entropy::augment_plan(
             &mut plan,
             &options.entropy.settings(),
@@ -738,10 +795,6 @@ fn run() -> Result<u8> {
             },
         );
     }
-    let reserve_bytes = options
-        .reserve_mib
-        .checked_mul(1024 * 1024)
-        .context("Reserve value overflow")?;
     let collect_options = Options {
         threads: options.threads,
         reserve_bytes,
@@ -770,18 +823,12 @@ fn run() -> Result<u8> {
         } else {
             None
         },
-        live_info: if options.sources.is_empty() && !options.no_live_info {
-            Some(kumade::live_info::Options {
-                format: options.live_info_format,
-                timeout_seconds: options.live_info_timeout,
-                threads: options.threads.min(2),
-                reserve_bytes,
-                quiet: options.quiet,
-                ..Default::default()
-            })
-        } else {
-            None
-        },
+        live_info: live_options,
+        early: early.clone(),
+        entropy: options
+            .entropy
+            .high_entropy
+            .then(|| options.entropy.settings()),
     };
     let result = if options.e01.is_some() {
         e01::collect(&plan, &output, options.e01_size_gib, &collect_options)
@@ -803,6 +850,9 @@ fn run() -> Result<u8> {
             anyhow::bail!("Acquisition failed: {error:#}; VSS cleanup also failed: {cleanup:#}")
         }
     };
+    if let Some(capture) = early {
+        capture.cleanup()?;
+    }
     if options.vss && !options.quiet {
         ui::field("VSS cleanup", "Owned snapshot set released");
     }

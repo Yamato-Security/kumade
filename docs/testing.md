@@ -194,3 +194,14 @@ Embedded process-scan failure is retained, sealed and verified as partial;
 modifying its diagnostic file fails verification. Windows CI also runs its
 existing VSS, x86/x64 and native container regressions with the wizard bypassed
 automatically for redirected command invocation.
+
+
+## Volatility ordering
+
+Tests shuffle planned files and check actual manifest ordering/timestamps with
+multiple workers, first-position RAM request failure, native base/ADS priority
+promotion, volatile-provider classes, independent retained-stage verification,
+deferred entropy after core payloads, collected-copy analysis after live-source
+deletion, and same-drive output exclusions. Windows tests check fast process
+state before hot disk files and HostInfo afterward, plus expansion of a newly
+owned dynamic VHDX with payload hash preservation.

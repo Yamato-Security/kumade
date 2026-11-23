@@ -19,6 +19,8 @@ Windows examples below.
 
 ## Implemented
 
+- [Volatility-aware acquisition](docs/acquisition-order.md): preserve fast live state and hot disk artifacts before bulk data, entropy analysis and compression.
+
 - Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. `--yes` accepts defaults without prompts for automation; `--paging` opts into large paging/hibernation/existing dump files.
 
 - Optional [high-entropy binary collection](docs/high-entropy.md): `--high-entropy` scans selected source drives for PE executable-section packing candidates, copies them through normal acquisition, and records sealed CSV/JSONL analysis with source hashes.

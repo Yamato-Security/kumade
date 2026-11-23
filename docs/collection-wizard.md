@@ -128,10 +128,11 @@ instead of silently becoming a clean scan. `verify` checks the scan completion
 marker and hashes, and checks that its incomplete count agrees with the outer
 status.
 
-Live inventory runs before this embedded process scan. Optional entropy
-analysis still runs during planning, before inventory and YARA; use standalone
-`live-info`/`scan-processes` first if volatile evidence must be captured before
-lengthy drive analysis. Matching YARA rules are hunting leads, not automatic
+Fast live inventory runs first, then hot disk artifacts, then this embedded
+process scan and slower configuration inventory. Optional entropy analysis is
+deferred until the selected artifacts have been acquired. See
+[acquisition order](acquisition-order.md) for the stage boundaries and protected
+early-data staging. Matching YARA rules are hunting leads, not automatic
 malware verdicts. See [process-scan semantics](yara-process-scan.md).
 
 ## Partition imaging
