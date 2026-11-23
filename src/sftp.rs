@@ -22,13 +22,13 @@ use russh::{
     keys::{HashAlg, PublicKeyOrCertificate},
 };
 use russh_sftp::{
-    client::{RawSftpSession, error::Error as SftpError},
+    client::{RawSftpSession, error::Error as SftpError, rawsession::PendingWrite},
     protocol::{FileAttributes, OpenFlags, SftpHandle, StatusCode},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -119,6 +119,11 @@ impl Args {
     }
     pub fn password(&self) -> Result<Zeroizing<String>> {
         let password = if self.sftp_password_stdin {
+            // A terminal would echo the typed password; the hidden prompt is for that.
+            ensure!(
+                !std::io::stdin().is_terminal(),
+                "--sftp-password-stdin expects a piped password; omit it to use the hidden prompt"
+            );
             let mut bytes = Zeroizing::new(Vec::new());
             let mut input = std::io::stdin().lock();
             for _ in 0..4097 {
@@ -193,55 +198,92 @@ impl Network {
         result
     }
 }
+/// Each write request carries 32 KiB, the size OpenSSH's own client uses. The
+/// gzip encoder hands over much smaller pieces (a median of 79 bytes on an
+/// incompressible input), so they are coalesced into full requests first.
+const REQUEST_BYTES: usize = 32 * 1024;
+/// Requests in flight per open object before the oldest acknowledgement is
+/// awaited. A bounded sliding window keeps every worker streaming without
+/// the bursts that make other workers' control and journal requests wait.
+const IN_FLIGHT: usize = 16;
 struct NetworkFile {
     connection: Arc<Network>,
     handle: SftpHandle,
     offset: u64,
+    buffer: Vec<u8>,
+    in_flight: VecDeque<PendingWrite>,
+}
+impl NetworkFile {
+    fn broken<T>(&mut self, error: anyhow::Error) -> io::Result<T> {
+        self.connection.broken.store(true, Ordering::Relaxed);
+        self.in_flight.clear();
+        Err(io::Error::other(format!("{error:#}")))
+    }
+    /// Sends the coalesced piece at the next sequential offset.
+    fn send_piece(&mut self) -> io::Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        if self.connection.broken.load(Ordering::Relaxed) {
+            return self.broken(anyhow::anyhow!("SFTP connection is unusable"));
+        }
+        let pending = match self.connection.raw.write_nowait(
+            self.handle.as_bytes(),
+            self.offset,
+            &self.buffer,
+        ) {
+            Ok(pending) => pending,
+            Err(error) => return self.broken(error.into()),
+        };
+        self.offset = match self.offset.checked_add(self.buffer.len() as u64) {
+            Some(offset) => offset,
+            None => return self.broken(anyhow::anyhow!("SFTP offset overflow")),
+        };
+        self.buffer.clear();
+        self.in_flight.push_back(pending);
+        if self.in_flight.len() >= IN_FLIGHT {
+            self.drain(IN_FLIGHT - 1)?;
+        }
+        Ok(())
+    }
+    /// Waits for acknowledgements, oldest first, until at most `keep` requests
+    /// remain in flight. A request that makes no progress within the operation
+    /// deadline fails the connection; nothing is retried or rewritten.
+    fn drain(&mut self, keep: usize) -> io::Result<()> {
+        while self.in_flight.len() > keep {
+            let pending = self.in_flight.pop_front().expect("in-flight request");
+            let c = &self.connection;
+            let result = c.runtime.block_on(async {
+                tokio::time::timeout(c.timeout, pending)
+                    .await
+                    .context("SFTP write timed out")?
+                    .map_err(anyhow::Error::from)
+            });
+            if let Err(error) = result {
+                return self.broken(error);
+            }
+        }
+        Ok(())
+    }
 }
 impl Write for NetworkFile {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         if data.is_empty() {
             return Ok(0);
         }
-        let n = data.len().min(256 * 1024);
-        let c = &self.connection;
-        let result = (|| -> Result<()> {
-            ensure!(
-                !c.broken.load(Ordering::Relaxed),
-                "SFTP connection is unusable"
-            );
-            let mut pending = Vec::new();
-            for (i, chunk) in data[..n].chunks(32768).enumerate() {
-                pending.push(c.raw.write_nowait(
-                    self.handle.as_bytes(),
-                    self.offset + (i * 32768) as u64,
-                    chunk,
-                )?);
-            }
-            c.runtime.block_on(async {
-                tokio::time::timeout(c.timeout, async {
-                    for p in pending {
-                        p.await?;
-                    }
-                    Ok::<_, SftpError>(())
-                })
-                .await
-                .context("SFTP write timed out")??;
-                Ok::<_, anyhow::Error>(())
-            })?;
-            Ok(())
-        })();
-        if let Err(e) = result {
-            c.broken.store(true, Ordering::Relaxed);
-            return Err(io::Error::other(format!("{e:#}")));
+        if self.connection.broken.load(Ordering::Relaxed) {
+            return Err(io::Error::other("SFTP connection is unusable"));
         }
-        self.offset = self
-            .offset
-            .checked_add(n as u64)
-            .ok_or_else(|| io::Error::other("SFTP offset overflow"))?;
+        let n = data.len().min(REQUEST_BYTES - self.buffer.len());
+        self.buffer.extend_from_slice(&data[..n]);
+        if self.buffer.len() >= REQUEST_BYTES {
+            self.send_piece()?;
+        }
         Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
+        self.send_piece()?;
+        self.drain(0)?;
         self.connection
             .wait(self.connection.raw.fsync(&self.handle))
             .map(|_| ())
@@ -279,6 +321,8 @@ impl Store for NetworkStore {
             connection: self.connection.clone(),
             handle,
             offset: 0,
+            buffer: Vec::with_capacity(REQUEST_BYTES),
+            in_flight: VecDeque::new(),
         }))
     }
 }
@@ -362,14 +406,32 @@ pub struct Object {
     pub stored_bytes: u64,
     pub stored_sha256: String,
 }
+/// The remote object is created on the first stored byte (or at `finish` for an
+/// empty object), so a source that turns out to be absent leaves nothing behind.
 struct Counted {
     sink: Option<Box<dyn RemoteWrite>>,
+    pending: Option<(Arc<dyn Store>, String)>,
     hash: Sha256,
     bytes: u64,
 }
+impl Counted {
+    fn sink(&mut self) -> io::Result<&mut Box<dyn RemoteWrite>> {
+        if self.sink.is_none() {
+            let (store, name) = self
+                .pending
+                .take()
+                .ok_or_else(|| io::Error::other("Remote object was discarded"))?;
+            let sink = store
+                .create(&name, 0)
+                .map_err(|e| io::Error::other(format!("{e:#}")))?;
+            self.sink = Some(sink);
+        }
+        Ok(self.sink.as_mut().expect("created sink"))
+    }
+}
 impl Write for Counted {
     fn write(&mut self, b: &[u8]) -> io::Result<usize> {
-        let n = self.sink.as_mut().expect("live sink").write(b)?;
+        let n = self.sink()?.write(b)?;
         self.hash.update(&b[..n]);
         self.bytes = self
             .bytes
@@ -378,7 +440,10 @@ impl Write for Counted {
         Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.sink.as_mut().expect("live sink").flush()
+        match self.sink.as_mut() {
+            Some(sink) => sink.flush(),
+            None => Ok(()),
+        }
     }
 }
 enum Encoded {
@@ -419,6 +484,8 @@ impl Upload {
             Encoded::Plain(w) => w,
             Encoded::Gzip(w) => w.finish()?,
         };
+        // An empty source still becomes an (empty) exclusive remote object.
+        stored.sink()?;
         stored.sink.take().context("Missing SFTP sink")?.finish()?;
         Ok(Object {
             name: self.name,
@@ -429,6 +496,25 @@ impl Upload {
             stored_bytes: stored.bytes,
             stored_sha256: hex(&stored.hash.finalize()),
         })
+    }
+    /// Abandon an upload before any byte reached the server: no remote object
+    /// is created, so an absent source is not represented by a stub object.
+    fn discard(self) -> Result<()> {
+        ensure!(
+            self.bytes == 0,
+            "Cannot discard a partially streamed object"
+        );
+        let created = match self.encoded {
+            Encoded::Plain(counted) => counted.sink.is_some(),
+            Encoded::Gzip(mut encoder) => {
+                // Drop writes the gzip trailer; without a pending object that
+                // write fails harmlessly instead of creating the object late.
+                encoder.get_mut().pending = None;
+                encoder.get_ref().sink.is_some()
+            }
+        };
+        ensure!(!created, "Remote object already exists; cannot discard");
+        Ok(())
     }
 }
 
@@ -476,6 +562,11 @@ impl Target {
                 let config = client::Config {
                     keepalive_interval: Some(Duration::from_secs(15)),
                     keepalive_max: 3,
+                    // russh leaves Nagle's algorithm on by default. Every SFTP
+                    // request is a small trailing segment after its payload, so
+                    // the delayed-ACK interaction costs tens of milliseconds per
+                    // request; OpenSSH's own clients disable it as well.
+                    nodelay: true,
                     ..Default::default()
                 };
                 let mut session = client::connect(
@@ -543,9 +634,9 @@ impl Target {
     fn begin(&self, suffix: String, relative: String, gzip: bool) -> Result<Upload> {
         let name = format!("{}-{suffix}", self.id);
         validate_object_name(&name)?;
-        let sink = self.store.create(&name, 0)?;
         let counted = Counted {
-            sink: Some(sink),
+            sink: None,
+            pending: Some((self.store.clone(), name.clone())),
             hash: Sha256::new(),
             bytes: 0,
         };
@@ -729,6 +820,28 @@ pub(crate) fn acquire(
         );
         record.bytes_read = upload.bytes;
         record.sha256 = Some(hex(&upload.logical.clone().finalize()));
+        if let Err(e) = &copied {
+            // Opening a missing raw device also returns NotFound. Only a
+            // successfully opened provider can establish a missing NTFS
+            // object/stream; never count provider failure as artifact absence.
+            let raw_available = source
+                .raw_device
+                .as_ref()
+                .is_none_or(|device| cache.contains_key(device));
+            if item.before.is_none()
+                && crate::raw::is_missing(e)
+                && record.bytes_read == 0
+                && raw_available
+                && source.root.is_dir()
+            {
+                // Nothing was streamed: no remote object, output path or hash.
+                upload.discard()?;
+                record.sha256 = None;
+                record.status = "NotPresent".into();
+                record.reason = format!("{e:#}");
+                return Ok(());
+            }
+        }
         let mut object = upload.finish()?;
         match copied {
             Ok((before, after)) => {
@@ -756,21 +869,7 @@ pub(crate) fn acquire(
                 record.reason=if record.status=="Partial"{"Source metadata/content changed; streamed version retained; server readback is pending"}else{"SFTP write/fsync/close acknowledged; trusted server readback is pending"}.into();
             }
             Err(e) => {
-                let raw_available = source
-                    .raw_device
-                    .as_ref()
-                    .is_none_or(|device| cache.contains_key(device));
-                record.status = if item.before.is_none()
-                    && crate::raw::is_missing(&e)
-                    && record.bytes_read == 0
-                    && raw_available
-                    && source.root.is_dir()
-                {
-                    "NotPresent"
-                } else {
-                    "Failed"
-                }
-                .into();
+                record.status = "Failed".into();
                 object.relative_path = format!("{relative}.{}.partial", item.id);
                 record.reason = format!("{e:#}; partial remote content retained");
             }

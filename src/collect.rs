@@ -916,11 +916,27 @@ pub fn collect_with_capacity(
     let failures = journal_errors
         .lock()
         .map_err(|_| anyhow::anyhow!("Journal error state poisoned"))?;
-    ensure!(
-        failures.is_empty(),
-        "Cannot seal collection because manifest writing failed: {}",
-        failures.join("; ")
-    );
+    if !failures.is_empty() {
+        // A lost remote connection fails every later record the same way.
+        let mut distinct = std::collections::BTreeMap::<&str, usize>::new();
+        for failure in failures.iter() {
+            *distinct.entry(failure.as_str()).or_default() += 1;
+        }
+        let summary: Vec<String> = distinct
+            .iter()
+            .map(|(message, count)| {
+                if *count > 1 {
+                    format!("{message} ({count} records)")
+                } else {
+                    (*message).to_owned()
+                }
+            })
+            .collect();
+        bail!(
+            "Cannot seal collection because manifest writing failed: {}",
+            summary.join("; ")
+        );
+    }
     let records = records
         .lock()
         .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
@@ -1203,7 +1219,7 @@ pub fn collect_with_capacity(
                 ui::count(summary.live_info_failed_providers),
             );
         }
-        if options.ntfs_metadata {
+        if capture_metadata {
             ui::field("Metadata errors", ui::count(summary.metadata_errors));
         }
         if !options.ntfs_metadata && options.remote.is_none() {

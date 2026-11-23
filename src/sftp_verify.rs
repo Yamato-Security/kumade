@@ -71,6 +71,7 @@ pub struct Receipt {
     pub delivery_id: String,
     #[serde(rename = "DeliverySHA256")]
     pub delivery_sha256: String,
+    pub collection_name: String,
     pub objects_verified: usize,
     pub payload_records_verified: usize,
     pub stored_bytes: u64,
@@ -534,7 +535,7 @@ pub(crate) fn verify(
             && summary.bytes_acquired == bytes,
         "Summary counters differ from records"
     );
-    Ok(Receipt{schema_version:1,kind:"KumadeTrustedSftpReadback".into(),version:env!("CARGO_PKG_VERSION").into(),verified_utc:utc_now(),delivery_id:delivery.delivery_id,delivery_sha256:inputs.sha256.clone(),objects_verified:delivery.objects.len(),payload_records_verified:count,stored_bytes,logical_bytes,payload_hashes_verified:true,acquisition_state:if summary.completeness=="PendingServerReadbackVerification"{"CompleteWithinSelectedPrototypeScope".into()}else{"Partial".into()},collector_acquisition_state:summary.completeness,limitations:vec!["Readback integrity does not establish source authenticity or acquisition completeness. Compare DeliverySHA256 with the collector over a trusted channel.".into(),"Source timestamps/ACLs and named streams remain inventories/exports, not native metadata restoration.".into()]})
+    Ok(Receipt{schema_version:1,kind:"KumadeTrustedSftpReadback".into(),version:env!("CARGO_PKG_VERSION").into(),verified_utc:utc_now(),delivery_id:delivery.delivery_id,delivery_sha256:inputs.sha256.clone(),collection_name:delivery.collection_name,objects_verified:delivery.objects.len(),payload_records_verified:count,stored_bytes,logical_bytes,payload_hashes_verified:true,acquisition_state:if summary.completeness=="PendingServerReadbackVerification"{"CompleteWithinSelectedPrototypeScope".into()}else{"Partial".into()},collector_acquisition_state:summary.completeness,limitations:vec!["Readback integrity does not establish source authenticity or acquisition completeness. Compare DeliverySHA256 with the collector over a trusted channel.".into(),"Source timestamps/ACLs and named streams remain inventories/exports, not native metadata restoration.".into()]})
 }
 
 #[cfg(test)]

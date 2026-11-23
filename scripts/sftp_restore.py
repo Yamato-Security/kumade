@@ -218,6 +218,7 @@ def restore(incoming, delivery_name, expected_sha256, output, receipt):
             "Kind": "KumadeTrustedSftpReadback",
             "DeliveryId": delivery_id,
             "DeliverySHA256": expected_sha256,
+            "CollectionName": delivery["CollectionName"],
             "ObjectsVerified": len(objects),
             "PayloadRecordsVerified": count,
             "PayloadHashesVerified": True,

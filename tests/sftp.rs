@@ -210,6 +210,81 @@ fn failed_stream_never_creates_local_payload_or_completion_marker() {
             .keys()
             .all(|k| !k.ends_with("-delivery.json"))
     );
+    // The interrupted payload object is retained and the record points at it.
+    let record: Record = serde_json::from_str(
+        fs::read_to_string(root.join("Manifest.jsonl"))
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record.status, "Failed");
+    assert!(record.reason.contains("partial remote content retained"));
+    assert!(
+        record
+            .relative_output_path
+            .as_deref()
+            .is_some_and(|p| p.ends_with(".partial"))
+    );
+    assert!(record.sha256.is_some());
+}
+
+#[test]
+fn an_empty_source_file_still_becomes_an_empty_remote_object() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    fs::write(source.join("Windows/Prefetch/EMPTY.pf"), b"").unwrap();
+    let rules = Rules::load(DEFAULT_CATALOG).unwrap();
+    let plan = discovery::build_plan(
+        vec![discovery::directory_source(&source, "C", "HOST").unwrap()],
+        &rules,
+        &["windows.prefetch".into()],
+        false,
+    )
+    .unwrap();
+    for gzip in [false, true] {
+        let store = Arc::new(MemoryStore::default());
+        let target = Target::from_store(store.clone(), gzip).unwrap();
+        let (root, summary) = collect::collect(
+            &plan,
+            &temp.path().join(format!("staging-{gzip}")),
+            &options(target.clone()),
+        )
+        .unwrap();
+        assert_eq!(summary.collected, 1, "{summary:?}");
+        let record: Record = serde_json::from_str(
+            fs::read_to_string(root.join("Manifest.jsonl"))
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record.status, "Transferred");
+        assert_eq!(record.sha256, Some(sha256(b"")));
+        let (name, _) = target.publish(&root, &summary).unwrap();
+        let objects = store.objects.lock().unwrap();
+        let delivery: serde_json::Value = serde_json::from_slice(&objects[&name]).unwrap();
+        let payload = delivery["Objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["RelativePath"] == "C/Windows/Prefetch/EMPTY.pf")
+            .unwrap();
+        assert_eq!(payload["LogicalBytes"], 0);
+        let stored = &objects[payload["Name"].as_str().unwrap()];
+        if gzip {
+            let mut restored = vec![];
+            flate2::read::GzDecoder::new(stored.as_slice())
+                .read_to_end(&mut restored)
+                .unwrap();
+            assert!(restored.is_empty());
+        } else {
+            assert!(stored.is_empty());
+        }
+    }
 }
 #[test]
 fn staging_retained_on_failure_and_removed_only_when_committed() {
@@ -290,16 +365,40 @@ fn raw_ntfs_and_absent_candidates_keep_their_status_without_local_payloads() {
         .collect();
     let mft = records.iter().find(|r| r.status == "Transferred").unwrap();
     assert_eq!(mft.method, "RawNTFS");
-    assert!(records.iter().any(|r| r.status == "NotPresent"));
+    // The fixture has no $UsnJrnl: both USN streams are absent. An absent
+    // candidate is reported like a local collection reports it, with no
+    // output path, no hash and no stub object on the server.
+    let absent: Vec<_> = records
+        .iter()
+        .filter(|r| r.status == "NotPresent")
+        .collect();
+    assert_eq!(absent.len(), 2, "{records:?}");
+    for record in &absent {
+        assert_eq!(record.method, "RawNTFS");
+        assert!(record.relative_output_path.is_none(), "{record:?}");
+        assert!(record.sha256.is_none(), "{record:?}");
+        assert_eq!(record.bytes_read, 0);
+        assert!(!record.reason.contains("partial"), "{}", record.reason);
+    }
     let (name, _) = target.publish(&root, &summary).unwrap();
     let objects = store.objects.lock().unwrap();
+    assert_eq!(
+        objects.keys().filter(|k| k.contains("-payload-")).count(),
+        1,
+        "{:?}",
+        objects.keys().collect::<Vec<_>>()
+    );
     let delivery: serde_json::Value = serde_json::from_slice(&objects[&name]).unwrap();
-    assert!(delivery["Objects"].as_array().unwrap().iter().any(|o| {
-        o["RelativePath"]
-            .as_str()
-            .unwrap()
-            .starts_with("_KumadeStreams/")
+    let listed = delivery["Objects"].as_array().unwrap();
+    assert!(listed.iter().all(|o| {
+        let path = o["RelativePath"].as_str().unwrap();
+        !path.ends_with(".partial") && !path.starts_with("_KumadeStreams/")
     }));
+    assert!(
+        listed
+            .iter()
+            .any(|o| o["RelativePath"] == mft.relative_output_path.clone().unwrap())
+    );
 }
 
 #[test]

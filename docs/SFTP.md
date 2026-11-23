@@ -20,7 +20,8 @@ an elevated Windows terminal:
 
 Create the metadata staging parent directory first on a protected filesystem.
 The password is prompted without echo. For automation, `--sftp-password-stdin`
-reads only the first stdin line; supply it from your secret manager. There is no
+reads only the first stdin line and is refused when stdin is a terminal; supply
+it from your secret manager. There is no
 password command-line option or password environment variable. Do not put secrets
 in shell history, scripts, transcripts or collection catalogs. Password memory is
 cleared on a best-effort basis, not guaranteed against a compromised OS.
@@ -102,9 +103,13 @@ recovery; never assume an interrupted collection is complete.
 
 For each completed object the delivery inventory records both compressed/stored
 and original/logical byte counts and SHA-256 hashes. Acquisition records are
-`Transferred`, with `Verified=false`. `PendingServerReadbackVerification` is
-**not** an integrity verdict. Changed files, missing providers and acquisition
-errors remain partial/failed, even after every uploaded byte verifies.
+`Transferred`, with `Verified=false`. A remote object is created when the first
+byte is streamed, so a raw candidate that does not exist on the volume stays
+`NotPresent` with no output path, no hash and no stub object; a failed read
+keeps whatever was streamed under a `.partial` name.
+`PendingServerReadbackVerification` is **not** an integrity verdict. Changed
+files, missing providers and acquisition errors remain partial/failed, even
+after every uploaded byte verifies.
 
 After revoking the account and ending sessions, on the trusted server run:
 
@@ -118,8 +123,11 @@ sudo python3 scripts/sftp_restore.py --incoming /srv/kumade/CASE/chroot/incoming
 Create the trusted output/receipt parents first. Neither output nor receipt may
 already exist. This standard-library verifier checks the operator-supplied
 manifest hash, all stored and decompressed payload hashes, the sealed collection
-metadata and the acquisition manifest. It restores ordinary files under the
-computer/date directory layout in a **new** directory, rejecting path traversal,
+metadata and the acquisition manifest. It restores ordinary files in the usual
+drive layout (`C/...`, exported streams under `_KumadeStreams/`) directly inside
+a **new** directory; name that directory after the collection (`CollectionName`
+in the delivery and receipt) when downstream tools expect the hostname/date
+folder. It rejects path traversal,
 symlinks, hardlinks, duplicate/conflicting paths and excess decoded lengths. It
 never executes recovered content or applies source ACLs. All recovered content
 must continue to be treated as untrusted evidence.
@@ -127,7 +135,8 @@ must continue to be treated as untrusted evidence.
 The receipt confirms server readback, separately from acquisition completeness.
 A successful upload exits 0 only if acquisition did not report a partial state;
 server verification is still required. `kumade verify` intentionally refuses a
-remote delivery's metadata directory; use the trusted server receipt instead.
+remote delivery's metadata directory; use `kumade verify-delivery` or the Python
+restorer on the trusted server and keep its receipt instead.
 
 Named NTFS streams are exported into the disjoint `_KumadeStreams/<drive>/...`
 namespace and retain `StreamName`/source mappings. They are not recreated as native

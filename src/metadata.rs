@@ -370,10 +370,12 @@ fn same_identity(captured: Option<&str>, acquired: Option<&str>) -> bool {
 pub(crate) fn remote_inventory(snapshots: &mut [Snapshot], records: &[Record]) -> usize {
     let mut files = HashMap::<(&str, &str), Vec<&Record>>::new();
     let mut directories = BTreeSet::new();
-    for record in records
-        .iter()
-        .filter(|r| r.relative_output_path.is_some() && r.status != "NotPresent")
-    {
+    // As in local restoration, only a streamed payload (acknowledged or
+    // partial) binds a metadata row; failed and absent candidates have no
+    // payload to bind, so their rows are inventory without a payload.
+    for record in records.iter().filter(|r| {
+        r.relative_output_path.is_some() && matches!(r.status.as_str(), "Transferred" | "Partial")
+    }) {
         files
             .entry((&record.source_id, &record.source_path))
             .or_default()
@@ -404,14 +406,12 @@ pub(crate) fn remote_inventory(snapshots: &mut [Snapshot], records: &[Record]) -
         }
         if !snapshot.directory
             && matching.is_some_and(|rows| {
-                rows.iter()
-                    .filter(|r| matches!(r.status.as_str(), "Transferred" | "Partial"))
-                    .any(|r| {
-                        !same_identity(
-                            snapshot.source_file_id.as_deref(),
-                            r.source_file_id.as_deref(),
-                        )
-                    })
+                rows.iter().any(|r| {
+                    !same_identity(
+                        snapshot.source_file_id.as_deref(),
+                        r.source_file_id.as_deref(),
+                    )
+                })
             })
         {
             snapshot.restore_status = "SourceChanged".into();
@@ -830,7 +830,17 @@ mod tests {
             0
         );
         assert_eq!(rows[0].restore_status, "PayloadUnavailable");
+        // A failed read keeps a `.partial` object but, as in a local collection,
+        // its metadata row is not a metadata error.
+        record.status = "Failed".into();
+        record.relative_output_path = Some("C/file.id.partial".into());
+        assert_eq!(
+            remote_inventory(&mut rows, std::slice::from_ref(&record)),
+            0
+        );
+        assert_eq!(rows[0].restore_status, "PayloadUnavailable");
         record.status = "Transferred".into();
+        record.relative_output_path = Some("C/file".into());
         assert_eq!(remote_inventory(&mut rows, &[record]), 1);
         assert_eq!(rows[0].restore_status, "CaptureFailed");
     }

@@ -688,13 +688,11 @@ fn run() -> Result<u8> {
     );
     // Authenticate and verify the upload-only policy before collecting evidence.
     let remote = if options.sftp.sftp.is_some() {
+        let password = options.sftp.password()?;
         if !options.quiet {
             ui::status("Verifying the pinned SFTP server and upload-only protections…");
         }
-        Some(kumade::sftp::Target::connect(
-            &options.sftp,
-            options.sftp.password()?,
-        )?)
+        Some(kumade::sftp::Target::connect(&options.sftp, password)?)
     } else {
         None
     };
