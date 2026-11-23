@@ -130,6 +130,8 @@ def execute(binary):
                     input=fields["Temporary password"] + "\n",
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=30,
                 )
                 assert failed.returncode == 2, "Wrong host pin accepted"
@@ -138,6 +140,8 @@ def execute(binary):
                     input="wrong-password\n",
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=30,
                 )
                 assert failed.returncode == 2, "Wrong password accepted"
@@ -146,6 +150,8 @@ def execute(binary):
                     input=fields["Temporary password"] + "\n",
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=60,
                 )
                 if result.returncode != expected_exit:
@@ -200,6 +206,8 @@ def execute(binary):
                     ],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=60,
                 )
                 assert verified.returncode == expected_exit, verified.stderr
@@ -231,6 +239,8 @@ def execute(binary):
                     ],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=30,
                 )
                 assert (

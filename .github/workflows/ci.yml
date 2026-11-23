@@ -48,9 +48,9 @@ jobs:
       # The x64 Windows runner can execute x86 binaries through WOW64.
       - name: Acquisition ordering regressions
         run: cargo test --locked --test ordering --target i686-pc-windows-msvc
-      - run: cargo test --locked --all-targets --target i686-pc-windows-msvc
       - name: Built-in receiver and native readback (x86)
         run: python scripts/test_sftp_receiver.py --binary target/i686-pc-windows-msvc/debug/kumade.exe
+      - run: cargo test --locked --all-targets --target i686-pc-windows-msvc
       - name: NTFS VHDX round trip (x86 collector)
         shell: pwsh
         run: ./scripts/test_vhdx.ps1 -Binary ./target/i686-pc-windows-msvc/debug/kumade.exe -WorkDirectory "$env:RUNNER_TEMP/kumade-vhdx-roundtrip"
@@ -72,12 +72,12 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - name: Acquisition ordering regressions
         run: cargo test --locked --test ordering
+      - name: Built-in receiver and native readback (x64)
+        run: python scripts/test_sftp_receiver.py --binary target/debug/kumade.exe
       - name: Isolated VSS acquisition
         run: cargo test --locked --test vss_windows
       - name: Remaining regression tests
         run: cargo test --locked --all-targets -- --skip locked_file_snapshot_content_raw_ntfs_cleanup_and_cli_backends
-      - name: Built-in receiver and native readback (x64)
-        run: python scripts/test_sftp_receiver.py --binary target/debug/kumade.exe
       - name: NTFS VHDX round trip
         shell: pwsh
         run: ./scripts/test_vhdx.ps1 -Binary ./target/debug/kumade.exe -WorkDirectory "$env:RUNNER_TEMP/kumade-vhdx-roundtrip"
