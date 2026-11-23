@@ -767,6 +767,10 @@ fn run() -> Result<u8> {
     };
     for source in &discovered.sources {
         ensure!(
+            source.live || !early_parent.starts_with(&source.root),
+            "Volatile staging must not be inside an offline evidence source"
+        );
+        ensure!(
             source.live
                 || (!early_output.starts_with(&source.root)
                     && !source.root.starts_with(&early_output)),
@@ -974,13 +978,13 @@ fn run() -> Result<u8> {
             "Integrity",
             "PENDING — revoke the account, then run the trusted server verifier",
         );
-        if let Some(staging) = staging.as_mut() {
-            staging.cleanup()?;
-        }
     }
     // A remote publication failure retains the original RAM stage, not just metadata.
     if let Some(capture) = early {
         capture.cleanup()?;
+    }
+    if let Some(staging) = staging.as_mut() {
+        staging.cleanup()?;
     }
     Ok(if summary.completeness == "Partial" {
         3

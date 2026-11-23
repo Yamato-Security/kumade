@@ -371,3 +371,63 @@ fn vss_flags_reject_offline_plans_and_invalid_timeouts_without_writing() {
     let help = run(&["forensic-copy", "--help"]);
     assert!(String::from_utf8(help.stdout).unwrap().contains("--vss"));
 }
+
+#[test]
+fn offline_memory_never_runs_a_provider_on_the_analyst_host() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    fs::write(source.join("Windows/Prefetch/EXAMPLE.pf"), b"fixture").unwrap();
+    let output = temp.path().join("results");
+    let out = run(&[
+        "collect",
+        "-d",
+        arg(&source),
+        "-o",
+        arg(&output),
+        "--memory",
+        "--dumpit",
+        "DO-NOT-RUN.exe",
+        "--reserve-mib",
+        "0",
+        "--yes",
+    ]);
+    assert_eq!(out.status.code(), Some(3));
+    let root = fs::read_dir(&output)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let data = fs::read_to_string(root.join("Manifest.jsonl")).unwrap();
+    let first: serde_json::Value = serde_json::from_str(data.lines().next().unwrap()).unwrap();
+    assert_eq!(first["Status"], "Failed");
+    assert!(
+        first["Reason"]
+            .as_str()
+            .unwrap()
+            .contains("analyst computer")
+    );
+    assert!(!root.join("Memory/Memory.dmp").exists());
+}
+
+#[test]
+fn explicit_volatile_staging_cannot_write_inside_offline_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    let output = temp.path().join("results");
+    let out = run(&[
+        "collect",
+        "-d",
+        arg(&source),
+        "-o",
+        arg(&output),
+        "--memory",
+        "--memory-staging-dir",
+        arg(&source.join("forbidden")),
+        "--yes",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!source.join("forbidden").exists());
+}

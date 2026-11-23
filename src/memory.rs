@@ -79,8 +79,8 @@ pub fn native_architecture() -> Result<Architecture> {
     {
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, IsWow64Process2};
         let (mut process, mut native) = (0u16, 0u16);
-        // SAFETY: current process pseudo-handle and initialized writable machine codes.
         ensure!(
+            // SAFETY: current process pseudo-handle and initialized writable machine codes.
             unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) } != 0,
             "Cannot determine native Windows architecture: {}",
             std::io::Error::last_os_error()
@@ -103,8 +103,8 @@ pub fn physical_bytes() -> Result<u64> {
             dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
             ..Default::default()
         };
-        // SAFETY: initialized output structure with its documented size.
         ensure!(
+            // SAFETY: initialized output structure with its documented size.
             unsafe { GlobalMemoryStatusEx(&mut status) } != 0,
             "Cannot determine physical RAM size: {}",
             std::io::Error::last_os_error()

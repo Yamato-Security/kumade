@@ -76,7 +76,8 @@ The default deadline is 1,800 seconds; change it with `--memory-timeout <seconds
 Kumade monitors destination free space during capture and terminates its owned
 process job on timeout/reserve exhaustion. A system call or driver operation can
 still stall; stopping a provider does not guarantee immediate kernel cancellation
-or driver unload. Failed/truncated/unsupported dumps remain **Failed**, with partial
+or driver unload. Nonzero provider NtStatus and failed/truncated/unsupported dumps remain **Failed**;
+reported inaccessible pages make the task **Partial**, with partial
 bytes and diagnostics retained when available; other selected evidence still runs.
 No fake successful memory image is created.
 
