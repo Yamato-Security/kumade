@@ -841,6 +841,50 @@ mod tests {
         assert!(files.write(5, handle.clone(), 4, Vec::new()).await.is_err());
         assert!(files.close(6, handle).await.is_err());
     }
+    #[tokio::test]
+    async fn final_delivery_cannot_freeze_another_open_upload() {
+        let (_root, mut files) = fixture();
+        files.init(3, HashMap::new()).await.unwrap();
+        let id = uuid::Uuid::new_v4();
+        let flags = OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE;
+        let payload = files
+            .open(
+                1,
+                format!("/incoming/{id}-payload-test"),
+                flags,
+                FileAttributes::default(),
+            )
+            .await
+            .unwrap()
+            .handle;
+        let delivery = files
+            .open(
+                2,
+                format!("/incoming/{id}-delivery.json"),
+                flags,
+                FileAttributes::default(),
+            )
+            .await
+            .unwrap()
+            .handle;
+        assert!(files.close(3, delivery.clone()).await.is_err());
+        files.close(4, payload).await.unwrap();
+        files.close(5, delivery).await.unwrap();
+        assert!(files.state.lock().unwrap().revoked);
+        assert!(!files.state.lock().unwrap().authorize("user", "secret"));
+        assert!(
+            files
+                .open(
+                    6,
+                    format!("/incoming/{id}-meta-later"),
+                    flags,
+                    FileAttributes::default()
+                )
+                .await
+                .is_err()
+        );
+    }
+
     #[test]
     fn auth_expiry_rate_limit_and_paths_are_fail_closed() {
         let (_, files) = fixture();

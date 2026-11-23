@@ -535,3 +535,69 @@ pub(crate) fn verify(
     );
     Ok(Receipt{schema_version:1,kind:"KumadeTrustedSftpReadback".into(),version:env!("CARGO_PKG_VERSION").into(),verified_utc:utc_now(),delivery_id:delivery.delivery_id,delivery_sha256:inputs.sha256.clone(),objects_verified:delivery.objects.len(),payload_records_verified:count,stored_bytes,logical_bytes,payload_hashes_verified:true,acquisition_state:if summary.completeness=="PendingServerReadbackVerification"{"CompleteWithinSelectedPrototypeScope".into()}else{"Partial".into()},collector_acquisition_state:summary.completeness,limitations:vec!["Readback integrity does not establish source authenticity or acquisition completeness. Compare DeliverySHA256 with the collector over a trusted channel.".into(),"Source timestamps/ACLs and named streams remain inventories/exports, not native metadata restoration.".into()]})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn paths_and_device_names_cannot_escape_or_open_special_windows_files() {
+        for path in [
+            "../escape",
+            "/absolute",
+            "C:/absolute",
+            "a\\b",
+            "a//b",
+            "a/./b",
+            "a/CON.txt",
+            "a/COM1",
+            "a/CONIN$",
+            "a/NUL",
+            "a/trailing.",
+            "a/trailing ",
+        ] {
+            assert!(relative(path).is_err(), "{path}");
+        }
+        assert_eq!(relative("C/Windows/Prefetch/APP.pf").unwrap().len(), 4);
+    }
+    #[test]
+    fn correct_stored_hash_does_not_allow_a_gzip_length_bomb() {
+        let root = tempfile::tempdir().unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&vec![0u8; 1024 * 1024]).unwrap();
+        let stored = encoder.finish().unwrap();
+        let name = format!("{id}-payload-test");
+        fs::write(root.path().join(&name), &stored).unwrap();
+        let object = Object {
+            name,
+            relative_path: "C/file".into(),
+            encoding: "gzip".into(),
+            logical_bytes: 1,
+            logical_sha256: crate::model::sha256(&[0]),
+            stored_bytes: stored.len() as u64,
+            stored_sha256: crate::model::sha256(&stored),
+        };
+        let summary = serde_json::json!({"SchemaVersion":1,"RunId":"run","Version":"test","StartedUtc":"","FinishedUtc":"","Completeness":"PendingServerReadbackVerification","Collected":1,"Partial":0,"Failed":0,"DiscoveryErrors":0,"BytesAcquired":1,"CatalogSha256":""});
+        let delivery=serde_json::to_vec(&serde_json::json!({"SchemaVersion":1,"Kind":"KumadeSftpDelivery","DeliveryId":id,"CollectionName":"HOST","Objects":[object],"Summary":summary})).unwrap();
+        let name = format!("{id}-delivery.json");
+        fs::write(root.path().join(&name), &delivery).unwrap();
+        let error = verify(
+            &Inputs {
+                incoming: root.path().to_owned(),
+                delivery: name,
+                sha256: crate::model::sha256(&delivery),
+                max_decoded_bytes: 1024,
+                restore: None,
+            },
+            None,
+        )
+        .err()
+        .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Decoded object exceeds declared length"),
+            "{error:#}"
+        );
+    }
+}
