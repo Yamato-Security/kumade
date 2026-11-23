@@ -229,6 +229,8 @@ fn deferred_entropy_can_analyze_a_preserved_binary_deleted_from_live_source() {
     p = discovery::build_plan(vec![source.clone()], &r, &[], false).unwrap();
     let captured = t.path().join("captured");
     fs::create_dir(&captured).unwrap();
+    // Handle validation compares canonical Windows namespaces (including \\?\).
+    let captured = kumade::platform::canonicalize(&captured).unwrap();
     let copy = captured.join("deleted.exe");
     fs::copy(&file, &copy).unwrap();
     fs::remove_file(file).unwrap();
@@ -253,7 +255,7 @@ fn deferred_entropy_can_analyze_a_preserved_binary_deleted_from_live_source() {
     )
     .unwrap();
     let report = p.entropy_scan.unwrap();
-    assert_eq!(report.counts.candidates, 1);
+    assert_eq!(report.counts.candidates, 1, "{report:?}");
     assert_eq!(report.observations[0].method, "CollectedCopy");
 }
 #[cfg(windows)]

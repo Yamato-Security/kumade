@@ -774,6 +774,7 @@ pub fn exclude_output_paths(
 /// Already preserved unnamed streams are analyzed from their verified collected copy.
 #[derive(Clone)]
 pub struct CopyInput {
+    /// Canonical acquisition root, in the namespace used by handle-path validation.
     pub root: PathBuf,
     pub path: PathBuf,
     pub sha256: String,
