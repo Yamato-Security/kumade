@@ -16,7 +16,7 @@ use std::{
 #[derive(Clone, Debug, clap::Args)]
 #[group(id = "DumpItMemoryOptions")]
 pub struct Args {
-    /// Skip active pagefile copying alongside --memory (enabled by default)
+    /// Do not copy active pagefiles during RAM capture (default: copy)
     #[arg(long, requires = "memory")]
     pub no_memory_pagefile: bool,
     /// DumpIt toolkit directory or executable (otherwise tools/DumpIt beside Kumade)
@@ -491,6 +491,7 @@ pub fn acquire(
     let mut nt_status = None;
     let mut provider_started = None;
     let mut provider_finished = None;
+    let capture_stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut pagefile_worker = None;
     let mut pagefile_rows = Vec::new();
     let outcome = (|| -> Result<()> {
@@ -527,7 +528,11 @@ pub fn acquire(
         );
         ensure!(!path.exists(), "RAM output already exists");
         if !quiet {
-            crate::ui::status("Acquiring physical RAM with DumpIt before other evidence…");
+            crate::ui::status(if args.no_memory_pagefile {
+                "Acquiring physical RAM with DumpIt before other evidence…"
+            } else {
+                "Acquiring physical RAM with DumpIt and copying active pagefiles…"
+            });
         }
         let mut command = Command::new(&tool);
         command
@@ -545,8 +550,20 @@ pub fn acquire(
         if !args.no_memory_pagefile {
             let (stage, host) = (root.to_path_buf(), computer.to_string());
             let timeout = Duration::from_secs(args.memory_timeout);
+            let stopped = capture_stopped.clone();
+            let dump_path = path.clone();
             pagefile_worker = Some(std::thread::spawn(move || {
-                crate::pagefile::acquire(&stage, &host, pagefiles, reserve, timeout)
+                let waiting = Instant::now();
+                if let Err(error) = crate::pagefile::wait_for_ram(&dump_path, &stopped, timeout) {
+                    return Ok(vec![crate::pagefile::failure(&host, format!("{error:#}"))]);
+                }
+                crate::pagefile::acquire(
+                    &stage,
+                    &host,
+                    pagefiles,
+                    reserve,
+                    timeout.saturating_sub(waiting.elapsed()),
+                )
             }));
         }
         provider_started = Some(utc_now());
@@ -559,6 +576,7 @@ pub fn acquire(
             estimate,
         );
         provider_finished = Some(utc_now());
+        capture_stopped.store(true, std::sync::atomic::Ordering::Release);
         let (status, stdout, _) = execution?;
         exit_code = status.code();
         (inaccessible_pages, nt_status) = diagnostics(&stdout);

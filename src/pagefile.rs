@@ -267,6 +267,30 @@ fn active_paths(data: &[u8], base: usize, pointer_size: usize) -> Result<Vec<Pat
     Ok(result)
 }
 
+/// Begin reading paging files once DumpIt has written RAM payload, not merely
+/// while its executable/driver is starting. Never wait indefinitely if startup fails.
+pub fn wait_for_ram(
+    path: &Path,
+    stopped: &std::sync::atomic::AtomicBool,
+    timeout: Duration,
+) -> Result<()> {
+    let started = Instant::now();
+    loop {
+        if fs::metadata(path).is_ok_and(|m| m.len() > 8192) {
+            return Ok(());
+        }
+        ensure!(
+            !stopped.load(std::sync::atomic::Ordering::Acquire),
+            "RAM provider stopped before producing payload; paired pagefile capture did not start"
+        );
+        ensure!(
+            started.elapsed() < timeout,
+            "Timed out waiting for RAM provider payload"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 struct GuardedWriter {
     file: fs::File,
     directory: PathBuf,
@@ -401,6 +425,24 @@ pub fn deduplicate_plan(plan: &mut Plan, rows: &[Record]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn paired_copy_waits_for_ram_bytes_and_startup_failure_cannot_hang() {
+        use std::sync::atomic::AtomicBool;
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("Memory.dmp");
+        let stopped = AtomicBool::new(true);
+        assert!(wait_for_ram(&path, &stopped, Duration::from_secs(10)).is_err());
+        assert!(wait_for_ram(&path, &AtomicBool::new(false), Duration::ZERO).is_err());
+        fs::write(&path, vec![0; 8192]).unwrap();
+        assert!(wait_for_ram(&path, &stopped, Duration::from_secs(10)).is_err());
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(12288)
+            .unwrap();
+        wait_for_ram(&path, &stopped, Duration::from_secs(10)).unwrap();
+    }
     #[test]
     fn pagefile_names_are_bounded_and_both_pointer_widths_work() {
         for width in [4, 8] {
