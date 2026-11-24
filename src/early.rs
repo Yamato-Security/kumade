@@ -211,6 +211,18 @@ impl Capture {
         reserve: u64,
         host: Option<&collect::HostReserve>,
     ) -> Result<Option<Record>> {
+        self.import_memory_with_link(root, remote, reserve, host, |source, target| {
+            fs::hard_link(source, target)
+        })
+    }
+    fn import_memory_with_link(
+        &self,
+        root: &Path,
+        remote: Option<&crate::sftp::Target>,
+        reserve: u64,
+        host: Option<&collect::HostReserve>,
+        mut link: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<Option<Record>> {
         let Some(mut row) = self.memory.clone() else {
             return Ok(None);
         };
@@ -231,7 +243,24 @@ impl Capture {
             let expected = collect::hash_file(&source)?;
             // Same-volume RAM import has no second multi-GiB allocation. If a container
             // or filesystem cannot link, bounded copying preserves the original stage.
-            if !payload || fs::hard_link(&source, &target).is_err() {
+            if !payload || link(&source, &target).is_err() {
+                let required = reserve
+                    .checked_add(expected.0)
+                    .context("Early import copy size overflow")?;
+                ensure!(
+                    fs2::available_space(root)? >= required,
+                    "Insufficient destination space for early memory import copy; original stage retained"
+                );
+                if let Some(host) = host {
+                    let required = host
+                        .bytes
+                        .checked_add(expected.0)
+                        .context("Early import physical-host size overflow")?;
+                    ensure!(
+                        fs2::available_space(&host.path)? >= required,
+                        "Insufficient physical host space for early memory import copy; original stage retained"
+                    );
+                }
                 let mut input = platform::open_source(&source)?;
                 platform::validate_open_file(&input, &self.root)?;
                 let mut output = fs::OpenOptions::new()
@@ -392,12 +421,21 @@ mod memory_tests {
     use std::io;
     /// Integration fixture only: structural DMP validation is tested separately.
     fn fixture(parent: &Path) -> Arc<Capture> {
+        fixture_size(parent, b"fixture captured RAM".len() as u64)
+    }
+    fn fixture_size(parent: &Path, size: u64) -> Arc<Capture> {
         let root = parent.join("stage");
         fs::create_dir(&root).unwrap();
         let root = platform::canonicalize(&root).unwrap();
         let mut row = crate::memory::unavailable(&root, "RAMHOST", "fixture").unwrap();
         let path = root.join("Memory/Memory.dmp");
         fs::write(&path, b"fixture captured RAM").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(size)
+            .unwrap();
         let (bytes, digest) = collect::hash_file(&path).unwrap();
         row.bytes_read = bytes;
         row.logical_size = Some(bytes);
@@ -483,6 +521,130 @@ mod memory_tests {
         fs::write(root.join("Memory/Acquisition.json"), b"tampered").unwrap();
         assert!(crate::verify::verify(&root).is_err());
     }
+    // The artificial reserve is based on current free space. Serialize these large
+    // fixtures so their allocations/deletions cannot invalidate each other's budget.
+    static CAPACITY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    const LARGE_DUMP: u64 = 256 * 1024 * 1024;
+    const AVAILABLE_FOR_IMPORT: u64 = 128 * 1024 * 1024;
+
+    #[test]
+    fn same_volume_ram_import_does_not_require_a_second_dump_budget() {
+        let _guard = CAPACITY_TEST_LOCK.lock().unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let capture = fixture_size(t.path(), LARGE_DUMP);
+        let initial = plan(t.path());
+        let prefetch = initial.sources[0].root.join("Windows/Prefetch");
+        fs::create_dir_all(&prefetch).unwrap();
+        fs::write(prefetch.join("TEST.pf"), vec![42; 1024 * 1024]).unwrap();
+        let p = crate::discovery::build_plan(
+            initial.sources,
+            &crate::catalog::Rules::load(crate::catalog::DEFAULT_CATALOG).unwrap(),
+            &["windows.prefetch".into()],
+            true,
+        )
+        .unwrap();
+        assert_eq!(p.known_bytes, 1024 * 1024);
+        let output = t.path().join("output");
+        fs::create_dir(&output).unwrap();
+        let mut config = options(capture.clone(), None);
+        config.reserve_bytes = fs2::available_space(&output)
+            .unwrap()
+            .checked_sub(AVAILABLE_FOR_IMPORT)
+            .unwrap();
+        let (root, summary) = collect::collect(&p, &output, &config).unwrap();
+        assert_eq!(summary.collected, 2);
+        assert_eq!(summary.failed, 0);
+        assert!(fs2::available_space(&root).unwrap() >= config.reserve_bytes);
+        assert_eq!(crate::verify::verify(&root).unwrap(), (2, true));
+        let expected = capture.memory.as_ref().unwrap().sha256.clone().unwrap();
+        capture.cleanup().unwrap();
+        assert_eq!(
+            collect::hash_file(&root.join("Memory/Memory.dmp")).unwrap(),
+            (LARGE_DUMP, expected)
+        );
+    }
+
+    fn no_links(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "fixture filesystem has no hard links",
+        ))
+    }
+    #[test]
+    fn ram_copy_fallback_requires_its_full_budget_before_creating_a_dump() {
+        let _guard = CAPACITY_TEST_LOCK.lock().unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let capture = fixture_size(t.path(), LARGE_DUMP);
+        let output = t.path().join("output");
+        fs::create_dir(&output).unwrap();
+        let reserve = fs2::available_space(&output)
+            .unwrap()
+            .checked_sub(AVAILABLE_FOR_IMPORT)
+            .unwrap();
+        let error = capture
+            .import_memory_with_link(&output, None, reserve, None, no_links)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Insufficient destination space"),
+            "{error:#}"
+        );
+        assert!(!output.join("Memory/Memory.dmp").exists());
+        assert!(capture.path().join("Memory/Memory.dmp").exists());
+        capture.validate("RAMHOST", true).unwrap();
+    }
+    #[test]
+    fn ram_copy_fallback_preserves_the_physical_host_reserve() {
+        let _guard = CAPACITY_TEST_LOCK.lock().unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let capture = fixture_size(t.path(), LARGE_DUMP);
+        let output = t.path().join("output");
+        fs::create_dir(&output).unwrap();
+        let host = collect::HostReserve {
+            path: t.path().to_owned(),
+            bytes: fs2::available_space(t.path())
+                .unwrap()
+                .checked_sub(AVAILABLE_FOR_IMPORT)
+                .unwrap(),
+        };
+        let error = capture
+            .import_memory_with_link(&output, None, 0, Some(&host), no_links)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Insufficient physical host space"),
+            "{error:#}"
+        );
+        assert!(!output.join("Memory/Memory.dmp").exists());
+        capture.validate("RAMHOST", true).unwrap();
+    }
+    #[test]
+    fn ram_copy_fallback_succeeds_and_retains_hashes_without_links() {
+        let t = tempfile::tempdir().unwrap();
+        let capture = fixture(t.path());
+        let output = t.path().join("output");
+        fs::create_dir(&output).unwrap();
+        let host = collect::HostReserve {
+            path: t.path().to_owned(),
+            bytes: 1024,
+        };
+        let row = capture
+            .import_memory_with_link(&output, None, 1024, Some(&host), no_links)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "Acquired");
+        assert!(row.verified);
+        assert_eq!(
+            collect::hash_file(&output.join("Memory/Memory.dmp")).unwrap(),
+            (row.bytes_read, row.sha256.unwrap())
+        );
+        capture.cleanup().unwrap();
+        assert_eq!(
+            fs::read(output.join("Memory/Memory.dmp")).unwrap(),
+            b"fixture captured RAM"
+        );
+    }
+
     struct DiskStore(PathBuf);
     struct DiskFile(fs::File);
     impl Write for DiskFile {

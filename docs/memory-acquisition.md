@@ -96,8 +96,11 @@ convenience. The initial budget is physical RAM plus 64 MiB headroom and
 `--reserve-mib`; runtime reserve checks still apply.
 
 Directory output attempts a same-volume hard link into `Memory/Memory.dmp` to
-avoid a second RAM-sized allocation. Cross-volume/unsupported links require a
-bounded, hash-checked copy. VHDX/E01 output copies RAM into its NTFS container;
+avoid a second RAM-sized allocation. Its capacity check reserves metadata and
+remaining disk artifacts without requiring another dump-sized allocation. If the
+link fails (for example across volumes or on a filesystem without hard links),
+Kumade checks the full additional copy size plus the reserve before creating
+the destination dump, then performs a bounded, hash-checked copy. VHDX/E01 output copies RAM into its NTFS container;
 RAM contributes to capacity, largest-file and E01 staging estimates. The early
 copy remains until the collection is sealed, VSS cleanup has completed and the
 container is finalized/verified. Failures retain it and print its location.

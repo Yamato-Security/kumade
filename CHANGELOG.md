@@ -6,7 +6,10 @@
   DumpIt toolkit (`--memory`, `--dumpit`). Disable vendor analytics, validate full
   dump structure/length, hash captured bytes and retain failed/partial captures.
   Support directory, VHDX/E01 and SFTP delivery with explicit remote RAM staging,
-  bounded diagnostics, deadlines and free-space reserves. No vendor tools bundled.
+  bounded diagnostics, deadlines and free-space reserves. Directory imports do not
+  budget a duplicate RAM allocation when hard-linking; copy fallback checks the full
+  extra size while preserving pending evidence and destination/host reserves.
+  No vendor tools bundled.
 
 - Add a built-in `receive` command with ephemeral SFTP credentials, append-only
   uploads, expiry/session revocation, quotas and optional source-IP restrictions.

@@ -635,15 +635,15 @@ pub fn collect_with_capacity(
             "Early volatile providers do not match the selected live scope"
         );
     }
+    // RAM is already staged. Budget metadata here; import_memory first tries a
+    // hard link, and requires the full extra dump size only if it must copy.
+    // Keep the planned disk evidence and configured reserve available during import.
+    let early_import_reserve = required_payload
+        .checked_add(options.reserve_bytes)
+        .and_then(|bytes| bytes.checked_add(early.as_ref().map_or(0, |e| e.metadata_bytes())))
+        .context("Early import space estimate overflow")?;
     ensure!(
-        fs2::available_space(&parent)?
-            >= required_payload
-                .saturating_add(options.reserve_bytes)
-                .saturating_add(early.as_ref().map_or(0, |e| if options.remote.is_some() {
-                    e.metadata_bytes()
-                } else {
-                    e.bytes
-                })),
+        fs2::available_space(&parent)? >= early_import_reserve,
         "Insufficient space to preserve the early volatile capture and selected artifacts"
     );
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -721,7 +721,7 @@ pub fn collect_with_capacity(
             e.import_memory(
                 &root,
                 options.remote.as_deref(),
-                options.reserve_bytes,
+                early_import_reserve,
                 options.host_reserve.as_ref(),
             )
         })
