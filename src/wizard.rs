@@ -281,7 +281,7 @@ pub fn run<R: BufRead, W: Write>(
     )?;
     writeln!(
         prompt.output,
-        "Physical RAM: opt-in with an external DumpIt toolkit; paging files are a separate optional group."
+        "Physical RAM: opt-in with DumpIt; active pagefiles are copied concurrently by default (--no-memory-pagefile to skip). Paging also includes swap/hibernation and existing dumps."
     )?;
     if windows
         && live
@@ -360,7 +360,7 @@ pub fn run<R: BufRead, W: Write>(
     if windows && live {
         choices.memory = prompt.yes(
             &format!(
-                "Physical RAM ({}; requires DumpIt, captured first)",
+                "Physical RAM ({} plus active pagefiles by default; requires DumpIt, captured first)",
                 choices
                     .memory_bytes
                     .map(crate::collect::human_bytes)

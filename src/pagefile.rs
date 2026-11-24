@@ -161,7 +161,7 @@ pub fn discover(computer: &str) -> Result<Vec<Input>> {
             let relative = path.strip_prefix(&root)?.to_path_buf();
             let source = Source {
                 id: "Memory".into(),
-                root,
+                root: crate::platform::canonicalize(&root)?,
                 computer: computer.into(),
                 live: true,
                 raw_device: Some(raw.trim_end_matches('\\').into()),
@@ -332,6 +332,10 @@ pub fn acquire(
                 row.logical_size == Some(before.size),
                 "Pagefile resized between planning and capture"
             );
+            row.created_utc = before.created_ns.clone();
+            row.modified_utc = before.modified_ns.clone();
+            row.accessed_utc = before.accessed_ns.clone();
+            row.source_file_id = before.identity.clone();
             row.changed_during_read = !crate::discovery::same_version(&before, &after);
             // The pagefile contents can change without an NTFS timestamp update.
             row.status = "Acquired".into();
@@ -362,12 +366,27 @@ pub fn acquire(
 
 /// Avoid a second, later copy when --paging also selected the same active file.
 pub fn deduplicate_plan(plan: &mut Plan, rows: &[Record]) {
+    fn key(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('/', "\\");
+        text.strip_prefix("\\\\?\\")
+            .unwrap_or(&text)
+            .to_ascii_lowercase()
+    }
+    let paths: std::collections::HashSet<_> = rows
+        .iter()
+        .filter(|r| r.artifact_ids == ARTIFACT)
+        .map(|r| key(Path::new(&r.source_path)))
+        .collect();
+    let sources = &plan.sources;
     plan.files.retain(|file| {
-        let paired = rows.iter().any(|row| {
-            row.source_path
-                .eq_ignore_ascii_case(&file.source_path.display().to_string())
-                && file.stream.is_none()
-        });
+        let paired = file.stream.is_none()
+            && (paths.contains(&key(&file.source_path))
+                || sources
+                    .iter()
+                    .find(|s| s.id == file.source_id)
+                    .is_some_and(|s| {
+                        paths.contains(&key(&s.live_root().join(&file.relative_path)))
+                    }));
         if paired {
             if let Some(before) = &file.before {
                 plan.known_bytes = plan.known_bytes.saturating_sub(before.size);
@@ -405,6 +424,47 @@ mod tests {
         }
     }
     #[test]
+    fn explicit_paging_does_not_duplicate_paired_files_or_remove_other_streams() {
+        let make = |id: &str, path: &str, stream: Option<&str>| PlannedFile {
+            id: id.into(),
+            source_id: "C".into(),
+            source_path: path.into(),
+            relative_path: "pagefile.sys".into(),
+            stream: stream.map(str::to_string),
+            artifacts: vec!["windows.paging".into()],
+            before: Some(Fingerprint {
+                size: 100,
+                ..Default::default()
+            }),
+            expected_sha256: None,
+        };
+        let mut plan = Plan {
+            schema_version: 1,
+            created_utc: utc_now(),
+            catalog_sha256: String::new(),
+            sources: vec![],
+            files: vec![
+                make("page", r"\\?\C:\pagefile.sys", None),
+                make("swap", r"C:\swapfile.sys", None),
+                make("ads", r"C:\pagefile.sys", Some("other")),
+            ],
+            coverage: vec![],
+            issues: vec![],
+            known_bytes: 300,
+            unknown_sizes: 0,
+            memory_requested: true,
+            entropy_scan: None,
+        };
+        let mut row = failure("HOST", String::new());
+        row.source_path = r"c:\PAGEFILE.sys".into();
+        deduplicate_plan(&mut plan, &[row]);
+        assert_eq!(
+            plan.files.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+            vec!["swap", "ads"]
+        );
+        assert_eq!(plan.known_bytes, 200);
+    }
+    #[test]
     fn pagefile_copy_and_partial_bytes_are_preserved() {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("input");
@@ -415,7 +475,7 @@ mod tests {
         let make = || Input {
             source: Source {
                 id: "Memory".into(),
-                root: source.clone(),
+                root: crate::platform::canonicalize(&source).unwrap(),
                 computer: "TEST".into(),
                 live: true,
                 raw_device: None,
@@ -439,7 +499,7 @@ mod tests {
             },
         };
         let rows = acquire(&output, "TEST", vec![make()], 0, Duration::from_secs(10)).unwrap();
-        assert_eq!(rows[0].status, "Acquired");
+        assert_eq!(rows[0].status, "Acquired", "{}", rows[0].reason);
         assert_eq!(rows[0].bytes_read, 18);
         assert_eq!(
             fs::read(output.join("Memory/Pagefile0.sys")).unwrap(),

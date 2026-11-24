@@ -17,7 +17,7 @@ use std::{
 #[group(id = "DumpItMemoryOptions")]
 pub struct Args {
     /// Skip active pagefile copying alongside --memory (enabled by default)
-    #[arg(long)]
+    #[arg(long, requires = "memory")]
     pub no_memory_pagefile: bool,
     /// DumpIt toolkit directory or executable (otherwise tools/DumpIt beside Kumade)
     #[arg(long, value_name = "FILE_OR_DIR")]

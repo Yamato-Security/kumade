@@ -418,6 +418,6 @@ fn live_wizard_exposes_opt_in_ram_with_physical_size() {
     assert!(
         String::from_utf8(output)
             .unwrap()
-            .contains("Physical RAM (4.0 GiB; requires DumpIt, captured first) (y/N)")
+            .contains("Physical RAM (4.0 GiB plus active pagefiles by default; requires DumpIt, captured first) (y/N)")
     );
 }
