@@ -57,6 +57,58 @@ Windows examples below.
   `-T, --threads` overrides it within that limit. `-v, --verbose` lists each file/stream being copied instead of
   displaying a progress bar. Running without arguments displays help.
 
+## Collection benchmarks
+
+Measured on 2026-11-25 (JST) using Kumade 0.1.0 at commit
+[`aa86395`](https://github.com/Yamato-Security/kumade/commit/aa863958b59c750df02d771b48e688ab04895b9e):
+Windows 11 ARM64 VM, four virtual CPUs, 4 GiB RAM, with source and output on
+the same NTFS virtual disk. All comparisons restrict collection to **C:** with
+`collect --yes --volume C:`. “Default” means the feature defaults within that
+scope; unrestricted all-volume collection was not benchmarked.
+
+**30 measured runs:** four default controls and two runs per optional configuration.
+Values are medians; changes are relative to the default median. Output sizes
+below are **allocated disk space**, including collection metadata.
+
+| Configuration | Time | Extra time | Time change | Disk used (GiB) | Extra disk used (GiB) |
+|---|---:|---:|---:|---:|---:|
+| Default options (C: only) | 40.7s | — | — | 3.460 | — |
+| Without live inventory | 23.5s | -17.2s | -42.3% | 3.459 | -0.001 |
+| One acquisition worker | 67.2s | +26.6s | +65.4% | 3.463 | +0.004 |
+| Add RAM only | 97.9s | +57.2s | +140.7% | 7.452 | +3.992 |
+| Add RAM + paired pagefile | 102.4s | +61.7s | +151.7% | 8.138 | +4.678 |
+| Add paging artifacts | 46.7s | +6.1s | +15.0% | 3.616 | +0.156 |
+| Read artifacts from VSS | 43.8s | +3.2s | +7.8% | 3.436 | -0.024 |
+| VHDX output | 58.6s | +17.9s | +44.0% | 3.507 | +0.047 |
+| Compressed E01 output | 125.5s | +84.8s | +208.5% | 1.660 | -1.800 |
+| Add high-entropy PE discovery | 109.4s | +68.8s | +169.1% | 3.671 | +0.211 |
+| Add YARA Forge Core | 76.4s | +35.7s | +87.8% | 3.467 | +0.008 |
+| Add YARA Forge Extended | 86.9s | +46.3s | +113.8% | 3.477 | +0.018 |
+| Add YARA Forge Full | 91.0s | +50.4s | +123.9% | 3.479 | +0.019 |
+| RAM + pagefile + VSS + VHDX | 131.5s | +90.9s | +223.5% | 7.680 | +4.220 |
+
+Default output had **5.180 GiB of logical file lengths but used 3.460 GiB on
+disk** because of sparse data. Small size differences also reflect live-log and
+filesystem growth; they are not isolated feature-payload sizes. RAM was acquired
+with an external DumpIt toolkit; paired pagefiles are enabled by default with
+`--memory`, while the RAM-only row uses `--no-memory-pagefile`.
+
+VSS here reads selected artifacts from a crash-consistent snapshot. VHDX/E01
+also add NTFS metadata and selected ADS coverage, so these modes are not simply
+different encodings of identical directory output. All retained outputs passed
+integrity verification, but all runs reported partial source coverage; failures
+and partial counts are included in the detailed report.
+
+These are warm-system observations from one VM, without rebooting or clearing
+caches between runs. They do not predict USB, network, production-server or
+larger-memory-system performance.
+
+See the **[full benchmark report](docs/benchmarks/2026-11-25/README.md)** for
+commands, timing ranges, logical file sizes, CPU/memory measurements, temporary
+storage observations and collection limitations. Download the
+[summary CSV](docs/benchmarks/2026-11-25/Benchmark-Summary.csv) or
+[per-run CSV](docs/benchmarks/2026-11-25/Benchmark-Runs.csv) for the measurements.
+
 ## Run locally
 
 Building from source requires Rust 1.99 or later.
