@@ -413,7 +413,8 @@ mod tests {
             data[16..18].copy_from_slice(&(name.len() as u16).to_le_bytes());
             data[18..20].copy_from_slice(&(name.len() as u16).to_le_bytes());
             let pointer = if width == 8 { 24 } else { 20 };
-            data[pointer..pointer + width].copy_from_slice(&(base + 64).to_le_bytes()[..width]);
+            data[pointer..pointer + width]
+                .copy_from_slice(&((base + 64) as u64).to_le_bytes()[..width]);
             data[64..64 + name.len()].copy_from_slice(&name);
             assert_eq!(
                 active_paths(&data, base, width).unwrap(),

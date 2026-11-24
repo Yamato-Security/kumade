@@ -1134,6 +1134,18 @@ mod tests {
     }
 
     #[test]
+    fn memory_pagefiles_are_default_on_but_ram_stays_opt_in() {
+        let cli = Cli::try_parse_from(["kumade", "collect"]).unwrap();
+        let Some(Command::Collect(options)) = cli.command else {
+            panic!("collect")
+        };
+        assert!(!options.memory);
+        assert!(!options.memory_options.no_memory_pagefile);
+        let cli = Cli::try_parse_from(["kumade", "--memory", "--no-memory-pagefile"]).unwrap();
+        assert!(cli.options.memory && cli.options.memory_options.no_memory_pagefile);
+        assert!(Cli::try_parse_from(["kumade", "--no-memory-pagefile"]).is_err());
+    }
+    #[test]
     fn containers_accept_automatic_names_and_destination_directories() {
         // A bare flag carries no path; run() substitutes the exe-relative default.
         let cli = Cli::try_parse_from(["kumade", "--vhdx"]).unwrap();
