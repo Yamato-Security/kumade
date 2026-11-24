@@ -73,11 +73,20 @@ class RestoreTests(unittest.TestCase):
             "a/./b",
             "a//b",
             "a/CON.txt",
+            "a/CONIN$",
+            "a/conin$.pf",
+            "a/CONOUT$.txt",
+            "a/Clock$.pf",
             "a/evil.",
             "a/evil ",
         ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 sftp_restore.relative(value)
+
+    def test_encoded_device_names_remain_safe_and_distinct(self):
+        paths = ("C/%43lock$.pf", "C/%2543lock$.pf", "C/%43ONIN$.pf", "C/%63onout$.pf")
+        for path in paths:
+            self.assertEqual(sftp_restore.relative(path), path.split("/"))
 
     def test_rejects_duplicate_casefold_and_prefix_collisions(self):
         for paths in (("C/A", "c/a"), ("C/A", "C/A/b"), ("C/A/b", "C/A")):
