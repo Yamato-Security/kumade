@@ -51,8 +51,9 @@ Active `pagefile.sys` files are copied **concurrently with RAM by default** when
 `--memory` is selected. Use `--no-memory-pagefile` for RAM alone. RAM acquisition
 itself remains opt-in. The active-file query includes custom paths and volumes;
 it does not depend on the next-boot PagingFiles registry configuration. Locked
-files use the live raw NTFS reader. Copying starts after DumpIt begins writing
-RAM payload, so it overlaps acquisition rather than only provider startup. This is a time-overlapping acquisition,
+files use the live raw NTFS reader. Copying waits for the DumpIt output to extend beyond its header, then runs
+concurrently. File allocation alone does not prove which RAM pages have been read;
+use the recorded time bounds and remember that this is not an atomic snapshot. This is a time-overlapping acquisition,
 **not an atomic RAM/pagefile snapshot**: Windows can change pages during either read.
 
 `--paging` additionally selects swap/hibernation and existing crash-dump files.

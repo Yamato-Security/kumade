@@ -8,7 +8,8 @@ they do not perform entropy analysis or copy evidence payloads.
 After scope confirmation:
 
 1. **Physical RAM acquisition.** With `--memory`, the separately supplied DumpIt
-   provider runs first. The RAM record appears first in the final manifest.
+   provider runs first. Active paging files are copied concurrently by default;
+   `--no-memory-pagefile` opts out. The RAM record appears first in the final manifest.
    Missing/blocked tools or invalid/truncated dumps produce a failed task and
    partial collection. See [RAM acquisition](memory-acquisition.md).
 2. **Fast live state.** Processes first, then network connections, DNS cache,

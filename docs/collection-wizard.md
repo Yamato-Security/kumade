@@ -44,7 +44,8 @@ without starting collection. Invalid yes/no and numeric answers are reprompted.
 | Directory output | Default; VHDX/E01 selectable on Windows |
 | Acquisition workers | Available logical CPUs, capped at four; `-T` accepts 1–128 |
 | Full partition imaging | Off; a separate guided mode using `forensic-copy` |
-| New physical RAM capture | Unavailable; no nonfunctional yes/no choice is offered |
+| New physical RAM capture | Off; `--memory` requires a separately supplied DumpIt toolkit |
+| Active pagefiles paired with new RAM | On when `--memory` is enabled; `--no-memory-pagefile` skips them |
 
 The paging change also applies to unattended collection and ordinary `plan`.
 The catalogue still defines paging paths. Existing explicit artifact selections

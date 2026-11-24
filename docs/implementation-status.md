@@ -83,9 +83,10 @@ No live company system or private company evidence is used in platform CI.
 
 1. Broader Windows runtime and filename/metadata qualification, directory-mode
    ADS discovery, inaccessible-directory raw enumeration,
-   custom event-log locations and pagefile discovery.
-2. Qualified memory-provider interface and paired acquisition with independent
-   timing/range validation; no automatic untrusted helper download.
+   custom event-log locations. Active pagefile discovery is implemented for RAM-paired acquisition.
+2. Broader memory-provider/Windows-version qualification and independent timing/range
+   validation. External DumpIt and paired active-pagefile acquisition are implemented;
+   there is no automatic untrusted helper download.
 3. Existing VSS enumeration/collection and application-writer coordination.
 4. Structural validation using existing Yamato parsers without altering originals.
 5. Disk-backed planning, device-aware concurrency, durable resume/cancellation.

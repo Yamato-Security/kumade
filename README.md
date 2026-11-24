@@ -162,7 +162,7 @@ uses hashes, not an authenticated signing identity.
 
 ## Not implemented yet
 
-Custom active pagefile discovery, application-writer-coordinated VSS backups, external processing,
+Application-writer-coordinated VSS backups, external processing,
 image-source CLI support, ZIP archive packaging, cloud upload, resume,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.
@@ -170,8 +170,9 @@ VHDX mode inventories named data streams on selected files.
 ## Physical RAM acquisition
 
 `--memory` acquires physical RAM first using a separately supplied, hash-checked
-DumpIt toolkit. Use `--dumpit <toolkit-directory>`; optionally add `--paging` for
-cataloged paging/swap/hibernation files. No vendor binaries are bundled.
+DumpIt toolkit. Active pagefiles are copied concurrently by default; use
+`--no-memory-pagefile` for RAM alone. Use `--dumpit <toolkit-directory>`; optionally
+add `--paging` for other cataloged swap/hibernation/existing dump files. No vendor binaries are bundled.
 See [RAM acquisition](docs/memory-acquisition.md) for setup, staging requirements,
 architecture selection, verification, failures, containers and SFTP delivery.
 
