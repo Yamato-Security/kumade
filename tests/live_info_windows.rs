@@ -278,6 +278,7 @@ fn live_inventory_is_inside_a_normal_collection_seal() {
         kumade::discovery::build_plan(vec![volume], &catalog, &["windows.prefetch".into()], false)
             .unwrap();
     let options = kumade::collect::Options {
+        remote: None,
         threads: 1,
         reserve_bytes: 0,
         quiet: true,

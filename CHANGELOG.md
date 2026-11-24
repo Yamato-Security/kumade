@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add a built-in `receive` command with ephemeral SFTP credentials, append-only
+  uploads, expiry/session revocation, quotas and optional source-IP restrictions.
+  Verify disk readback automatically and reconstruct exports without Python
+  using `verify-delivery`. Share device-name checks with export encoding so
+  reserved source names remain recoverable; match IPv4-mapped IPv6 peers to IPv4
+  allowlist entries. No OS upload account or OpenSSH service is required.
+
+- Add direct SFTP streaming with pinned SSH host keys, hidden/stdin passwords,
+  bounded gzip compression and exclusive remote objects. Preserve locked-file
+  acquisition and volatility ordering without local payload staging. Retain
+  private metadata on failure; distinguish upload acknowledgements from trusted
+  server readback. Include temporary upload-only OpenSSH account provisioning,
+  expiry/session revocation, a hash-verifying safe restorer and interoperability
+  tests. See `docs/SFTP.md` for setup and forensic footprint limitations.
+
 - Scope automatic entropy output exclusions by source volume, including snapshot
   reads and preserved-copy analysis. Excluding `C:\Evidence` no longer hides
   `D:\Evidence`; explicit user exclusion globs remain global. Record automatic

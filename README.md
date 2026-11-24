@@ -203,3 +203,9 @@ own licenses; see [fixture provenance](tests/fixtures/SOURCES.md).
 ## Process-memory YARA hunting
 
 Use `kumade scan-processes -o Yara-Results` for an opt-in live memory scan with YARA Forge Core (default), Extended, Full or local rules. See [process-memory scanning](docs/yara-process-scan.md) for options, coverage/error reporting and interpretation limits.
+
+## Remote SFTP delivery
+
+Start a built-in receiver with `kumade receive --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. It generates temporary upload-only credentials and verifies received evidence automatically. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).
+
+Use `collect --sftp HOST --sftp-user USER --sftp-host-key "SHA256:..."` to stream payloads without local copies. A hardened temporary upload-only account and trusted server readback are required. See [setup, integrity verification and forensic footprint](docs/SFTP.md).

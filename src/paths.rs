@@ -59,17 +59,24 @@ pub fn relative_text(path: &Path) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-/// Reversible UTF-8 encoding prevents collisions on Windows and across platforms.
-pub fn encode_component(name: &str) -> String {
+/// Keep export encoding and restored-path validation on the same device-name policy.
+pub(crate) fn is_windows_device_name(name: &str) -> bool {
     let stem = name
         .split('.')
         .next()
         .unwrap_or_default()
         .to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$"
+    ) || (stem.len() == 4
+        && (stem.starts_with("COM") || stem.starts_with("LPT"))
+        && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
+/// Reversible UTF-8 encoding prevents collisions on Windows and across platforms.
+pub fn encode_component(name: &str) -> String {
+    let reserved = is_windows_device_name(name);
     let mut encoded = String::new();
     for (i, c) in name.char_indices() {
         if c == '%'
@@ -95,7 +102,7 @@ pub fn encode_component(name: &str) -> String {
 
 /// Files and directories Kumade itself writes at the root of a collection.
 /// Drive directories sit beside them, so no source may take one of these names.
-pub const RUN_ROOT_NAMES: [&str; 18] = [
+pub const RUN_ROOT_NAMES: [&str; 22] = [
     "Plan.json",
     "client_info.json",
     "Run.json",
@@ -114,6 +121,10 @@ pub const RUN_ROOT_NAMES: [&str; 18] = [
     "EntropySummary.json",
     "YaraScan",
     "InitialPlan.json",
+    "_KumadeStreams",
+    "RemoteJournal.jsonl",
+    "Early",
+    "Delivery.json",
 ];
 
 /// Windows filesystems are case-insensitive, so the comparison is too.

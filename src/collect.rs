@@ -41,6 +41,7 @@ pub struct HostReserve {
 
 #[derive(Clone)]
 pub struct Options {
+    pub remote: Option<Arc<crate::sftp::Target>>,
     pub threads: usize,
     pub reserve_bytes: u64,
     pub quiet: bool,
@@ -170,6 +171,7 @@ pub fn acquire_one(
 
 #[derive(Default)]
 struct DestinationPolicy<'a> {
+    remote: Option<&'a Arc<crate::sftp::Target>>,
     native_ntfs: bool,
     source_sparse: bool,
     host_reserve: Option<&'a HostReserve>,
@@ -244,6 +246,9 @@ fn acquire_one_inner(
         record.finished_utc = utc_now();
         return record;
     }
+    if let Some(target) = destination.remote {
+        return crate::sftp::acquire(record, source, item, raw_cache, target);
+    }
     let outcome = (|| -> Result<()> {
         let relative = if native_ntfs {
             metadata::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
@@ -298,70 +303,21 @@ fn acquire_one_inner(
             sparse,
             host_reserve,
         };
-        let native_path = if let Some(stream) = &item.stream {
-            PathBuf::from(format!("{}:{stream}", item.source_path.display()))
-        } else {
-            item.source_path.clone()
-        };
-        let copied = (|| -> Result<(Fingerprint, Fingerprint)> {
-            match platform::open_source(&native_path) {
-                Ok(mut input) => {
-                    platform::validate_open_file(&input, &source.root)?;
-                    let before = source_fingerprint(&input, native_ntfs)?;
-                    #[cfg(windows)]
-                    if native_ntfs {
-                        use std::os::windows::fs::MetadataExt;
-                        if input.metadata()?.file_attributes() & 0x200 != 0 && !transfer.sparse {
-                            transfer.sparse = platform::enable_sparse_output(&transfer.file);
-                            ensure!(transfer.sparse, "Cannot preserve sparse source stream");
-                        }
-                    }
-                    let limit = before.size.checked_add(1).context("Source size overflow")?;
-                    io::copy(&mut Read::by_ref(&mut input).take(limit), &mut transfer)?;
-                    let after = source_fingerprint(&input, native_ntfs)?;
-                    ensure!(
-                        transfer.bytes == before.size,
-                        "Source changed size or ended early during acquisition"
-                    );
-                    Ok((before, after))
+        let copied = copy_source(
+            source,
+            item,
+            raw_cache,
+            native_ntfs,
+            &mut record.method,
+            &mut transfer,
+            |attributes, writer| {
+                if native_ntfs && attributes & 0x200 != 0 && !writer.sparse {
+                    writer.sparse = platform::enable_sparse_output(&writer.file);
+                    ensure!(writer.sparse, "Cannot preserve sparse source stream");
                 }
-                Err(native_error) => {
-                    let Some(device) = &source.raw_device else {
-                        return Err(native_error)
-                            .context("Native read failed; source has no raw NTFS provider");
-                    };
-                    record.method = if source.snapshot.is_some() {
-                        "VssRawNTFS"
-                    } else {
-                        "RawNTFS"
-                    }
-                    .into();
-                    if !raw_cache.contains_key(device) {
-                        raw_cache.insert(device.clone(), RawVolume::open(device)?);
-                    }
-                    let result = raw_cache
-                        .get_mut(device)
-                        .context("Raw provider missing")?
-                        .copy_file_with_attributes(
-                            &item.relative_path,
-                            item.stream.as_deref(),
-                            &mut transfer,
-                            |attributes, writer| {
-                                if native_ntfs && attributes & 0x200 != 0 && !writer.sparse {
-                                    writer.sparse = platform::enable_sparse_output(&writer.file);
-                                    ensure!(writer.sparse, "Cannot preserve sparse source stream");
-                                }
-                                Ok(())
-                            },
-                        )?;
-                    ensure!(
-                        result.bytes == transfer.bytes,
-                        "Raw reader/writer byte count mismatch"
-                    );
-                    Ok((result.before, result.after))
-                }
-            }
-        })();
+                Ok(())
+            },
+        );
         record.bytes_read = transfer.bytes;
         transfer.flush()?;
         transfer.file.sync_all()?;
@@ -468,7 +424,72 @@ fn acquire_one_inner(
     record
 }
 
+/// Common bounded native/raw read path for local and remote acquisition.
+pub(crate) fn copy_source<W: Write>(
+    source: &Source,
+    item: &PlannedFile,
+    raw_cache: &mut HashMap<PathBuf, RawVolume>,
+    native_ntfs: bool,
+    method: &mut String,
+    writer: &mut W,
+    mut attributes: impl FnMut(u32, &mut W) -> Result<()>,
+) -> Result<(Fingerprint, Fingerprint)> {
+    let native_path = if let Some(stream) = &item.stream {
+        PathBuf::from(format!("{}:{stream}", item.source_path.display()))
+    } else {
+        item.source_path.clone()
+    };
+    match platform::open_source(&native_path) {
+        Ok(mut input) => {
+            platform::validate_open_file(&input, &source.root)?;
+            let before = source_fingerprint(&input, native_ntfs)?;
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                attributes(input.metadata()?.file_attributes(), writer)?;
+            }
+            #[cfg(not(windows))]
+            attributes(0, writer)?;
+            let limit = before.size.checked_add(1).context("Source size overflow")?;
+            let copied = io::copy(&mut Read::by_ref(&mut input).take(limit), &mut *writer)?;
+            let after = source_fingerprint(&input, native_ntfs)?;
+            ensure!(
+                copied == before.size,
+                "Source changed size or ended early during acquisition"
+            );
+            Ok((before, after))
+        }
+        Err(native_error) => {
+            let Some(device) = &source.raw_device else {
+                return Err(native_error)
+                    .context("Native read failed; source has no raw NTFS provider");
+            };
+            *method = if source.snapshot.is_some() {
+                "VssRawNTFS"
+            } else {
+                "RawNTFS"
+            }
+            .into();
+            if !raw_cache.contains_key(device) {
+                raw_cache.insert(device.clone(), RawVolume::open(device)?);
+            }
+            let result = raw_cache
+                .get_mut(device)
+                .context("Raw provider missing")?
+                .copy_file_with_attributes(
+                    &item.relative_path,
+                    item.stream.as_deref(),
+                    writer,
+                    &mut attributes,
+                )?;
+
+            Ok((result.before, result.after))
+        }
+    }
+}
+
 struct Journal {
+    remote: Option<Arc<crate::sftp::Target>>,
     json: BufWriter<File>,
     csv: csv::Writer<File>,
     errors: csv::Writer<File>,
@@ -483,6 +504,9 @@ impl Journal {
         if r.status == "Failed" || r.status == "Partial" {
             self.errors.serialize(r)?;
             self.errors.flush()?;
+        }
+        if let Some(target) = &self.remote {
+            target.checkpoint(r)?;
         }
         // The append is durable before this task is considered journaled.
         self.json.get_ref().sync_data()?;
@@ -512,6 +536,10 @@ pub fn collect_with_capacity(
     options: &Options,
     mut capacity: Option<&mut CapacityHook<'_>>,
 ) -> Result<(PathBuf, Summary)> {
+    ensure!(
+        options.remote.is_none() || !options.ntfs_metadata,
+        "SFTP exports streams and metadata separately; native container output is incompatible"
+    );
     let mut owned_plan = initial.clone();
     let plan = &mut owned_plan;
 
@@ -553,15 +581,19 @@ pub fn collect_with_capacity(
         "Native NTFS metadata output requires Windows"
     );
     fs::create_dir_all(&parent)?;
+    let required_payload = if options.remote.is_some() {
+        0
+    } else {
+        plan.known_bytes
+    };
     let available = fs2::available_space(&parent)?;
     ensure!(
         available
-            >= plan
-                .known_bytes
+            >= required_payload
                 .checked_add(options.reserve_bytes)
                 .context("Space estimate overflow")?,
         "Insufficient destination space: {} required bytes plus {} reserved, {} available",
-        plan.known_bytes,
+        required_payload,
         options.reserve_bytes,
         available
     );
@@ -605,8 +637,7 @@ pub fn collect_with_capacity(
     }
     ensure!(
         fs2::available_space(&parent)?
-            >= plan
-                .known_bytes
+            >= required_payload
                 .saturating_add(options.reserve_bytes)
                 .saturating_add(early.as_ref().map_or(0, |e| e.bytes)),
         "Insufficient space to preserve the early volatile capture and selected artifacts"
@@ -645,7 +676,7 @@ pub fn collect_with_capacity(
     )?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && options.remote.is_some()) {Some(metadata::FILES)}else{None},"Limitations":["VSS snapshots, when requested, are crash-consistent and do not coordinate application writers; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     let mut prior_live = early
         .as_ref()
@@ -661,6 +692,7 @@ pub fn collect_with_capacity(
             .open(root.join(name))?)
     };
     let journal = Arc::new(Mutex::new(Journal {
+        remote: options.remote.clone(),
         json: BufWriter::new(new_file("Manifest.jsonl")?),
         csv: csv::Writer::from_writer(new_file("Manifest.csv")?),
         errors: csv::Writer::from_writer(new_file("Errors.csv")?),
@@ -672,7 +704,8 @@ pub fn collect_with_capacity(
         ui::status("Collecting evidence…");
         println!();
     }
-    let mut ntfs_metadata = options.ntfs_metadata.then(Vec::<metadata::Snapshot>::new);
+    let capture_metadata = options.ntfs_metadata || (cfg!(windows) && options.remote.is_some());
+    let mut ntfs_metadata = capture_metadata.then(Vec::<metadata::Snapshot>::new);
     let mut snapshot_keys = std::collections::HashSet::new();
     let mut sparse_sources = std::collections::HashSet::new();
     let progress = ui::progress_bar(plan.files.len() as u64, options.quiet || options.verbose);
@@ -756,7 +789,7 @@ pub fn collect_with_capacity(
                 &copies,
             )?;
             #[cfg(windows)]
-            if options.ntfs_metadata {
+            if options.ntfs_metadata || options.remote.is_some() {
                 metadata::augment_streams(plan)?;
             }
             if let Some(hook) = capacity.as_mut() {
@@ -828,6 +861,7 @@ pub fn collect_with_capacity(
                             reserve,
                             raw_cache,
                             DestinationPolicy {
+                                remote: options.remote.as_ref(),
                                 native_ntfs: options.ntfs_metadata,
                                 source_sparse: sparse_sources.contains(&(
                                     source.id.clone(),
@@ -866,11 +900,27 @@ pub fn collect_with_capacity(
     let failures = journal_errors
         .lock()
         .map_err(|_| anyhow::anyhow!("Journal error state poisoned"))?;
-    ensure!(
-        failures.is_empty(),
-        "Cannot seal collection because manifest writing failed: {}",
-        failures.join("; ")
-    );
+    if !failures.is_empty() {
+        // A lost remote connection fails every later record the same way.
+        let mut distinct = std::collections::BTreeMap::<&str, usize>::new();
+        for failure in failures.iter() {
+            *distinct.entry(failure.as_str()).or_default() += 1;
+        }
+        let summary: Vec<String> = distinct
+            .iter()
+            .map(|(message, count)| {
+                if *count > 1 {
+                    format!("{message} ({count} records)")
+                } else {
+                    (*message).to_owned()
+                }
+            })
+            .collect();
+        bail!(
+            "Cannot seal collection because manifest writing failed: {}",
+            summary.join("; ")
+        );
+    }
     let records = records
         .lock()
         .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
@@ -897,7 +947,7 @@ pub fn collect_with_capacity(
     };
     for record in records.iter() {
         match record.status.as_str() {
-            "Acquired" => summary.collected += 1,
+            "Acquired" | "Transferred" => summary.collected += 1,
             "Partial" => summary.partial += 1,
             "Failed" => summary.failed += 1,
             _ => {}
@@ -907,7 +957,33 @@ pub fn collect_with_capacity(
             .checked_add(record.bytes_read)
             .context("Summary size overflow")?;
     }
-    if summary.failed > 0
+    if options.remote.is_some() {
+        summary.completeness = "PendingServerReadbackVerification".into();
+    }
+    let entropy_version_mismatches = if options.remote.is_some() {
+        let expected: HashMap<_, _> = plan
+            .files
+            .iter()
+            .filter_map(|f| f.expected_sha256.as_ref().map(|h| (&f.id, h)))
+            .collect();
+        records
+            .iter()
+            .filter(|r| {
+                expected
+                    .get(&r.observation_id)
+                    .is_some_and(|h| r.sha256.as_ref() != Some(*h))
+            })
+            .count()
+    } else {
+        0
+    };
+    if entropy_version_mismatches > 0 {
+        eprintln!(
+            "{entropy_version_mismatches} streamed files differed from later entropy analysis; consult HashMatchesAnalysis in the entropy report"
+        );
+    }
+    if entropy_version_mismatches > 0
+        || summary.failed > 0
         || summary.partial > 0
         || summary.discovery_errors > 0
         || summary.live_info_failed_providers > 0
@@ -943,7 +1019,7 @@ pub fn collect_with_capacity(
                     .is_some_and(|ids| ids.contains(&planned.artifact_id))
         }) {
             match record.status.as_str() {
-                "Acquired" => family.acquired += 1,
+                "Acquired" | "Transferred" => family.acquired += 1,
                 "Partial" => family.partial += 1,
                 "Failed" => family.failed += 1,
                 "NotPresent" => family.not_present += 1,
@@ -959,8 +1035,13 @@ pub fn collect_with_capacity(
                 family.status = "Partial".into();
                 family.reason="Acquisition or discovery was incomplete; consult the manifest and discovery issues".into();
             } else if family.acquired > 0 {
-                family.status = "Acquired".into();
-                family.reason="All discovered members were copied and hash-verified; format/atomic consistency is not established".into();
+                family.status = if options.remote.is_some() {
+                    "Transferred"
+                } else {
+                    "Acquired"
+                }
+                .into();
+                family.reason = if options.remote.is_some() { "All discovered members streamed; server readback remains pending" } else { "All discovered members were copied and hash-verified; format/atomic consistency is not established" }.into();
             } else if family.not_present > 0 {
                 family.status = "NotPresent".into();
                 family.reason = "Raw candidates were not present".into();
@@ -988,9 +1069,17 @@ pub fn collect_with_capacity(
         .finish()?;
     if let Some(snapshots) = ntfs_metadata.as_mut() {
         if !options.quiet {
-            ui::status("Restoring NTFS metadata and original permissions…");
+            ui::status(if options.remote.is_some() {
+                "Sealing NTFS metadata inventory (no server-side restoration)…"
+            } else {
+                "Restoring NTFS metadata and original permissions…"
+            });
         }
-        summary.metadata_errors = metadata::restore(&root, snapshots, &records) as u64;
+        if options.remote.is_some() {
+            summary.metadata_errors = metadata::remote_inventory(snapshots, &records) as u64;
+        } else {
+            summary.metadata_errors = metadata::restore(&root, snapshots, &records) as u64;
+        }
         if summary.metadata_errors > 0 {
             summary.completeness = "Partial".into();
         }
@@ -1048,7 +1137,7 @@ pub fn collect_with_capacity(
             metadata.insert(relative, hash_file(entry.path())?.1);
         }
     }
-    if options.ntfs_metadata {
+    if capture_metadata {
         for name in metadata::FILES {
             metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
         }
@@ -1089,10 +1178,10 @@ pub fn collect_with_capacity(
                 ui::count(summary.live_info_failed_providers),
             );
         }
-        if options.ntfs_metadata {
+        if capture_metadata {
             ui::field("Metadata errors", ui::count(summary.metadata_errors));
         }
-        if !options.ntfs_metadata {
+        if !options.ntfs_metadata && options.remote.is_none() {
             ui::field(
                 "Results saved",
                 format!(

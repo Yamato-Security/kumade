@@ -46,6 +46,7 @@ fn plan(source: Source, artifact: &str) -> Plan {
 
 fn collect(plan: &Plan, temp: &Path) -> (PathBuf, Summary, Vec<Record>) {
     let options = Options {
+        remote: None,
         threads: 2,
         reserve_bytes: 0,
         quiet: true,

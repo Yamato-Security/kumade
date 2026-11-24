@@ -81,6 +81,7 @@ fn fixture() -> (TempDir, kumade::model::Plan, PathBuf) {
 }
 fn options() -> Options {
     Options {
+        remote: None,
         threads: 2,
         reserve_bytes: 0,
         quiet: true,

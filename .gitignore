@@ -9,3 +9,5 @@
 /validation/
 *.raw
 *.dmp
+
+__pycache__/
