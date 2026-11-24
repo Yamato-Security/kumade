@@ -499,6 +499,13 @@ impl Drop for Files {
     }
 }
 
+fn peer_allowed(peer: IpAddr, allow_ips: &[IpAddr]) -> bool {
+    allow_ips.is_empty()
+        || allow_ips
+            .iter()
+            .any(|allowed| allowed.to_canonical() == peer.to_canonical())
+}
+
 pub fn run(options: &Options) -> Result<u8> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -598,7 +605,7 @@ async fn serve(options: &Options) -> Result<u8> {
             signal=tokio::signal::ctrl_c()=>{signal?;break "Interrupted";},
             Some(_)=tasks.join_next(),if !tasks.is_empty()=>{},
             accept=listener.accept()=>{let (stream,peer)=accept?;
-                if tasks.len()>=options.max_connections as usize || (!options.allow_ips.is_empty()&&!options.allow_ips.contains(&peer.ip())){continue;}
+                if tasks.len()>=options.max_connections as usize || !peer_allowed(peer.ip(), &options.allow_ips){continue;}
                 let config=config.clone();let state=state.clone();
                 tasks.spawn(async move {
                     let id=uuid::Uuid::new_v4();
@@ -729,6 +736,27 @@ mod tests {
                 initialized: false,
             },
         )
+    }
+    #[test]
+    fn allowlist_matches_mapped_ipv4_without_admitting_other_peers() {
+        let ipv4: IpAddr = "192.0.2.20".parse().unwrap();
+        let mapped: IpAddr = "::ffff:192.0.2.20".parse().unwrap();
+        assert!(peer_allowed(mapped, &[ipv4]));
+        assert!(peer_allowed(ipv4, &[mapped]));
+        assert!(peer_allowed(ipv4, &[ipv4]));
+        assert!(peer_allowed(mapped, &[]));
+        for other in [
+            "192.0.2.21",
+            "::ffff:192.0.2.21",
+            "::192.0.2.20",
+            "::1",
+            "2001:db8::20",
+        ] {
+            assert!(!peer_allowed(other.parse().unwrap(), &[ipv4]), "{other}");
+        }
+        let native: IpAddr = "2001:db8::20".parse().unwrap();
+        assert!(peer_allowed(native, &[native]));
+        assert!(!peer_allowed(ipv4, &[native]));
     }
     #[tokio::test]
     async fn upload_is_create_only_and_append_only_even_with_an_open_handle() {

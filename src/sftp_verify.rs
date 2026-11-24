@@ -146,14 +146,6 @@ pub(crate) fn relative(value: &str) -> Result<Vec<&str>> {
     );
     let mut parts = Vec::new();
     for part in value.split('/') {
-        let stem = part
-            .split('.')
-            .next()
-            .unwrap_or_default()
-            .to_ascii_uppercase();
-        let numbered = stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && matches!(stem.as_bytes()[3], b'1'..=b'9');
         ensure!(
             !part.is_empty()
                 && !matches!(part, "." | "..")
@@ -161,11 +153,7 @@ pub(crate) fn relative(value: &str) -> Result<Vec<&str>> {
                 && !part
                     .chars()
                     .any(|c| c.is_control() || "<>:\"|?*".contains(c))
-                && !matches!(
-                    stem.as_str(),
-                    "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" | "CLOCK$"
-                )
-                && !numbered,
+                && !crate::paths::is_windows_device_name(part),
             "Unsafe output path"
         );
         parts.push(part);
@@ -552,6 +540,9 @@ mod tests {
             "a/CON.txt",
             "a/COM1",
             "a/CONIN$",
+            "a/conin$.pf",
+            "a/CONOUT$.txt",
+            "a/Clock$.pf",
             "a/NUL",
             "a/trailing.",
             "a/trailing ",
@@ -559,6 +550,34 @@ mod tests {
             assert!(relative(path).is_err(), "{path}");
         }
         assert_eq!(relative("C/Windows/Prefetch/APP.pf").unwrap().len(), 4);
+    }
+    #[test]
+    fn exported_device_names_are_safe_distinct_and_reversible() {
+        let mut outputs = HashSet::new();
+        for name in [
+            "CONIN$",
+            "conin$.pf",
+            "CONOUT$.txt",
+            "cOnOuT$.pf",
+            "CLOCK$",
+            "Clock$.pf",
+            "%43lock$.pf",
+            "CON.txt",
+            "LPT1.pf",
+        ] {
+            let encoded = crate::paths::encode_component(name);
+            assert_ne!(encoded, name, "{name}");
+            assert!(
+                relative(&format!("C/Windows/Prefetch/{encoded}")).is_ok(),
+                "{encoded}"
+            );
+            assert!(outputs.insert(encoded), "Export-name collision");
+        }
+        assert_eq!(crate::paths::encode_component("Clock$.pf"), "%43lock$.pf");
+        assert_eq!(
+            crate::paths::encode_component("%43lock$.pf"),
+            "%2543lock$.pf"
+        );
     }
     #[test]
     fn correct_stored_hash_does_not_allow_a_gzip_length_bomb() {

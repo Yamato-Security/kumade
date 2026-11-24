@@ -5,7 +5,9 @@
 - Add a built-in `receive` command with ephemeral SFTP credentials, append-only
   uploads, expiry/session revocation, quotas and optional source-IP restrictions.
   Verify disk readback automatically and reconstruct exports without Python
-  using `verify-delivery`. No OS upload account or OpenSSH service is required.
+  using `verify-delivery`. Share device-name checks with export encoding so
+  reserved source names remain recoverable; match IPv4-mapped IPv6 peers to IPv4
+  allowlist entries. No OS upload account or OpenSSH service is required.
 
 - Add direct SFTP streaming with pinned SSH host keys, hidden/stdin passwords,
   bounded gzip compression and exclusive remote objects. Preserve locked-file

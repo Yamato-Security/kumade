@@ -10,32 +10,37 @@ memory and are never printed into the test output.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import queue
 import secrets
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
 import time
 
 
-def receiver(binary, parent, expires="60s"):
+def receiver(binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=()):
+    arguments = [
+        str(binary),
+        "receive",
+        "--listen",
+        listen,
+        "--output",
+        str(parent),
+        "--expires",
+        expires,
+        "--reserve-mib",
+        "0",
+        "--max-decoded-gib",
+        "1",
+    ]
+    for address in allow_ips:
+        arguments.extend(["--allow-ip", address])
     process = subprocess.Popen(
-        [
-            str(binary),
-            "receive",
-            "--listen",
-            "127.0.0.1:0",
-            "--output",
-            str(parent),
-            "--expires",
-            expires,
-            "--reserve-mib",
-            "0",
-            "--max-decoded-gib",
-            "1",
-        ],
+        arguments,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -73,6 +78,45 @@ def receiver(binary, parent, expires="60s"):
     raise AssertionError("Receiver startup timed out")
 
 
+def check_allowlists(binary, root):
+    cases = [
+        ("127.0.0.1:0", "127.0.0.1", True),
+        ("127.0.0.1:0", "::ffff:127.0.0.1", True),
+        ("127.0.0.1:0", "127.0.0.2", False),
+    ]
+    # Some systems intentionally disable IPv6 or dual-stack sockets. Unit tests
+    # always cover canonicalization; run the wire regression when available.
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind(("::", 0))
+            dual_stack = probe.getsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY) == 0
+    except OSError:
+        dual_stack = False
+    if dual_stack:
+        cases.extend([
+            ("[::]:0", "127.0.0.1", True),
+            ("[::]:0", "::ffff:127.0.0.1", True),
+            ("[::]:0", "127.0.0.2", False),
+        ])
+    for index, (listen, address, expected) in enumerate(cases):
+        process, fields, _ = receiver(
+            binary, root / f"allowlist-{index}", listen=listen, allow_ips=(address,)
+        )
+        try:
+            port = int(fields["SFTP receiver"].rsplit(":", 1)[1])
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+                    accepted = client.recv(128).startswith(b"SSH-")
+            except (ConnectionResetError, BrokenPipeError):
+                accepted = False
+            assert process.poll() is None, "Receiver exited during allowlist test"
+            assert accepted == expected, f"Allowlist failed for {listen}, {address}"
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+
+
 def execute(binary):
     with tempfile.TemporaryDirectory(prefix="kumade-receiver-test-") as temp:
         root = Path(temp)
@@ -82,9 +126,24 @@ def execute(binary):
         contents = {
             "DATA.pf": secrets.token_bytes(1024 * 1024),
             "SPARSE.pf": bytes(8 * 1024 * 1024),
+            "CLOCK$.pf": b"reserved clock filename",
+            "CONIN$.pf": b"reserved console input filename",
+            "conout$.pf": b"reserved console output filename",
+            "%43LOCK$.pf": b"literal encoding prefix must not collide",
+        }
+        restored_names = {
+            "CLOCK$.pf": "%43LOCK$.pf",
+            "CONIN$.pf": "%43ONIN$.pf",
+            "conout$.pf": "%63onout$.pf",
+            "%43LOCK$.pf": "%2543LOCK$.pf",
         }
         for name, data in contents.items():
-            (prefetch / name).write_bytes(data)
+            # Extended paths let Windows create the literal NTFS source names.
+            path = str(prefetch.resolve() / name)
+            if os.name == "nt" and not path.startswith('\\\\?\\'):
+                path = '\\\\?\\' + path
+            with open(path, "wb") as source_file:
+                source_file.write(data)
         for compressed, partial in ((True, False), (False, False), (True, True)):
             mode = "partial" if partial else ("gzip" if compressed else "plain")
             expected_exit = 3 if partial else 0
@@ -172,7 +231,7 @@ def execute(binary):
                 receipt = json.loads((case / "ReadbackReceipt.json").read_text())
                 assert (
                     receipt["PayloadHashesVerified"]
-                    and receipt["PayloadRecordsVerified"] == 2
+                    and receipt["PayloadRecordsVerified"] == len(contents)
                 )
                 assert receipt["AcquisitionState"] == (
                     "Partial" if partial else "CompleteWithinSelectedPrototypeScope"
@@ -214,7 +273,7 @@ def execute(binary):
                 for name, data in contents.items():
                     assert (
                         hashlib.sha256(
-                            (restored / "C/Windows/Prefetch" / name).read_bytes()
+                            (restored / "C/Windows/Prefetch" / restored_names.get(name, name)).read_bytes()
                         ).digest()
                         == hashlib.sha256(data).digest()
                     )
@@ -251,6 +310,7 @@ def execute(binary):
                 if process.poll() is None:
                     process.kill()
                 process.wait(timeout=10)
+        check_allowlists(binary, root)
         process, fields, lines = receiver(binary, root / "expired", "2s")
         try:
             assert process.wait(timeout=15) == 3
@@ -265,7 +325,7 @@ def execute(binary):
                 process.kill()
             process.wait(timeout=10)
     print(
-        "PASS: built-in SSH/SFTP gzip/plain roundtrips, host pin, password rejection, no local payload staging, native readback/restore, corruption rejection and expiry"
+        "PASS: built-in SSH/SFTP gzip/plain roundtrips, host pin, password rejection, no local payload staging, device-name encoding, IP allowlists, native readback/restore, corruption rejection and expiry"
     )
 
 

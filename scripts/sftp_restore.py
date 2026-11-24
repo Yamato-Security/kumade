@@ -46,7 +46,7 @@ def relative(value):
             or part in (".", "..")
             or part[-1:] in (" ", ".")
             or any(ord(c) < 32 or c in '<>:"|?*' for c in part)
-            or stem in ("CON", "PRN", "AUX", "NUL")
+            or stem in ("CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$")
             or re.fullmatch(r"(?:COM|LPT)[1-9]", stem)
         ):
             raise ValueError("Unsafe output component")

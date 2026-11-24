@@ -15,7 +15,9 @@ trusted filesystem with persistent access controls (NTFS on Windows).
 The default bind address is `127.0.0.1:2222`. Select an explicit network interface
 or `0.0.0.0` to accept remote connections, and allow the chosen port through your
 firewall. Use `--allow-ip 192.0.2.20` to restrict the exact collector IP; repeat the
-option for several addresses. This accepts a single collection per invocation.
+option for several addresses. On dual-stack listeners such as `[::]:2222`, IPv4
+addresses and their IPv4-mapped IPv6 representations match the same allowlist entry;
+native IPv6 addresses remain distinct. This accepts a single collection per invocation.
 
 Kumade displays a temporary username, a cryptographically random password, an SSH
 host-key fingerprint and the new evidence directory. Transfer those details to
