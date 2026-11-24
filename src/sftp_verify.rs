@@ -457,6 +457,18 @@ pub(crate) fn verify(
         "Duplicate planned observation IDs"
     );
     let mut memory = false;
+    let pagefiles: Vec<Record> = if seal["MetadataSHA256"]
+        .get(crate::pagefile::INVENTORY)
+        .is_some()
+    {
+        serde_json::from_slice(&metadata(crate::pagefile::INVENTORY)?)?
+    } else {
+        Vec::new()
+    };
+    let mut expected_pagefiles: std::collections::HashMap<_, _> = pagefiles
+        .into_iter()
+        .map(|r| (r.observation_id.clone(), r))
+        .collect();
     let mut seen = HashSet::new();
     let (mut count, mut acquired, mut partial, mut failed, mut bytes) =
         (0usize, 0u64, 0u64, 0u64, 0u64);
@@ -476,7 +488,19 @@ pub(crate) fn verify(
             seen.insert(record.observation_id.clone()) && !record.verified,
             "Duplicate or prematurely verified record"
         );
-        if !expected.remove(record.observation_id.as_str()) {
+        if let Some(mut paired) = expected_pagefiles.remove(&record.observation_id) {
+            paired.verified = false;
+            if let Some(path) = paired.relative_output_path {
+                paired.relative_output_path = Some(format!("Early/{path}"));
+                if paired.status == "Acquired" {
+                    paired.status = "Transferred".into();
+                }
+            }
+            ensure!(
+                serde_json::to_value(&paired)? == serde_json::to_value(&record)?,
+                "Remote paired pagefile differs from sealed inventory"
+            );
+        } else if !expected.remove(record.observation_id.as_str()) {
             ensure!(
                 plan.memory_requested
                     && !memory
@@ -513,7 +537,7 @@ pub(crate) fn verify(
             .context("Record byte overflow")?;
     }
     ensure!(
-        expected.is_empty() && memory == plan.memory_requested,
+        expected.is_empty() && expected_pagefiles.is_empty() && memory == plan.memory_requested,
         "Incomplete acquisition manifest"
     );
     ensure!(

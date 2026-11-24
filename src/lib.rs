@@ -44,3 +44,5 @@ pub mod sftp_receive;
 pub mod sftp_verify;
 
 pub mod memory;
+
+pub mod pagefile;

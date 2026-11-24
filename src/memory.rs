@@ -16,6 +16,9 @@ use std::{
 #[derive(Clone, Debug, clap::Args)]
 #[group(id = "DumpItMemoryOptions")]
 pub struct Args {
+    /// Skip active pagefile copying alongside --memory (enabled by default)
+    #[arg(long)]
+    pub no_memory_pagefile: bool,
     /// DumpIt toolkit directory or executable (otherwise tools/DumpIt beside Kumade)
     #[arg(long, value_name = "FILE_OR_DIR")]
     pub dumpit: Option<PathBuf>,
@@ -32,6 +35,7 @@ pub struct Args {
 impl Default for Args {
     fn default() -> Self {
         Self {
+            no_memory_pagefile: false,
             dumpit: None,
             dumpit_sha256: None,
             memory_timeout: 1800,
@@ -485,18 +489,41 @@ pub fn acquire(
     let mut exit_code = None;
     let mut inaccessible_pages = None;
     let mut nt_status = None;
+    let mut provider_started = None;
+    let mut provider_finished = None;
+    let mut pagefile_worker = None;
+    let mut pagefile_rows = Vec::new();
     let outcome = (|| -> Result<()> {
         let arch = native_architecture()?;
         let (tool, _guard, digest) = trusted_tool(args, arch)?;
         tool_hash = Some(digest);
         let estimate = physical_bytes()?;
+        let pagefiles = if args.no_memory_pagefile {
+            Vec::new()
+        } else {
+            match crate::pagefile::discover(computer) {
+                Ok(inputs) => inputs,
+                Err(error) => {
+                    pagefile_rows.push(crate::pagefile::failure(
+                        computer,
+                        format!("Active pagefile discovery failed: {error:#}"),
+                    ));
+                    Vec::new()
+                }
+            }
+        };
+        let paging_bytes = pagefiles.iter().try_fold(0u64, |sum, input| {
+            sum.checked_add(input.file.before.as_ref().map_or(0, |f| f.size))
+                .context("Pagefile size overflow")
+        })?;
         ensure!(
             fs2::available_space(&directory)?
                 >= estimate
-                    .checked_add(64 * 1024 * 1024)
+                    .checked_add(paging_bytes)
+                    .and_then(|n| n.checked_add(64 * 1024 * 1024))
                     .and_then(|n| n.checked_add(reserve))
                     .context("RAM size estimate overflow")?,
-            "Insufficient RAM staging free space; need physical RAM plus 64 MiB header headroom and the free-space reserve"
+            "Insufficient RAM staging free space; need physical RAM, active paging files, 64 MiB header headroom and the free-space reserve"
         );
         ensure!(!path.exists(), "RAM output already exists");
         if !quiet {
@@ -515,14 +542,24 @@ pub fn acquire(
                 "/OUTPUT",
             ])
             .arg(&path);
-        let (status, stdout, _) = execute(
+        if !args.no_memory_pagefile {
+            let (stage, host) = (root.to_path_buf(), computer.to_string());
+            let timeout = Duration::from_secs(args.memory_timeout);
+            pagefile_worker = Some(std::thread::spawn(move || {
+                crate::pagefile::acquire(&stage, &host, pagefiles, reserve, timeout)
+            }));
+        }
+        provider_started = Some(utc_now());
+        let execution = execute(
             command,
             &path,
             reserve,
             Duration::from_secs(args.memory_timeout),
             quiet,
             estimate,
-        )?;
+        );
+        provider_finished = Some(utc_now());
+        let (status, stdout, _) = execution?;
         exit_code = status.code();
         (inaccessible_pages, nt_status) = diagnostics(&stdout);
         ensure!(
@@ -536,6 +573,19 @@ pub fn acquire(
         layout = Some(validate_dump(&path, arch)?);
         Ok(())
     })();
+    if let Some(worker) = pagefile_worker {
+        pagefile_rows.extend(worker.join().map_err(|_| {
+            anyhow::anyhow!("Pagefile acquisition worker panicked; staging retained")
+        })??);
+    } else if !args.no_memory_pagefile && pagefile_rows.is_empty() && outcome.is_err() {
+        pagefile_rows.push(crate::pagefile::failure(
+            computer,
+            "Paired pagefile capture did not start because RAM preflight failed".into(),
+        ));
+    }
+    if !args.no_memory_pagefile {
+        collect::write_json_new(&root.join(crate::pagefile::INVENTORY), &pagefile_rows)?;
+    }
     if path.exists() {
         ensure!(
             path.symlink_metadata()?.is_file() && !platform::is_reparse_directory(&path),
@@ -566,7 +616,7 @@ pub fn acquire(
     row.finished_utc = utc_now();
     collect::write_json_new(
         &directory.join("Acquisition.json"),
-        &serde_json::json!({"SchemaVersion":1,"Provider":"DumpIt","ToolSHA256":tool_hash,"ExitCode":exit_code,"InaccessiblePages":inaccessible_pages,"NtStatus":nt_status,"DumpLayout":layout,"Record":row,"Arguments":["/QUIET","/TYPE","DMP","/NOCOMPRESS","/NOLYTICS","/NOJSON","/OUTPUT","Memory.dmp"],"LogRetentionBytesPerStream":LOG_LIMIT,"Limitations":["Live RAM is non-atomic; integrity hashes are not proof of semantic completeness","Driver load/unload changes the live host; platform security can block acquisition","DumpIt requires a staged file even for SFTP delivery"]}),
+        &serde_json::json!({"SchemaVersion":1,"Provider":"DumpIt","ProviderStartedUTC":provider_started,"ProviderFinishedUTC":provider_finished,"PagefilesEnabled":!args.no_memory_pagefile,"ToolSHA256":tool_hash,"ExitCode":exit_code,"InaccessiblePages":inaccessible_pages,"NtStatus":nt_status,"DumpLayout":layout,"Record":row,"Arguments":["/QUIET","/TYPE","DMP","/NOCOMPRESS","/NOLYTICS","/NOJSON","/OUTPUT","Memory.dmp"],"LogRetentionBytesPerStream":LOG_LIMIT,"Limitations":["Live RAM is non-atomic; integrity hashes are not proof of semantic completeness","Driver load/unload changes the live host; platform security can block acquisition","DumpIt requires a staged file even for SFTP delivery"]}),
     )?;
     Ok(row)
 }

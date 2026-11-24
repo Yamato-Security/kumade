@@ -737,6 +737,21 @@ pub fn collect_with_capacity(
             .map_err(|_| anyhow::anyhow!("Record state poisoned"))?
             .push(memory.clone());
     }
+    let pagefile_records = early
+        .as_ref()
+        .map(|e| e.imported_pagefiles(options.remote.as_deref()))
+        .transpose()?
+        .unwrap_or_default();
+    for row in &pagefile_records {
+        journal
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
+            .append(row)?;
+        records
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Record state poisoned"))?
+            .push(row.clone());
+    }
     let mut reserve = options.reserve_bytes;
     let mut host_reserve = options.host_reserve.clone();
     let pool = rayon::ThreadPoolBuilder::new()
@@ -1011,7 +1026,8 @@ pub fn collect_with_capacity(
         summary.completeness = "Partial".into();
     }
     ensure!(
-        records.len() == plan.files.len() + usize::from(plan.memory_requested),
+        records.len()
+            == plan.files.len() + usize::from(plan.memory_requested) + pagefile_records.len(),
         "Not every planned task produced a result"
     );
     let membership: HashMap<_, _> = plan.files.iter().map(|f| (&f.id, &f.artifacts)).collect();
@@ -1092,6 +1108,19 @@ pub fn collect_with_capacity(
                 .into(),
         })?;
     }
+    for row in &pagefile_records {
+        coverage.serialize(FamilyCoverage {
+            source_id: row.source_id.clone(),
+            artifact_id: row.artifact_ids.clone(),
+            planned: 1,
+            acquired: u64::from(matches!(row.status.as_str(), "Acquired" | "Transferred")),
+            partial: u64::from(row.status == "Partial"),
+            failed: u64::from(row.status == "Failed"),
+            not_present: 0,
+            status: row.status.clone(),
+            reason: row.reason.clone(),
+        })?;
+    }
     coverage.flush()?;
     journal
         .lock()
@@ -1145,7 +1174,14 @@ pub fn collect_with_capacity(
     if plan.memory_requested {
         for entry in fs::read_dir(root.join("Memory"))? {
             let entry = entry?;
-            if entry.file_name() != "Memory.dmp" {
+            if entry.file_name() != "Memory.dmp"
+                && !pagefile_records.iter().any(|r| {
+                    r.relative_output_path.as_deref().is_some_and(|p| {
+                        p.strip_prefix("Early/").unwrap_or(p)
+                            == format!("Memory/{}", entry.file_name().to_string_lossy())
+                    })
+                })
+            {
                 metadata.insert(
                     format!("Memory/{}", entry.file_name().to_string_lossy()),
                     hash_file(&entry.path())?.1,

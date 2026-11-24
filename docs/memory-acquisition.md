@@ -47,9 +47,16 @@ To include the catalog's paging, swap, hibernation and existing dump files too:
 .\kumade.exe collect -o E:\Evidence --memory --paging --dumpit E:\Tools\Comae-Toolkit --yes
 ```
 
-RAM is acquired first; paging files are subsequently read as disk artifacts.
-These are not a synchronized RAM/pagefile pair. Custom active pagefile discovery
-remains a separate future improvement. Offline `--source` requests never acquire
+Active `pagefile.sys` files are copied **concurrently with RAM by default** when
+`--memory` is selected. Use `--no-memory-pagefile` for RAM alone. RAM acquisition
+itself remains opt-in. The active-file query includes custom paths and volumes;
+it does not depend on the next-boot PagingFiles registry configuration. Locked
+files use the live raw NTFS reader. This is a time-overlapping acquisition,
+**not an atomic RAM/pagefile snapshot**: Windows can change pages during either read.
+
+`--paging` additionally selects swap/hibernation and existing crash-dump files.
+An active paging file already handled by paired acquisition is not copied again
+in the later disk phase. Offline `--source` requests never acquire
 the analyst computer's RAM: they record a failed RAM task and continue disk acquisition.
 
 ## Output, verification and failures
@@ -58,6 +65,11 @@ The owned collection contains:
 
 - `Memory/Memory.dmp`: uncompressed Microsoft full-memory dump, including retained
   partial bytes if the tool failed after creating the file. Check the manifest status.
+- `Memory/Pagefile0.sys`, `Pagefile1.sys`, …: active pagefiles, when present.
+  `Memory/Pagefiles.json` records each original source path, read time bounds,
+  size, status and SHA-256. Numbering is acquisition order, **not a verified Windows
+  pagefile index**. Discovery/copy failures are explicit failed manifest records;
+  a machine with no active paging files has an empty inventory.
 - `Memory/Acquisition.json`: UTC start/end, provider hash, exit code when available,
   dump-layout check, acquisition record and limitations.
 - `Memory/DumpIt-stdout.txt` and `DumpIt-stderr.txt`: provider diagnostics, up to
@@ -92,7 +104,7 @@ DumpIt requires a seekable output file. Kumade creates a protected
 `.kumade-volatile-<UUID>` staging directory beside the chosen output, or beneath
 `--memory-staging-dir <DIR>`. RAM is sealed there before any live providers run.
 Use external storage where possible; do not choose the source disk simply for
-convenience. The initial budget is physical RAM plus 64 MiB headroom and
+convenience. The initial budget is physical RAM plus active pagefile sizes, 64 MiB headroom and
 `--reserve-mib`; runtime reserve checks still apply.
 
 Directory output attempts a same-volume hard link into `Memory/Memory.dmp` to
@@ -130,3 +142,20 @@ and recorded acquisition outcome, not completion of the entire collection.
 
 The format documentation is a layout reference; no vendor executable, driver,
 or third-party implementation source is included in Kumade.
+
+## Analyze RAM with a matching pagefile
+
+[MemProcFS](https://github.com/ufrisk/MemProcFS/wiki/_CommandLine) accepts a pagefile
+with `-pagefile0 <file>`. For a machine with one active default paging file:
+
+```text
+MemProcFS -device Memory/Memory.dmp -pagefile0 Memory/Pagefile0.sys
+```
+
+Use the original paths in `Pagefiles.json` to identify collected inputs. For
+multiple active files, verify their Windows paging-file indexes before supplying
+`-pagefile1`, etc.; do not infer those indexes just from filenames or drive order.
+Use the same RAM dump and analyzer settings for an A/B comparison with the pagefile
+argument omitted. A pagefile can restore paged-out process memory that RAM alone
+cannot provide. It may add no processes or alerts, and it is not guaranteed to
+improve every image. An unrelated or stale pagefile can yield misleading data.

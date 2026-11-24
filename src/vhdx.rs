@@ -741,8 +741,9 @@ mod windows {
                 options
                     .early
                     .as_ref()
-                    .and_then(|e| e.memory.as_ref())
-                    .map_or(0, |m| m.bytes_read),
+                    .map(|e| e.largest_payload())
+                    .transpose()?
+                    .unwrap_or(0),
             ),
         )?;
         ensure!(
@@ -829,8 +830,9 @@ mod windows {
                     options
                         .early
                         .as_ref()
-                        .and_then(|e| e.memory.as_ref())
-                        .map_or(0, |m| m.bytes_read),
+                        .map(|e| e.largest_payload())
+                        .transpose()?
+                        .unwrap_or(0),
                 ),
             )?;
             ensure!(

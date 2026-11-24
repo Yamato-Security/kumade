@@ -844,6 +844,9 @@ fn run() -> Result<u8> {
         );
     }
     let mut plan = kumade::wizard::build_plan(sources, &rules, &selected, options.memory)?;
+    if let Some(capture) = &early {
+        kumade::pagefile::deduplicate_plan(&mut plan, &capture.pagefiles()?);
+    }
     plan.created_utc = started_utc;
     if !options.quiet {
         for issue in &discovered.issues {

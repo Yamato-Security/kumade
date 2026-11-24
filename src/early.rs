@@ -199,10 +199,29 @@ impl Capture {
         }
         Ok(())
     }
+    pub fn pagefiles(&self) -> Result<Vec<Record>> {
+        crate::pagefile::load(&self.root)
+    }
+    pub fn largest_payload(&self) -> Result<u64> {
+        Ok(self
+            .pagefiles()?
+            .iter()
+            .map(|r| r.bytes_read)
+            .chain(self.memory.iter().map(|r| r.bytes_read))
+            .max()
+            .unwrap_or(0))
+    }
     /// RAM stays in protected staging until the complete collection is sealed/published.
     pub fn metadata_bytes(&self) -> u64 {
         self.bytes
             .saturating_sub(self.memory.as_ref().map_or(0, |m| m.bytes_read))
+            .saturating_sub(
+                self.pagefiles()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|r| r.bytes_read)
+                    .sum::<u64>(),
+            )
     }
     pub fn import_memory(
         &self,
@@ -243,7 +262,12 @@ impl Capture {
                 "Unsafe memory evidence"
             );
             let name = entry.file_name();
-            let payload = name == "Memory.dmp";
+            let payload = name == "Memory.dmp"
+                || self.pagefiles()?.iter().any(|r| {
+                    r.relative_output_path
+                        .as_deref()
+                        .is_some_and(|p| self.root.join(p) == entry.path())
+                });
             if payload && remote.is_some() {
                 continue;
             }
@@ -318,6 +342,27 @@ impl Capture {
             }
         }
         Ok(Some(row))
+    }
+    pub fn imported_pagefiles(&self, remote: Option<&crate::sftp::Target>) -> Result<Vec<Record>> {
+        let mut rows = self.pagefiles()?;
+        if let Some(remote) = remote {
+            for row in &mut rows {
+                row.verified = false;
+                if let Some(path) = &row.relative_output_path {
+                    let logical = format!("Early/{path}");
+                    remote.require_object(
+                        &logical,
+                        row.bytes_read,
+                        row.sha256.as_deref().context("Missing pagefile hash")?,
+                    )?;
+                    row.relative_output_path = Some(logical);
+                    if row.status == "Acquired" {
+                        row.status = "Transferred".into();
+                    }
+                }
+            }
+        }
+        Ok(rows)
     }
     pub fn import(&self, root: &Path) -> Result<Option<live_info::Outcome>> {
         let Some(info) = &self.live else {
@@ -408,14 +453,36 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
             );
         }
     }
+    let pagefiles = crate::pagefile::load(root)?;
+    for row in &pagefiles {
+        if let Some(path) = &row.relative_output_path {
+            ensure!(hashes.contains_key(path), "Unsealed pagefile payload");
+            let (bytes, digest) = collect::hash_file(&paths::safe_join(root, path)?)?;
+            ensure!(
+                bytes == row.bytes_read && row.sha256.as_deref() == Some(&digest),
+                "Early pagefile payload differs"
+            );
+        } else {
+            ensure!(
+                row.bytes_read == 0 && row.status != "Acquired",
+                "Missing pagefile payload"
+            );
+        }
+    }
     Ok((
         count
+            + pagefiles
+                .iter()
+                .filter(|r| r.relative_output_path.is_some())
+                .count()
             + usize::from(
                 memory
                     .as_ref()
                     .is_some_and(|r| r.relative_output_path.is_some()),
             ),
-        failures == 0 && memory.as_ref().is_none_or(|r| r.status == "Acquired"),
+        failures == 0
+            && memory.as_ref().is_none_or(|r| r.status == "Acquired")
+            && pagefiles.iter().all(|r| r.status == "Acquired"),
     ))
 }
 
@@ -477,6 +544,62 @@ mod memory_tests {
             seal_hash,
             cleaned: AtomicBool::new(false),
         })
+    }
+    fn fixture_with_pagefile(parent: &Path) -> Arc<Capture> {
+        let mut capture = Arc::try_unwrap(fixture(parent)).unwrap();
+        let path = capture.root.join("Memory/Pagefile0.sys");
+        fs::write(&path, b"paged-out fixture").unwrap();
+        let (bytes, digest) = collect::hash_file(&path).unwrap();
+        let mut row = crate::pagefile::failure("RAMHOST", String::new());
+        row.status = "Acquired".into();
+        row.bytes_read = bytes;
+        row.logical_size = Some(bytes);
+        row.sha256 = Some(digest);
+        row.verified = true;
+        row.relative_output_path = Some("Memory/Pagefile0.sys".into());
+        collect::write_json_new(&capture.root.join(crate::pagefile::INVENTORY), &vec![row])
+            .unwrap();
+        let mut seal: serde_json::Value =
+            serde_json::from_reader(fs::File::open(capture.root.join("Seal.json")).unwrap())
+                .unwrap();
+        for name in [crate::pagefile::INVENTORY, "Memory/Pagefile0.sys"] {
+            seal["Hashes"][name] = collect::hash_file(&capture.root.join(name))
+                .unwrap()
+                .1
+                .into();
+        }
+        fs::write(
+            capture.root.join("Seal.json"),
+            serde_json::to_vec(&seal).unwrap(),
+        )
+        .unwrap();
+        capture.seal_hash = collect::hash_file(&capture.root.join("Seal.json"))
+            .unwrap()
+            .1;
+        capture.bytes = walkdir::WalkDir::new(&capture.root)
+            .into_iter()
+            .map(Result::unwrap)
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
+        Arc::new(capture)
+    }
+    #[test]
+    fn paired_pagefile_survives_import_verifies_and_tampering_is_detected() {
+        let t = tempfile::tempdir().unwrap();
+        let capture = fixture_with_pagefile(t.path());
+        let p = plan(t.path());
+        let (root, summary) = collect::collect(
+            &p,
+            &t.path().join("output"),
+            &options(capture.clone(), None),
+        )
+        .unwrap();
+        assert_eq!(summary.collected, 2);
+        assert_eq!(crate::verify::verify(&root).unwrap(), (2, true));
+        assert_eq!(verify(capture.path()).unwrap(), (2, true));
+        fs::write(root.join("Memory/Pagefile0.sys"), b"tampered").unwrap();
+        assert!(crate::verify::verify(&root).is_err());
     }
     fn plan(parent: &Path) -> Plan {
         let source = parent.join("source");
@@ -725,9 +848,13 @@ mod memory_tests {
     }
     #[test]
     fn remote_ram_uploaded_once_and_native_readback_succeeds() {
-        for gzip in [false, true] {
+        for (gzip, paging) in [(false, false), (true, false), (false, true), (true, true)] {
             let t = tempfile::tempdir().unwrap();
-            let capture = fixture(t.path());
+            let capture = if paging {
+                fixture_with_pagefile(t.path())
+            } else {
+                fixture(t.path())
+            };
             let p = plan(t.path());
             let incoming = t.path().join("incoming");
             fs::create_dir(&incoming).unwrap();
@@ -747,7 +874,9 @@ mod memory_tests {
             let row: Record = serde_json::from_str(
                 fs::read_to_string(root.join("Manifest.jsonl"))
                     .unwrap()
-                    .trim(),
+                    .lines()
+                    .next()
+                    .unwrap(),
             )
             .unwrap();
             assert_eq!(row.status, "Transferred");
