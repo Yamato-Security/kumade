@@ -127,8 +127,8 @@ pub fn discover(computer: &str) -> Result<Vec<Input>> {
         .map(|path| {
             let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
             let mut mount = vec![0u16; 32768];
-            // SAFETY: NUL-terminated input and writable UTF-16 output buffer.
             ensure!(
+                // SAFETY: NUL-terminated input and writable UTF-16 output buffer.
                 unsafe {
                     GetVolumePathNameW(wide.as_ptr(), mount.as_mut_ptr(), mount.len() as u32)
                 } != 0,
@@ -141,8 +141,8 @@ pub fn discover(computer: &str) -> Result<Vec<Input>> {
                 .context("Unterminated volume path")?;
             let root = PathBuf::from(String::from_utf16(&mount[..end])?);
             let mut guid = vec![0u16; 32768];
-            // SAFETY: NUL-terminated volume mount point and writable UTF-16 buffer.
             ensure!(
+                // SAFETY: NUL-terminated volume mount point and writable UTF-16 buffer.
                 unsafe {
                     GetVolumeNameForVolumeMountPointW(
                         mount.as_ptr(),
