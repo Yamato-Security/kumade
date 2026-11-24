@@ -9,7 +9,9 @@
   bounded diagnostics, deadlines and free-space reserves. Directory imports do not
   budget a duplicate RAM allocation when hard-linking; copy fallback checks the full
   extra size while preserving pending evidence and destination/host reserves.
-  No vendor tools bundled.
+  Active paging files are copied concurrently with the RAM dump by default
+  (`--no-memory-pagefile` skips them), recorded in `Memory/Pagefiles.json`, not
+  copied again by `--paging`, and verified like the RAM dump. No vendor tools bundled.
 
 - Add a built-in `receive` command with ephemeral SFTP credentials, append-only
   uploads, expiry/session revocation, quotas and optional source-IP restrictions.

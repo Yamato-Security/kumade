@@ -352,22 +352,27 @@ pub fn acquire(
                 |_, _| Ok(()),
             )?;
             writer.file.sync_all()?;
-            ensure!(
-                row.logical_size == Some(before.size),
-                "Pagefile resized between planning and capture"
-            );
+            row.logical_size = Some(before.size);
             row.created_utc = before.created_ns.clone();
             row.modified_utc = before.modified_ns.clone();
             row.accessed_utc = before.accessed_ns.clone();
             row.source_file_id = before.identity.clone();
-            row.changed_during_read = !crate::discovery::same_version(&before, &after);
+            // As for disk artifacts: a file whose size or metadata moved since it was
+            // discovered, or while it was read, is a complete copy of a changed file
+            // and is recorded as Partial with its bytes, not as a failure.
+            row.changed_during_read = !crate::discovery::same_version(&before, &after)
+                || input
+                    .file
+                    .before
+                    .as_ref()
+                    .is_some_and(|planned| !crate::discovery::same_version(planned, &before));
             // The pagefile contents can change without an NTFS timestamp update.
             row.status = "Acquired".into();
             row.reason = "Live paging-file bytes preserved and hashed; captured concurrently with RAM, not atomically. NTFS metadata stability does not establish content stability. PagefileN output numbering is acquisition order, not a proven Windows paging-file index.".into();
             if row.changed_during_read {
                 row.status = "Partial".into();
                 row.reason
-                    .push_str(" Source metadata changed during acquisition.");
+                    .push_str(" Source metadata changed since planning or during acquisition.");
             }
             Ok(())
         })();
@@ -377,11 +382,15 @@ pub fn acquire(
             row.bytes_read = bytes;
             row.sha256 = Some(digest);
             row.relative_output_path = Some(name);
-            row.verified = true;
         }
-        if let Err(error) = outcome {
-            row.status = "Failed".into();
-            row.reason = format!("{error:#}");
+        match outcome {
+            // The stored bytes were hashed; a failed copy keeps its bytes and hash but, like
+            // a retained `.partial` disk payload, is not a verified acquisition.
+            Ok(()) => row.verified = row.relative_output_path.is_some(),
+            Err(error) => {
+                row.status = "Failed".into();
+                row.reason = format!("{error:#}");
+            }
         }
         rows.push(row);
     }
@@ -553,5 +562,27 @@ mod tests {
         let rows = acquire(&output2, "TEST", vec![make()], 0, Duration::ZERO).unwrap();
         assert_eq!(rows[0].status, "Failed");
         assert!(rows[0].relative_output_path.is_some());
+        assert!(
+            !rows[0].verified,
+            "a failed copy is not a verified acquisition"
+        );
+        // A file that grew since discovery is copied in full and recorded as Partial.
+        let output3 = temp.path().join("grown");
+        fs::create_dir_all(output3.join("Memory")).unwrap();
+        let mut input = make();
+        input.file.before.as_mut().unwrap().size = 10;
+        let rows = acquire(&output3, "TEST", vec![input], 0, Duration::from_secs(10)).unwrap();
+        assert_eq!(rows[0].status, "Partial", "{}", rows[0].reason);
+        assert!(rows[0].changed_during_read && rows[0].verified);
+        assert_eq!((rows[0].bytes_read, rows[0].logical_size), (18, Some(18)));
+        assert!(
+            rows[0].reason.contains("since planning"),
+            "{}",
+            rows[0].reason
+        );
+        assert_eq!(
+            fs::read(output3.join("Memory/Pagefile0.sys")).unwrap(),
+            b"paged out evidence"
+        );
     }
 }
