@@ -162,15 +162,21 @@ uses hashes, not an authenticated signing identity.
 
 ## Not implemented yet
 
-RAM capture/paired runtime pagefile discovery, application-writer-coordinated VSS backups, external processing,
+Application-writer-coordinated VSS backups, external processing,
 image-source CLI support, ZIP archive packaging, cloud upload, resume,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.
 
-`--memory` currently records an explicit failed RAM task and returns partial
-status after collecting supported disk artifacts. It never creates a fake dump
-or silently reports memory acquisition as successful. Standard paging-file paths
-are included in the disk catalog; custom active pagefile enumeration is pending.
+## Physical RAM acquisition
+
+`--memory` acquires physical RAM first using a separately supplied, hash-checked
+DumpIt toolkit. Active pagefiles are copied concurrently by default; use
+`--no-memory-pagefile` for RAM alone. Use `--dumpit <toolkit-directory>`; optionally
+add `--paging` for other cataloged swap/hibernation/existing dump files. No vendor binaries are bundled.
+See [RAM acquisition](docs/memory-acquisition.md) for setup, staging requirements,
+architecture selection, verification, failures, containers and SFTP delivery.
+
+## Other limitations
 
 Raw compressed/encrypted/reparse-backed content is rejected rather than copied
 as incorrect logical bytes. Directory enumeration failures remain visible;

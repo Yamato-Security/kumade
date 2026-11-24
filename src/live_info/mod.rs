@@ -198,10 +198,10 @@ fn drain(reader: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
 // A query may load a Windows provider that starts helper processes. Kill the
 // whole owned process tree before joining pipe readers, even on normal exit.
 #[cfg(windows)]
-struct QueryJob(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct QueryJob(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]
 impl QueryJob {
-    fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         use windows_sys::Win32::System::JobObjects::*;
         // SAFETY: null security/name pointers request an unnamed owned job.
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
@@ -229,7 +229,7 @@ impl QueryJob {
         );
         Ok(job)
     }
-    fn assign(&self, child: &std::process::Child) -> Result<()> {
+    pub(crate) fn assign(&self, child: &std::process::Child) -> Result<()> {
         use std::os::windows::io::AsRawHandle;
         // SAFETY: the job and child handles remain live for this call.
         ensure!(

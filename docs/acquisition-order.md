@@ -7,10 +7,11 @@ they do not perform entropy analysis or copy evidence payloads.
 
 After scope confirmation:
 
-1. **RAM request handling.** This is the first acquisition hook. **Physical RAM
-   acquisition is still unimplemented.** `--memory` produces an explicit failed
-   request and partial collection, with no fake memory image. That record is
-   created before live provider queries and appears first in the final manifest.
+1. **Physical RAM acquisition.** With `--memory`, the separately supplied DumpIt
+   provider runs first. Active paging files are copied concurrently by default;
+   `--no-memory-pagefile` opts out. The RAM record appears first in the final manifest.
+   Missing/blocked tools or invalid/truncated dumps produce a failed task and
+   partial collection. See [RAM acquisition](memory-acquisition.md).
 2. **Fast live state.** Processes first, then network connections, DNS cache,
    SMB sessions/open files, logon state and current network configuration. Each
    priority group completes before the next begins. Queries remain non-atomic.
@@ -86,7 +87,7 @@ can be checked with:
 
 That verifies the **early snapshot scope**, not a completed full acquisition.
 An interrupted staging directory without its completion seal remains incomplete.
-A RAM request still makes this scope partial until a real provider is implemented.
+A failed RAM request makes this scope partial; a successful request includes a sealed, hash-checked dump.
 No pre-existing directory is accepted as an owned staging capture.
 
 ## Deferred entropy and container capacity

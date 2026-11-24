@@ -201,6 +201,14 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
     let mut failed = 0;
     let mut partial = 0;
     let mut memory = 0;
+    let pagefiles = crate::pagefile::load(&root)?;
+    ensure!(
+        !root.join(crate::pagefile::INVENTORY).exists()
+            || digests.contains_key(crate::pagefile::INVENTORY),
+        "Unsealed paired-pagefile inventory"
+    );
+    let mut expected_pagefiles: std::collections::HashMap<_, _> =
+        pagefiles.iter().map(|r| (&r.observation_id, r)).collect();
     for (index, line) in reader.lines().enumerate() {
         let record: Record = serde_json::from_str(&line?)
             .with_context(|| format!("Invalid manifest line {}", index + 1))?;
@@ -214,6 +222,11 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         );
         if record.artifact_ids == "windows.memory" && plan.memory_requested {
             memory += 1;
+        } else if let Some(pagefile) = expected_pagefiles.remove(&record.observation_id) {
+            ensure!(
+                serde_json::to_value(pagefile)? == serde_json::to_value(&record)?,
+                "Paired pagefile manifest differs from sealed inventory"
+            );
         } else {
             ensure!(
                 expected.contains(&record.observation_id),
@@ -256,7 +269,8 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
     }
     ensure!(
         memory == usize::from(plan.memory_requested)
-            && observations.len() == expected.len() + memory,
+            && expected_pagefiles.is_empty()
+            && observations.len() == expected.len() + memory + pagefiles.len(),
         "Manifest does not account for all planned tasks"
     );
     ensure!(

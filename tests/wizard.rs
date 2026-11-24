@@ -42,6 +42,8 @@ fn fixture() -> (tempfile::TempDir, Plan, Rules) {
 }
 fn choices() -> Choices {
     Choices {
+        memory: false,
+        memory_bytes: None,
         artifacts: vec!["windows.prefetch".into()],
         restrict_artifacts: false,
         local_yara: false,
@@ -392,4 +394,30 @@ fn cli_wizard_sizes_the_paging_family_added_to_an_explicit_scope() {
         "{text}"
     );
     assert_eq!(manifest(t.path()).len(), 2);
+}
+
+#[test]
+fn live_wizard_exposes_opt_in_ram_with_physical_size() {
+    let (_t, p, r) = fixture();
+    let sizes = Sizes::discover(&p);
+    let mut c = choices();
+    c.output_explicit = true;
+    c.memory_bytes = Some(4 * 1024 * 1024 * 1024);
+    let mut output = Vec::new();
+    let c = wizard::run(
+        &mut Prompt::new(Cursor::new("\n".repeat(30)), &mut output),
+        &p,
+        &r,
+        &sizes,
+        c,
+        true,
+        true,
+    )
+    .unwrap();
+    assert!(!c.memory);
+    assert!(
+        String::from_utf8(output)
+            .unwrap()
+            .contains("Physical RAM (4.0 GiB plus active pagefiles by default; requires DumpIt, captured first) (y/N)")
+    );
 }

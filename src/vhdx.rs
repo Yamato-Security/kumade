@@ -737,7 +737,14 @@ mod windows {
             sizes.unknown,
             explicit_gib,
             reserve,
-            sizes.largest_stream,
+            sizes.largest_stream.max(
+                options
+                    .early
+                    .as_ref()
+                    .map(|e| e.largest_payload())
+                    .transpose()?
+                    .unwrap_or(0),
+            ),
         )?;
         ensure!(
             staging_limit.is_none_or(|limit| bytes <= limit),
@@ -819,7 +826,14 @@ mod windows {
                 sizes.unknown,
                 explicit_gib,
                 new_reserve,
-                sizes.largest_stream,
+                sizes.largest_stream.max(
+                    options
+                        .early
+                        .as_ref()
+                        .map(|e| e.largest_payload())
+                        .transpose()?
+                        .unwrap_or(0),
+                ),
             )?;
             ensure!(
                 staging_limit.is_none_or(|limit| wanted <= limit),

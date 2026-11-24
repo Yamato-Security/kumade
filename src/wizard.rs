@@ -32,6 +32,8 @@ pub enum Output {
 }
 #[derive(Clone, Debug)]
 pub struct Choices {
+    pub memory: bool,
+    pub memory_bytes: Option<u64>,
     pub artifacts: Vec<String>,
     pub restrict_artifacts: bool,
     pub local_yara: bool,
@@ -279,7 +281,7 @@ pub fn run<R: BufRead, W: Write>(
     )?;
     writeln!(
         prompt.output,
-        "New RAM acquisition: unavailable; existing memory dumps are in the optional paging group."
+        "Physical RAM: opt-in with DumpIt; active pagefiles are copied concurrently by default (--no-memory-pagefile to skip). Paging also includes swap/hibernation and existing dumps."
     )?;
     if windows
         && live
@@ -356,6 +358,16 @@ pub fn run<R: BufRead, W: Write>(
     }
     let total = sizes.selected(plan, &choices.artifacts.iter().cloned().collect())?;
     if windows && live {
+        choices.memory = prompt.yes(
+            &format!(
+                "Physical RAM ({} plus active pagefiles by default; requires DumpIt, captured first)",
+                choices
+                    .memory_bytes
+                    .map(crate::collect::human_bytes)
+                    .unwrap_or_else(|| "size unknown".into())
+            ),
+            choices.memory,
+        )?;
         choices.live_info = prompt.yes(
             "Live system inventory (output size unknown; two query workers)",
             choices.live_info,
@@ -450,7 +462,11 @@ pub fn run<R: BufRead, W: Write>(
         choices.output
     )?;
     ensure!(
-        !choices.artifacts.is_empty() || choices.entropy || choices.live_info || choices.yara,
+        !choices.artifacts.is_empty()
+            || choices.entropy
+            || choices.live_info
+            || choices.yara
+            || choices.memory,
         "Nothing selected for collection"
     );
     ensure!(

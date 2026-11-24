@@ -635,11 +635,15 @@ pub fn collect_with_capacity(
             "Early volatile providers do not match the selected live scope"
         );
     }
+    // RAM is already staged. Budget metadata here; import_memory first tries a
+    // hard link, and requires the full extra dump size only if it must copy.
+    // Keep the planned disk evidence and configured reserve available during import.
+    let early_import_reserve = required_payload
+        .checked_add(options.reserve_bytes)
+        .and_then(|bytes| bytes.checked_add(early.as_ref().map_or(0, |e| e.metadata_bytes())))
+        .context("Early import space estimate overflow")?;
     ensure!(
-        fs2::available_space(&parent)?
-            >= required_payload
-                .saturating_add(options.reserve_bytes)
-                .saturating_add(early.as_ref().map_or(0, |e| e.bytes)),
+        fs2::available_space(&parent)? >= early_import_reserve,
         "Insufficient space to preserve the early volatile capture and selected artifacts"
     );
     let run_id = uuid::Uuid::new_v4().to_string();
@@ -711,15 +715,42 @@ pub fn collect_with_capacity(
     let progress = ui::progress_bar(plan.files.len() as u64, options.quiet || options.verbose);
     let started = plan.created_utc.clone();
     let timer = Instant::now();
-    if let Some(memory) = early.as_ref().and_then(|e| e.memory.clone()) {
+    let memory_record = early
+        .as_ref()
+        .map(|e| {
+            e.import_memory(
+                &root,
+                options.remote.as_deref(),
+                early_import_reserve,
+                options.host_reserve.as_ref(),
+            )
+        })
+        .transpose()?
+        .flatten();
+    if let Some(memory) = &memory_record {
         journal
             .lock()
             .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
-            .append(&memory)?;
+            .append(memory)?;
         records
             .lock()
             .map_err(|_| anyhow::anyhow!("Record state poisoned"))?
-            .push(memory);
+            .push(memory.clone());
+    }
+    let pagefile_records = early
+        .as_ref()
+        .map(|e| e.imported_pagefiles(options.remote.as_deref()))
+        .transpose()?
+        .unwrap_or_default();
+    for row in &pagefile_records {
+        journal
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Journal poisoned"))?
+            .append(row)?;
+        records
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Record state poisoned"))?
+            .push(row.clone());
     }
     let mut reserve = options.reserve_bytes;
     let mut host_reserve = options.host_reserve.clone();
@@ -995,7 +1026,8 @@ pub fn collect_with_capacity(
         summary.completeness = "Partial".into();
     }
     ensure!(
-        records.len() == plan.files.len() + usize::from(plan.memory_requested),
+        records.len()
+            == plan.files.len() + usize::from(plan.memory_requested) + pagefile_records.len(),
         "Not every planned task produced a result"
     );
     let membership: HashMap<_, _> = plan.files.iter().map(|f| (&f.id, &f.artifacts)).collect();
@@ -1054,12 +1086,39 @@ pub fn collect_with_capacity(
             source_id: "Memory".into(),
             artifact_id: "windows.memory".into(),
             planned: 1,
-            acquired: 0,
-            partial: 0,
-            failed: 1,
+            acquired: u64::from(
+                memory_record
+                    .as_ref()
+                    .is_some_and(|r| matches!(r.status.as_str(), "Acquired" | "Transferred")),
+            ),
+            partial: u64::from(
+                memory_record
+                    .as_ref()
+                    .is_some_and(|r| r.status == "Partial"),
+            ),
+            failed: u64::from(memory_record.as_ref().is_none_or(|r| r.status == "Failed")),
             not_present: 0,
-            status: "Failed".into(),
-            reason: "RAM acquisition is not implemented in this prototype".into(),
+            status: memory_record
+                .as_ref()
+                .map_or("Failed", |r| r.status.as_str())
+                .into(),
+            reason: memory_record
+                .as_ref()
+                .map_or("RAM capture missing", |r| r.reason.as_str())
+                .into(),
+        })?;
+    }
+    for row in &pagefile_records {
+        coverage.serialize(FamilyCoverage {
+            source_id: row.source_id.clone(),
+            artifact_id: row.artifact_ids.clone(),
+            planned: 1,
+            acquired: u64::from(matches!(row.status.as_str(), "Acquired" | "Transferred")),
+            partial: u64::from(row.status == "Partial"),
+            failed: u64::from(row.status == "Failed"),
+            not_present: 0,
+            status: row.status.clone(),
+            reason: row.reason.clone(),
         })?;
     }
     coverage.flush()?;
@@ -1111,6 +1170,24 @@ pub fn collect_with_capacity(
         "Summary.json",
     ] {
         metadata.insert(name.to_owned(), hash_file(&root.join(name))?.1);
+    }
+    if plan.memory_requested {
+        for entry in fs::read_dir(root.join("Memory"))? {
+            let entry = entry?;
+            if entry.file_name() != "Memory.dmp"
+                && !pagefile_records.iter().any(|r| {
+                    r.relative_output_path.as_deref().is_some_and(|p| {
+                        p.strip_prefix("Early/").unwrap_or(p)
+                            == format!("Memory/{}", entry.file_name().to_string_lossy())
+                    })
+                })
+            {
+                metadata.insert(
+                    format!("Memory/{}", entry.file_name().to_string_lossy()),
+                    hash_file(&entry.path())?.1,
+                );
+            }
+        }
     }
     if options.entropy.is_some() {
         metadata.insert(
@@ -1198,7 +1275,10 @@ pub fn collect_with_capacity(
         ui::field("Completeness", &summary.completeness);
         ui::field("Elapsed", format!("{:.3}s", timer.elapsed().as_secs_f64()));
     }
-    if owned_early && let Some(capture) = early {
+    if owned_early
+        && options.remote.is_none()
+        && let Some(capture) = early
+    {
         capture.cleanup()?;
     }
     Ok((root, summary))

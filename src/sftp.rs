@@ -679,6 +679,39 @@ impl Target {
             .insert(id, object);
         Ok(())
     }
+    /// Main may have already uploaded volatile evidence before VSS/disk discovery.
+    pub fn upload_early(&self, capture: &crate::early::Capture) -> Result<()> {
+        let digest = crate::collect::hash_file(&capture.path().join("Seal.json"))?.1;
+        let exists = self
+            .objects
+            .lock()
+            .map_err(|_| anyhow::anyhow!("SFTP object lock"))?
+            .get("metadata:Early/Seal.json")
+            .cloned();
+        if let Some(object) = exists {
+            ensure!(
+                object.logical_sha256 == digest,
+                "Early evidence changed after upload"
+            );
+            return Ok(());
+        }
+        self.upload_tree(capture.path(), "Early")
+    }
+    pub fn require_object(&self, path: &str, bytes: u64, digest: &str) -> Result<()> {
+        let objects = self
+            .objects
+            .lock()
+            .map_err(|_| anyhow::anyhow!("SFTP object lock"))?;
+        let object = objects
+            .values()
+            .find(|o| o.relative_path == path)
+            .context("Missing transferred RAM payload")?;
+        ensure!(
+            object.logical_bytes == bytes && object.logical_sha256 == digest,
+            "Transferred RAM payload differs from capture"
+        );
+        Ok(())
+    }
     pub fn upload_tree(&self, root: &Path, prefix: &str) -> Result<()> {
         for entry in walkdir::WalkDir::new(root).follow_links(false) {
             let entry = entry?;
@@ -696,7 +729,8 @@ impl Target {
                 format!("{prefix}/{relative}")
             };
             let suffix = format!("meta-{}", uuid::Uuid::new_v4());
-            let mut upload = self.begin(suffix, logical.clone(), false)?;
+            let compress = logical == "Early/Memory/Memory.dmp" && self.gzip;
+            let mut upload = self.begin(suffix, logical.clone(), compress)?;
             let mut input = crate::platform::open_source(entry.path())?;
             crate::platform::validate_open_file(&input, &crate::platform::canonicalize(root)?)?;
             io::copy(&mut input, &mut upload)?;
