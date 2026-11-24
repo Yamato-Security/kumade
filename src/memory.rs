@@ -453,6 +453,21 @@ fn diagnostics(stdout: &[u8]) -> (Option<u64>, Option<u32>) {
     (inaccessible, nt_status)
 }
 
+/// Status and reason of a capture whose provider exited successfully and whose
+/// dump passed the structural checks. Pages the provider could not read make
+/// the capture partial: the file is complete in layout but not in content.
+fn completed(inaccessible_pages: Option<u64>) -> (&'static str, String) {
+    let mut reason = String::from(
+        "DumpIt exit success; full-dump physical runs/length checked and stored bytes SHA-256 verified. Live RAM is not an atomic snapshot.",
+    );
+    match inaccessible_pages {
+        Some(pages) if pages > 0 => {
+            reason.push_str(&format!(" DumpIt reported {pages} inaccessible pages."));
+            ("Partial", reason)
+        }
+        _ => ("Acquired", reason),
+    }
+}
 /// Errors become explicit failed acquisition records; any partial bytes are retained and hashed.
 pub fn acquire(
     root: &Path,
@@ -531,18 +546,15 @@ pub fn acquire(
         row.logical_size = Some(bytes);
         row.sha256 = Some(digest);
         row.relative_output_path = Some("Memory/Memory.dmp".into());
-        row.verified = true;
     }
     match outcome {
         Ok(()) => {
-            row.status = "Acquired".into();
-            row.reason="DumpIt exit success; full-dump physical runs/length checked and stored bytes SHA-256 verified. Live RAM is not an atomic snapshot.".into();
-            if row.status == "Partial" {
-                row.reason.push_str(&format!(
-                    " DumpIt reported {} inaccessible pages.",
-                    inaccessible_pages.unwrap_or(0)
-                ));
-            }
+            let (status, reason) = completed(inaccessible_pages);
+            row.status = status.into();
+            row.reason = reason;
+            // The stored bytes were hashed and the layout checked; a partial
+            // capture is verified as stored, like a partial disk acquisition.
+            row.verified = row.relative_output_path.is_some();
         }
         Err(e) => {
             row.reason = format!("{e:#}");
@@ -718,6 +730,14 @@ mod tests {
             (Some(0), Some(0))
         );
         assert_eq!(diagnostics(b"unknown output"), (None, None));
+    }
+    #[test]
+    fn inaccessible_pages_make_a_structurally_valid_capture_partial() {
+        assert_eq!(completed(None).0, "Acquired");
+        assert_eq!(completed(Some(0)).0, "Acquired");
+        let (status, reason) = completed(Some(5));
+        assert_eq!(status, "Partial");
+        assert!(reason.contains("5 inaccessible pages"), "{reason}");
     }
     #[test]
     fn no_provider_is_never_success() {
