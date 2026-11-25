@@ -129,27 +129,35 @@ extern "C" HRESULT kumade_vss_query_next(Query *query, Snapshot *output) {
     if (!query || !output) return E_POINTER;
     if (!query->objects) return S_FALSE;
     ZeroMemory(output, sizeof(*output));
-    VSS_OBJECT_PROP object = {};
-    ULONG fetched = 0;
-    HRESULT hr = query->objects->Next(1, &object, &fetched);
-    if (FAILED(hr)) return hr;
-    if (!fetched) return S_FALSE;
-    if (object.Type != VSS_OBJECT_SNAPSHOT) return E_UNEXPECTED;
-    VSS_SNAPSHOT_PROP &p = object.Obj.Snap;
-    if (!p.m_pwszOriginalVolumeName || p.m_eStatus != VSS_SS_CREATED) {
-        hr = E_UNEXPECTED;
-    } else {
-        output->id = p.m_SnapshotId;
-        output->set = p.m_SnapshotSetId;
-        output->provider = p.m_ProviderId;
-        output->created = p.m_tsCreationTimestamp;
-        output->attributes = p.m_lSnapshotAttributes;
-        output->count = p.m_lSnapshotsCount;
-        hr = StringCchCopyW(output->original, 128, p.m_pwszOriginalVolumeName);
-        if (SUCCEEDED(hr) && p.m_pwszSnapshotDeviceObject) hr = StringCchCopyW(output->device, 512, p.m_pwszSnapshotDeviceObject);
+    for (;;) {
+        VSS_OBJECT_PROP object = {};
+        ULONG fetched = 0;
+        HRESULT hr = query->objects->Next(1, &object, &fetched);
+        if (FAILED(hr)) return hr;
+        if (!fetched) return S_FALSE;
+        if (object.Type != VSS_OBJECT_SNAPSHOT) return E_UNEXPECTED;
+        VSS_SNAPSHOT_PROP &p = object.Obj.Snap;
+        // A concurrent requester can be creating a snapshot while we enumerate.
+        // Skip unfinished copies instead of hiding every completed historical one.
+        if (p.m_eStatus != VSS_SS_CREATED) {
+            query->client->free_props(&p);
+            continue;
+        }
+        if (!p.m_pwszOriginalVolumeName) {
+            hr = E_UNEXPECTED;
+        } else {
+            output->id = p.m_SnapshotId;
+            output->set = p.m_SnapshotSetId;
+            output->provider = p.m_ProviderId;
+            output->created = p.m_tsCreationTimestamp;
+            output->attributes = p.m_lSnapshotAttributes;
+            output->count = p.m_lSnapshotsCount;
+            hr = StringCchCopyW(output->original, 128, p.m_pwszOriginalVolumeName);
+            if (SUCCEEDED(hr) && p.m_pwszSnapshotDeviceObject) hr = StringCchCopyW(output->device, 512, p.m_pwszSnapshotDeviceObject);
+        }
+        query->client->free_props(&p);
+        return hr;
     }
-    query->client->free_props(&p);
-    return hr;
 }
 
 extern "C" HRESULT kumade_vss_supported(Client *c, const WCHAR *volume, BOOL *supported) {

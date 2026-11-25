@@ -31,8 +31,9 @@ no `-o`, stdout contains structured output without a banner.
 | `Attributes` | VSS bitmask; not proof of application consistency |
 | `RootReadable` | Whether the root can currently be enumerated; individual files may still fail |
 
-Listing queries completed local snapshots across all VSS contexts. It does
-not export a snapshot or guarantee it remains available for later collection.
+Listing queries completed snapshots known to local VSS across all contexts.
+Unfinished copies are skipped; `RootReadable` identifies currently accessible
+local devices. Listing does not export a snapshot or guarantee it remains available for later collection.
 
 ## Select historical copies
 
