@@ -1,0 +1,19 @@
+{
+  "Commit": "aa863958b59c750df02d771b48e688ab04895b9e",
+  "SHA256": "d36b7bc0f1b285aed4b885cfac0b1b2c6f5107583232cd20834e6a0638a63b8b",
+  "Architecture": "aarch64",
+  "LogicalProcessors": 8,
+  "Storage": "ext4 loop image on host-shared storage; nodev,nosuid,noexec",
+  "Network": "Direct virtual LAN between separate Windows and Linux VMs; no SSH tunnel",
+  "Status": "Final",
+  "SenderCommit": "aa863958b59c750df02d771b48e688ab04895b9e",
+  "SenderSHA256": "5ee517c5baa1720ce35de625d71d59e7e68c7b0f578c00df44b15890edd426de",
+  "TestStartedUTC": "2026-11-25T00:34:59.9713766Z",
+  "TestFinishedUTC": "2026-11-25T01:23:46.8925557Z",
+  "Sender": "Windows 11 ARM64 VM; 4 vCPUs; 4 GiB RAM; C: only",
+  "Repetitions": 2,
+  "Compression": "Default streaming gzip; --sftp-no-compression not enabled",
+  "ReceiverBinding": "Private virtual-LAN interface; restricted to collector address; fresh per-run account/key",
+  "Timings": "Collector: Windows Stopwatch process launch through exit. Verified finish: local collector completion or SFTP receiver process completion measured from sender-start marker on Linux monotonic clock (approximately 0.2 second observation resolution). Receiver readback timing begins at readback status line. Additional independent local VHDX verification excluded.",
+  "Size": "Final output file lengths / allocated bytes, excluding harness logs. SFTP includes compressed incoming objects, journal, receiver metadata and receipt; no restored second payload copy."
+}

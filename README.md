@@ -111,6 +111,40 @@ storage observations and collection limitations. Download the
 [summary CSV](docs/benchmarks/2026-11-25/Benchmark-Summary.csv) or
 [per-run CSV](docs/benchmarks/2026-11-25/Benchmark-Runs.csv) for the measurements.
 
+### Combined scans and SFTP
+
+A follow-up added **eight measured runs**, two per configuration, using the same
+sender commit and C:-only scope. YARA uses **Full** from release `20261122`;
+entropy uses its standard PE scope and threshold. The three SFTP cases use the
+built-in upload-only receiver and default streaming gzip.
+
+| Configuration | Collect / upload | Verified finish | Saved output (GiB allocated) |
+|---|---:|---:|---:|
+| Local VHDX: RAM + pagefile + VSS + entropy + YARA Full | 7m 19s | 7m 19s | 7.859 |
+| SFTP: default artifact and live-inventory options | 3m 16s | 3m 25s | 1.873 |
+| SFTP: RAM + pagefile + VSS | 3m 53s | 4m 4s | 4.100 |
+| SFTP: RAM + pagefile + VSS + entropy + YARA Full | 8m 14s | 8m 24s | 4.180 |
+
+Values are medians, rounded to the nearest second. The earlier **2m 12s** result
+enabled RAM, paired pagefile, VSS and VHDX **without entropy or YARA**. It should
+not be described as all scans enabled. These combined measurements capture
+feature interactions; adding the separate option timings is not a reliable estimate.
+
+For local VHDX, verified finish is normal collector completion with built-in
+verification; the additional independent remount check is excluded. For SFTP,
+it includes receiver readback and a successful verification receipt. SFTP and
+VHDX/E01 are alternative output modes: the remote cases stream files and metadata,
+rather than uploading a VHDX. RAM/pagefiles still require explicit local staging.
+
+The receiver is an eight-CPU Linux ARM64 VM on the same private virtual LAN. Its
+storage is ext4 in a loop image backed by host-shared storage. Both VMs share the
+physical host/storage; these results do not predict WAN or dedicated-server performance.
+Partial coverage remains partial after successful integrity verification.
+
+See the **[combined-scan/SFTP report](docs/benchmarks/2026-11-25/Kumade-Combined-Scans-SFTP-Benchmarks.md)**
+for ranges, scan phases, staging observations and verification details, or download
+the [summary CSV](docs/benchmarks/2026-11-25/Benchmark-Extended-Summary.csv).
+
 ## Run locally
 
 Building from source requires Rust 1.99 or later.

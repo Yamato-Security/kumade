@@ -121,3 +121,7 @@ CPU and memory here refer to the Kumade process, excluding external DumpIt and c
 - `Benchmark-Summary.csv`: per-option medians, changes, ranges, output sizes and resource observations.
 - `Benchmark-Runs.csv`: flat per-run measurements for spreadsheets.
 - `Benchmark-Environment.json`: binary, environment and measurement definitions.
+
+## Follow-up measurements
+
+See [combined scans and SFTP](Kumade-Combined-Scans-SFTP-Benchmarks.md) for eight additional runs, including entropy + YARA Full with RAM/pagefile/VSS and the three SFTP configurations. The original matrix above remains unchanged.
