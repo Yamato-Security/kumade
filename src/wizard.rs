@@ -294,7 +294,15 @@ pub fn run<R: BufRead, W: Write>(
             false,
         )?
     {
-        for (i, source) in plan.sources.iter().enumerate() {
+        // Historical copies contribute artifact sizes, but are not live partition
+        // choices. Keep the original plan index separate from the menu number.
+        let image_sources: Vec<_> = plan
+            .sources
+            .iter()
+            .enumerate()
+            .filter(|(_, source)| source.snapshot.is_none())
+            .collect();
+        for (i, (_, source)) in image_sources.iter().enumerate() {
             let label = fs2::total_space(&source.root)
                 .map(|b| crate::collect::human_bytes(b).replace(' ', ""))
                 .unwrap_or_else(|_| "unknown size".into());
@@ -307,10 +315,11 @@ pub fn run<R: BufRead, W: Write>(
             )?;
         }
         ensure!(
-            !plan.sources.is_empty(),
+            !image_sources.is_empty(),
             "No source volumes available for imaging"
         );
-        let index = prompt.number("Source volume", 1, plan.sources.len())? - 1;
+        let menu_index = prompt.number("Source volume", 1, image_sources.len())? - 1;
+        let index = image_sources[menu_index].0;
         choices.vss = if choices.vss_available {
             prompt.yes(
                 "VSS for partition imaging (snapshot growth unknown)",

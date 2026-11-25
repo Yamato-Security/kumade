@@ -5,6 +5,10 @@ Copy Service snapshots. Snapshots provide a stable logical-volume view, includin
 files that normal live reads cannot open because another process holds them locked.
 This is an opt-in alternative; normal collection remains unchanged.
 
+For older retained versions, use [`list-vss` and `--vss-existing`](vss-existing.md).
+`--vss` alone does not collect historical copies. Combining the modes keeps
+historical sources separate and cleans up only the newly created set.
+
 ```powershell
 .\kumade.exe collect --vss --volume C: -o E:\Evidence
 .\kumade.exe collect --vss --volume C: --volume D: --vhdx E:\Evidence

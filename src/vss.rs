@@ -36,12 +36,27 @@ pub struct Snapshot {
     pub created_utc: String,
     pub attributes: i32,
     pub consistency: String,
-    pub writers_participated: bool,
+    /// Unknown for historical snapshots; attributes alone do not prove writer participation.
+    pub writers_participated: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by_collector: Option<bool>,
 }
 
 pub struct Session {
     #[cfg(windows)]
     inner: windows::Session,
+}
+
+/// Query metadata only. No snapshot set is created, taken into ownership or deleted.
+pub fn list_existing() -> Result<Vec<Snapshot>> {
+    #[cfg(windows)]
+    {
+        windows::enumerate()
+    }
+    #[cfg(not(windows))]
+    {
+        anyhow::bail!("Listing existing VSS snapshots requires native elevated Windows")
+    }
 }
 
 impl Session {
@@ -319,7 +334,8 @@ mod tests {
             created_utc: crate::model::utc_now(),
             attributes: 16,
             consistency: "CrashConsistent".into(),
-            writers_participated: false,
+            writers_participated: Some(false),
+            owned_by_collector: Some(true),
         });
         let rules = crate::catalog::Rules::load(crate::catalog::DEFAULT_CATALOG).unwrap();
         let plan = crate::discovery::build_plan(

@@ -29,7 +29,8 @@ fn source(temp: &Path) -> Source {
         created_utc: kumade::model::utc_now(),
         attributes: 16,
         consistency: "CrashConsistent".into(),
-        writers_participated: false,
+        writers_participated: Some(false),
+        owned_by_collector: Some(true),
     });
     source
 }

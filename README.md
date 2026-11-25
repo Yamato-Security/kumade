@@ -74,6 +74,8 @@ for Kumade's measurements.
 
 - Optional [VSS acquisition](docs/vss.md) with `--vss`: owned crash-consistent snapshots for locked-file collection and partition imaging, snapshot provenance and automatic cleanup. `--volume C:` selects live collection volumes.
 
+- [Historical VSS collection](docs/vss-existing.md): `--vss-existing` adds existing snapshots; choose all, newest, newest N per volume or a snapshot GUID. `list-vss` lists volumes, IDs and UTC creation times with CSV/JSON/JSONL export. Historical versions retain separate paths and provenance, including identical copies; existing snapshots are never deleted by Kumade.
+
 - [Raw partition imaging](docs/forensic-copy.md): `forensic-copy` reads a logical Windows partition into a `.dd` file on a different external disk, with physical-disk separation checks, SHA-256 readback verification and a JSON receipt.
 
 - [Live-response inventory](docs/live-info.md): 59 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.

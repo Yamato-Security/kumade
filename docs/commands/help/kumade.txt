@@ -19,6 +19,7 @@ Commands:
   forensic-copy    Image a logical partition to a raw file on a different external drive
   live-info        Capture live Windows response inventory without copying forensic artifacts
   list             List the embedded or explicitly selected acquisition catalog
+  list-vss         List existing local Volume Shadow Copies without creating or deleting them
   plan             Discover files and write a plan without copying evidence
   receive          Receive evidence through a temporary upload-only SFTP account
   verify-delivery  Verify an SFTP delivery locally and optionally reconstruct files
@@ -49,6 +50,8 @@ Options:
           Select a live volume such as C:; repeat (default: all discovered fixed volumes)
       --vss
           Acquire live files from owned, crash-consistent VSS snapshots
+      --vss-existing [<SELECTION>]
+          Also collect existing snapshots: all, newest, newest N per volume, or a GUID
       --vss-timeout <SECONDS>
           VSS snapshot creation deadline in seconds
   -o, --output <DIR>

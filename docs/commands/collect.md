@@ -66,6 +66,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Select a live volume such as C:; repeat (default: all discovered fixed volumes)
           --vss
               Acquire live files from owned, crash-consistent VSS snapshots
+          --vss-existing [<SELECTION>]
+              Also collect existing snapshots: all, newest, newest N per volume, or a GUID
           --vss-timeout <SECONDS>
               VSS snapshot creation deadline in seconds
       -o, --output <DIR>

@@ -91,7 +91,8 @@ No live company system or private company evidence is used in platform CI.
 2. Broader memory-provider/Windows-version qualification and independent timing/range
    validation. External DumpIt and paired active-pagefile acquisition are implemented;
    there is no automatic untrusted helper download.
-3. Existing VSS enumeration/collection and application-writer coordination.
+3. Broader historical VSS/provider qualification and application-writer coordination.
+   Existing copies are listed by `list-vss` and collected with `--vss-existing`.
 4. Structural validation using existing Yamato parsers without altering originals.
 5. Disk-backed planning, device-aware concurrency, durable resume/cancellation.
 6. Portable definition import, streaming archives and cloud transport.

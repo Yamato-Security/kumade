@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `list-vss` and opt-in `--vss-existing` collection from existing local
+  snapshots. Support all/newest/newest-N-per-volume/GUID selection, structured
+  listings, distinct historical source roots and explicit ownership/unknown
+  writer provenance. Keep identical historical versions and never delete
+  enumerated snapshots. Older snapshot metadata remains readable.
+
 - Add opt-in `--hibernation`, a dedicated `windows.hibernation` family and a
   size-estimating wizard choice for `hiberfil.sys`. Preserve existing broad
   paging selections and deduplicate overlaps. Use verified copying/raw NTFS
