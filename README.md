@@ -17,6 +17,9 @@ only that `.exe`. Documentation is on this site; license notices accompany the
 downloads as `LICENSES.txt`. Rename the executable to `kumade.exe` to use the
 Windows examples below.
 
+**[Read the Kumade documentation](https://yamato-security.github.io/kumade/)** —
+installation, command reference, collection guides, output formats and benchmarks.
+
 ## Implemented
 
 - [Volatility-aware acquisition](docs/acquisition-order.md): preserve fast live state and hot disk artifacts before bulk data, entropy analysis and compression.
@@ -54,7 +57,7 @@ Windows examples below.
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
 - Acquisition defaults to up to four workers (limited by available logical CPUs);
-  `-T, --threads` overrides it within that limit. `-v, --verbose` lists each file/stream being copied instead of
+  `-T, --threads` explicitly accepts 1–128 workers. `-v, --verbose` lists each file/stream being copied instead of
   displaying a progress bar. Running without arguments displays help.
 
 ## Collection benchmarks

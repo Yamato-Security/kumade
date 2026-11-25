@@ -1,0 +1,16 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+Inspect platform support and acquisition prerequisites
+
+Usage: kumade doctor
+
+Options:
+  -h, --help  Print help

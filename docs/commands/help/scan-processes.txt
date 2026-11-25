@@ -1,0 +1,26 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+Scan running Windows processes with YARA Forge or local YARA rules
+
+Usage: kumade scan-processes [OPTIONS] --output <DIR>
+
+Options:
+  -o, --output <DIR>                   New result directory (existing directories are refused)
+      --ruleset <RULESET>              YARA Forge package to download (default: core) [default: core] [possible values: core, extended, full]
+      --rules-release <RULES_RELEASE>  Forge release tag YYYYMMDD, or latest [default: latest]
+      --rules <FILE>                   Local UTF-8 YARA source, used without network access (includes disabled)
+  -t, --format <FORMAT>                Result table format [default: csv] [possible values: csv, jsonl]
+      --pid <PID>                      Limit scanning to a PID; repeat (default: all except this collector)
+  -T, --threads <THREADS>              Concurrent processes (default: 2 to limit live-system pressure) [default: 2]
+      --timeout <TIMEOUT>              Deadline per process in seconds; expired scans retain partial matches [default: 60]
+      --chunk-mib <CHUNK_MIB>          Memory read chunk size in MiB; patterns crossing chunks may be missed [default: 16]
+  -q, --quiet                          Suppress progress and routine console messages
+  -h, --help                           Print help

@@ -1,0 +1,19 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+Verify the seal and every stored payload; never reads original sources
+
+Usage: kumade verify <DIRECTORY>
+
+Arguments:
+  <DIRECTORY>
+
+Options:
+  -h, --help  Print help

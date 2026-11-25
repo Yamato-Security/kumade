@@ -1,6 +1,6 @@
 # Kumade implementation status
 
-Updated 20 November 2026. The architecture document is the target design;
+Updated 25 November 2026. The architecture document is the target design;
 this file distinguishes it from the code actually implemented.
 
 The first increment uses one Rust package with separate library modules for
@@ -18,6 +18,10 @@ verification. Splitting the stable modules into workspace crates remains possibl
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
 | `verify` | Verify sealed metadata, observation accounting and every referenced payload |
 | `forensic-copy` | Copy a logical partition to a verified image on a separate external drive; optional VSS |
+| `live-info` | Capture structured current host state without ordinary artifact acquisition |
+| `scan-processes` | Scan readable live process memory with YARA Forge or local rules |
+| `receive` | Run a temporary upload-only SFTP receiver with automatic trusted readback |
+| `verify-delivery` | Verify a revoked SFTP delivery and optionally restore a working copy |
 
 `collect` also accepts `--vhdx FILE` and optional `--vhdx-size-gib GIB` on
 Windows. The new dynamic NTFS image holds the acquisition directly. Available
@@ -31,7 +35,7 @@ file/stream being copied in full, one line per attempt, instead of displaying
 the progress bar. Parallel copies can appear in any order; their final outcome
 is recorded in the manifest. `--quiet` and `--verbose` are mutually exclusive.
 
-No other proposed commands are exposed as working functionality.
+The [command reference](commands/index.md) documents the exposed commands and their current help. Proposed capabilities in the architecture are not implied to work.
 
 `collect --e01 FILE` packages the same NTFS acquisition in compressed EWF1
 segments. Conversion uses an owned temporary VHDX, read-only disk streaming,
@@ -98,7 +102,9 @@ and independent comparison before a release claims broad production coverage.
 
 ## High-entropy PE discovery
 
-`--high-entropy` adds an optional full selected-source walk before collection.
+`--high-entropy` adds an optional selected-source PE walk. During collection,
+selected artifacts are preserved first and entropy analysis is deferred until
+after that acquisition; `plan` can inspect candidates without copying payloads.
 The scanner opens files whose extension is on the selected list (`standard`
 PE names by default, `broad` and `comprehensive` levels, added names, or every
 file with `--entropy-all-files`), recognizes PE32/PE32+ by header signatures
@@ -116,3 +122,17 @@ The paging family is off by default; `--paging` or explicit artifact selection
 enables it. `--yes` suppresses prompts for automation. Optional embedded
 process-memory YARA runs use the existing engine and are sealed with the
 collection, including native container output.
+
+## RAM, live inventory and remote delivery
+
+External DumpIt acquisition captures RAM first and pairs active pagefiles by
+default. Live inventory supplies 59 structured datasets. SFTP streams disk
+payloads with metadata staging; RAM additionally requires an explicit protected
+staging parent. The receiver revokes its temporary credential and validates
+stored/decoded hashes. See [RAM](memory-acquisition.md), [live inventory](live-info.md)
+and [SFTP](SFTP.md).
+
+The [published benchmarks](benchmarks/index.md) include 38 measured runs on
+Windows 11 ARM64, including RAM/pagefiles, VSS, containers, entropy, YARA and
+SFTP. These are qualified observations on that VM, not universal completeness
+or performance claims.

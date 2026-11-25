@@ -1,0 +1,15 @@
+{
+  "Version": "kumade 0.1.0",
+  "Commands": [
+    "collect",
+    "doctor",
+    "forensic-copy",
+    "list",
+    "live-info",
+    "plan",
+    "receive",
+    "scan-processes",
+    "verify",
+    "verify-delivery"
+  ]
+}
