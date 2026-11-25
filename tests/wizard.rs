@@ -421,3 +421,29 @@ fn live_wizard_exposes_opt_in_ram_with_physical_size() {
             .contains("Physical RAM (4.0 GiB plus active pagefiles by default; requires DumpIt, captured first) (y/N)")
     );
 }
+
+#[test]
+fn historical_artifact_sources_are_not_partition_imaging_choices() {
+    let (_t, mut p, r) = fixture();
+    let mut historical = p.sources[0].clone();
+    historical.id = "HISTORICAL-SNAPSHOT".into();
+    historical.snapshot = Some(kumade::vss::Snapshot {
+        snapshot_id: uuid::Uuid::from_u128(1).to_string(),
+        snapshot_set_id: uuid::Uuid::from_u128(2).to_string(),
+        provider_id: uuid::Uuid::from_u128(3).to_string(),
+        original_volume: "C".into(),
+        original_root: historical.root.clone(),
+        device_object: historical.root.clone(),
+        created_utc: "2026-10-20T09:00:00Z".into(),
+        attributes: 0,
+        consistency: "UnknownHistorical".into(),
+        writers_participated: None,
+        owned_by_collector: Some(false),
+    });
+    p.sources.insert(0, historical);
+    let sizes = Sizes::discover(&p);
+    let mut io = Prompt::new(Cursor::new(b"y\n\n\n\n"), Vec::new());
+    let c = wizard::run(&mut io, &p, &r, &sizes, choices(), true, true).unwrap();
+    assert_eq!(c.image_source, Some(1));
+    assert!(p.sources[c.image_source.unwrap()].snapshot.is_none());
+}

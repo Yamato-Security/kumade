@@ -652,7 +652,10 @@ fn run() -> Result<u8> {
             live,
         )?;
         if let Some(index) = choices.image_source {
-            let source = &discovered.sources[index];
+            let source = preflight
+                .sources
+                .get(index)
+                .context("Selected partition source is unavailable")?;
             let volume = source
                 .raw_device
                 .as_ref()

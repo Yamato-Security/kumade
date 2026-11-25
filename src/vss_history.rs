@@ -161,7 +161,7 @@ pub fn prepare(current: &[Source], selection: &Selection) -> Result<SourceDiscov
                 result.issues.push(Issue {
                     source_id: id,
                     path: snapshot.device_object.display().to_string(),
-                    status: "Error".into(),
+                    status: "Failed".into(),
                     reason: format!(
                         "Historical snapshot {} ({}) has no supported local read device: {error:#}",
                         snapshot.snapshot_id, snapshot.created_utc
@@ -182,7 +182,7 @@ pub fn prepare(current: &[Source], selection: &Selection) -> Result<SourceDiscov
                 result.issues.push(Issue {
                     source_id: id.clone(),
                     path: root.display().to_string(),
-                    status: "Error".into(),
+                    status: "Failed".into(),
                     reason: format!("Cannot inspect historical VSS snapshot: {error:#}"),
                 });
                 Source {
