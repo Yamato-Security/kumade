@@ -168,8 +168,10 @@ Use offline acquisition for stronger isolation when possible.
 Deferred entropy scanning cannot read back the write-only uploaded files. It
 re-reads source candidates; mismatches with the earlier streamed version are
 reported as partial and `HashMatchesAnalysis=false`, rather than attributing a
-later classification to earlier bytes. RAM capture is still unsupported in this
-prototype; selecting it records a failed request, not a memory image.
+later classification to earlier bytes. Live RAM capture is supported with an
+external DumpIt toolkit and an explicit `--memory-staging-dir` on a protected
+filesystem. RAM and the paired pagefiles need local staging before streaming;
+see [RAM acquisition](memory-acquisition.md) for setup and integrity limits.
 
 References: [OpenSSH sftp-server](https://man.openbsd.org/sftp-server),
 [sshd_config](https://man.openbsd.org/sshd_config),

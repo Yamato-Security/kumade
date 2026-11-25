@@ -57,6 +57,94 @@ Windows examples below.
   `-T, --threads` overrides it within that limit. `-v, --verbose` lists each file/stream being copied instead of
   displaying a progress bar. Running without arguments displays help.
 
+## Collection benchmarks
+
+Measured on 2026-11-25 (JST) using Kumade 0.1.0 at commit
+[`aa86395`](https://github.com/Yamato-Security/kumade/commit/aa863958b59c750df02d771b48e688ab04895b9e):
+Windows 11 ARM64 VM, four virtual CPUs, 4 GiB RAM, with source and output on
+the same NTFS virtual disk. All comparisons restrict collection to **C:** with
+`collect --yes --volume C:`. “Default” means the feature defaults within that
+scope; unrestricted all-volume collection was not benchmarked.
+
+**30 measured runs:** four default controls and two runs per optional configuration.
+Values are medians; changes are relative to the default median. Durations are
+rounded independently to the nearest second; percentages use unrounded measurements.
+Exact seconds remain in the CSV files. Output sizes
+below are **allocated disk space**, including collection metadata.
+
+| Configuration | Time | Extra time | Time change | Disk used (GiB) | Extra disk used (GiB) |
+|---|---:|---:|---:|---:|---:|
+| Default options (C: only) | 41s | — | — | 3.460 | — |
+| Without live inventory | 23s | -17s | -42.3% | 3.459 | -0.001 |
+| One acquisition worker | 1m 7s | +27s | +65.4% | 3.463 | +0.004 |
+| Add RAM only | 1m 38s | +57s | +140.7% | 7.452 | +3.992 |
+| Add RAM + paired pagefile | 1m 42s | +1m 2s | +151.7% | 8.138 | +4.678 |
+| Add paging artifacts | 47s | +6s | +15.0% | 3.616 | +0.156 |
+| Read artifacts from VSS | 44s | +3s | +7.8% | 3.436 | -0.024 |
+| VHDX output | 59s | +18s | +44.0% | 3.507 | +0.047 |
+| Compressed E01 output | 2m 5s | +1m 25s | +208.5% | 1.660 | -1.800 |
+| Add high-entropy PE discovery | 1m 49s | +1m 9s | +169.1% | 3.671 | +0.211 |
+| Add YARA Forge Core | 1m 16s | +36s | +87.8% | 3.467 | +0.008 |
+| Add YARA Forge Extended | 1m 27s | +46s | +113.8% | 3.477 | +0.018 |
+| Add YARA Forge Full | 1m 31s | +50s | +123.9% | 3.479 | +0.019 |
+| RAM + pagefile + VSS + VHDX | 2m 12s | +1m 31s | +223.5% | 7.680 | +4.220 |
+
+Default output had **5.180 GiB of logical file lengths but used 3.460 GiB on
+disk** because of sparse data. Small size differences also reflect live-log and
+filesystem growth; they are not isolated feature-payload sizes. RAM was acquired
+with an external DumpIt toolkit; paired pagefiles are enabled by default with
+`--memory`, while the RAM-only row uses `--no-memory-pagefile`.
+
+VSS here reads selected artifacts from a crash-consistent snapshot. VHDX/E01
+also add NTFS metadata and selected ADS coverage, so these modes are not simply
+different encodings of identical directory output. All retained outputs passed
+integrity verification, but all runs reported partial source coverage; failures
+and partial counts are included in the detailed report.
+
+These are warm-system observations from one VM, without rebooting or clearing
+caches between runs. They do not predict USB, network, production-server or
+larger-memory-system performance.
+
+See the **[full benchmark report](docs/benchmarks/2026-11-25/README.md)** for
+commands, timing ranges, logical file sizes, CPU/memory measurements, temporary
+storage observations and collection limitations. Download the
+[summary CSV](docs/benchmarks/2026-11-25/Benchmark-Summary.csv) or
+[per-run CSV](docs/benchmarks/2026-11-25/Benchmark-Runs.csv) for the measurements.
+
+### Combined scans and SFTP
+
+A follow-up added **eight measured runs**, two per configuration, using the same
+sender commit and C:-only scope. YARA uses **Full** from release `20261122`;
+entropy uses its standard PE scope and threshold. The three SFTP cases use the
+built-in upload-only receiver and default streaming gzip.
+
+| Configuration | Collect / upload | Verified finish | Saved output (GiB allocated) |
+|---|---:|---:|---:|
+| Local VHDX: RAM + pagefile + VSS + entropy + YARA Full | 7m 19s | 7m 19s | 7.859 |
+| SFTP: default artifact and live-inventory options | 3m 16s | 3m 25s | 1.873 |
+| SFTP: RAM + pagefile + VSS | 3m 53s | 4m 4s | 4.100 |
+| SFTP: RAM + pagefile + VSS + entropy + YARA Full | 8m 14s | 8m 24s | 4.180 |
+
+Values are medians, rounded to the nearest second. The earlier **2m 12s** result
+enabled RAM, paired pagefile, VSS and VHDX **without entropy or YARA**. It should
+not be described as all scans enabled. These combined measurements capture
+feature interactions; adding the separate option timings is not a reliable estimate.
+
+For local VHDX, verified finish is normal collector completion with built-in
+verification; the additional independent remount check is excluded. For SFTP,
+it includes receiver readback and a successful verification receipt. SFTP and
+VHDX/E01 are alternative output modes: the remote cases stream files and metadata,
+rather than uploading a VHDX. RAM/pagefiles still require explicit local staging.
+
+The receiver is an eight-CPU Linux ARM64 VM on the same private virtual LAN. Its
+storage is ext4 in a loop image backed by host-shared storage. Both VMs share the
+physical host/storage; these results do not predict WAN or dedicated-server performance.
+Partial coverage remains partial after successful integrity verification.
+
+See the **[combined-scan/SFTP report](docs/benchmarks/2026-11-25/Kumade-Combined-Scans-SFTP-Benchmarks.md)**
+for ranges, scan phases, staging observations and verification details, or download
+the [summary CSV](docs/benchmarks/2026-11-25/Benchmark-Extended-Summary.csv).
+
 ## Run locally
 
 Building from source requires Rust 1.99 or later.
