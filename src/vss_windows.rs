@@ -40,6 +40,9 @@ unsafe extern "C" {
         output: *mut NativeSnapshot,
     ) -> i32;
     fn kumade_vss_close(client: *mut c_void) -> i32;
+    fn kumade_vss_query_open(output: *mut *mut c_void) -> i32;
+    fn kumade_vss_query_next(query: *mut c_void, output: *mut NativeSnapshot) -> i32;
+    fn kumade_vss_query_close(query: *mut c_void) -> i32;
     #[cfg(test)]
     fn kumade_vss_snapshot_size() -> usize;
 }
@@ -189,7 +192,8 @@ impl Session {
                 created_utc: created,
                 attributes: out.attributes,
                 consistency: "CrashConsistent".into(),
-                writers_participated: false,
+                writers_participated: Some(false),
+                owned_by_collector: Some(true),
             });
         }
         Ok((session, unsupported))
@@ -214,6 +218,64 @@ impl Drop for Session {
             );
         }
     }
+}
+
+/// Enumerate completed snapshots across all VSS contexts without owning them.
+pub(super) fn enumerate() -> Result<Vec<Snapshot>> {
+    check_host()?;
+    struct Query(*mut c_void, PhantomData<Rc<()>>);
+    impl Drop for Query {
+        fn drop(&mut self) {
+            // SAFETY: the query is owned once and dropped on its creating COM thread.
+            unsafe { kumade_vss_query_close(self.0) };
+        }
+    }
+    let mut pointer = ptr::null_mut();
+    check(
+        // SAFETY: live output pointer; the bridge creates a query-only COM client.
+        unsafe { kumade_vss_query_open(&mut pointer) },
+        "Enumerate existing VSS snapshots",
+    )?;
+    ensure!(!pointer.is_null(), "VSS returned no snapshot enumerator");
+    let query = Query(pointer, PhantomData);
+    let mut snapshots = Vec::new();
+    loop {
+        let mut value = std::mem::MaybeUninit::<NativeSnapshot>::uninit();
+        // SAFETY: query and output live through Next; success initializes every field.
+        let status = unsafe { kumade_vss_query_next(query.0, value.as_mut_ptr()) };
+        if status == 1 {
+            break;
+        } // S_FALSE: no more snapshots.
+        check(status, "Read existing VSS snapshot properties")?;
+        ensure!(status == 0, "Unexpected VSS enumeration status");
+        // SAFETY: S_OK means the bridge initialized the complete output.
+        let out = unsafe { value.assume_init() };
+        ensure!(
+            !uuid::Uuid::from_fields(out.id.data1, out.id.data2, out.id.data3, &out.id.data4)
+                .is_nil(),
+            "VSS returned a nil snapshot ID"
+        );
+        let original = string(&out.original)?;
+        volume_identifier(&original)?;
+        let device = PathBuf::from(string(&out.device)?);
+        snapshots.push(Snapshot {
+            snapshot_id: id(&out.id),
+            snapshot_set_id: id(&out.set),
+            provider_id: id(&out.provider),
+            original_root: PathBuf::from(&original),
+            original_volume: original,
+            device_object: device,
+            created_utc: u64::try_from(out.created)
+                .ok()
+                .and_then(crate::raw::filetime)
+                .context("Invalid historical VSS timestamp")?,
+            attributes: out.attributes,
+            consistency: "UnknownHistorical".into(),
+            writers_participated: None,
+            owned_by_collector: Some(false),
+        });
+    }
+    Ok(snapshots)
 }
 #[cfg(test)]
 mod tests {

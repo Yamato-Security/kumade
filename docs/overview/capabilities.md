@@ -8,7 +8,7 @@
 | Offline collection | Mounted Windows directory trees | Does not automatically mount disk images or dump the analyst's RAM |
 | Live inventory | Windows providers for current host state | Observations can change during collection; unavailable providers are recorded |
 | Physical RAM | Separately supplied, hash-checked DumpIt | Requires native architecture, privileges, compatible driver/security policy and staging |
-| VSS | Owned crash-consistent snapshots | No application writers; no collection of every existing restore point |
+| VSS | New crash-consistent snapshots plus opt-in existing-copy collection/listing | No application-writer coordination; historical consistency is unknown; only selected artifact paths are copied |
 | YARA | Readable live Windows process memory | Protected pages, exits, timeouts and rule semantics limit coverage |
 | Entropy | Readable on-disk PE content | A high-entropy binary is a candidate, not a malware verdict |
 | VHDX / E01 | Windows NTFS evidence containers | Additional space/finalization work; fidelity has explicit limits |

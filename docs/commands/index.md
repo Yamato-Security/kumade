@@ -8,6 +8,7 @@ Run `kumade.exe --help` for the root menu, or `kumade.exe COMMAND --help` for a 
 | [`doctor`](doctor.md) | Inspect compiled capabilities |
 | [`forensic-copy`](forensic-copy.md) | Image a logical partition |
 | [`list`](list.md) | List acquisition families |
+| [`list-vss`](list-vss.md) | List existing shadow copies |
 | [`live-info`](live-info.md) | Capture current host state |
 | [`plan`](plan.md) | Inspect scope and size estimates |
 | [`receive`](receive.md) | Receive upload-only SFTP evidence |

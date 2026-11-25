@@ -30,6 +30,7 @@ pub mod verify;
 pub mod vhdx;
 
 pub mod vss;
+pub mod vss_history;
 
 pub mod yara_scan;
 

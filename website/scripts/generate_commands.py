@@ -60,6 +60,19 @@ Use an explicit `--catalog` to select custom definitions. Kumade does not
 silently load a catalogue found beside the executable. See the
 [generated catalogue reference](../collection/catalogue.md).
 '''),
+    'list-vss': ('List existing shadow copies', r'''List local VSS snapshots without creating or deleting them.
+
+```powershell
+.\kumade.exe list-vss
+.\kumade.exe list-vss --volume C: -o E:\Snapshots.csv
+.\kumade.exe list-vss --volume C: -t jsonl
+```
+
+Requires elevated, native Windows. The table includes volume paths, snapshot
+IDs and UTC creation times. CSV/JSON/JSONL output has PascalCase fields;
+`-t` without `-o` writes structured stdout without a banner.
+See [historical collection](../vss-existing.md).
+'''),
     'live-info': ('Capture current host state', r'''Collect current process, network, account, service, security and regional
 configuration observations without ordinary disk-artifact acquisition.
 

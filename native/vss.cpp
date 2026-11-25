@@ -52,7 +52,7 @@ extern "C" HRESULT kumade_vss_close(Client *c) {
     return result;
 }
 
-extern "C" HRESULT kumade_vss_open(Client **output) {
+static HRESULT open_context(Client **output, LONG context) {
     if (!output) return E_POINTER;
     *output = nullptr;
     Client *c = static_cast<Client *>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Client)));
@@ -86,11 +86,70 @@ extern "C" HRESULT kumade_vss_open(Client **output) {
     if (SUCCEEDED(hr) && !c->backup) hr = E_UNEXPECTED;
     if (SUCCEEDED(hr)) hr = c->backup->InitializeForBackup();
     if (SUCCEEDED(hr)) hr = c->backup->SetBackupState(FALSE, FALSE, VSS_BT_COPY, FALSE);
-    // Crash-consistent, no application writers, no persistence/no-auto-release.
-    if (SUCCEEDED(hr)) hr = c->backup->SetContext(VSS_CTX_FILE_SHARE_BACKUP);
+    if (SUCCEEDED(hr)) hr = c->backup->SetContext(context);
     if (FAILED(hr)) { kumade_vss_close(c); return hr; }
     *output = c;
     return S_OK;
+}
+
+extern "C" HRESULT kumade_vss_open(Client **output) {
+    // Crash-consistent, no application writers, no persistence/no-auto-release.
+    return open_context(output, VSS_CTX_FILE_SHARE_BACKUP);
+}
+
+// Query clients never call StartSnapshotSet: Client::set stays GUID_NULL and
+// kumade_vss_close therefore cannot delete any enumerated snapshot.
+struct Query {
+    Client *client;
+    IVssEnumObject *objects;
+};
+extern "C" HRESULT kumade_vss_query_close(Query *query) {
+    if (!query) return S_OK;
+    if (query->objects) query->objects->Release();
+    HRESULT hr = kumade_vss_close(query->client);
+    HeapFree(GetProcessHeap(), 0, query);
+    return hr;
+}
+extern "C" HRESULT kumade_vss_query_open(Query **output) {
+    if (!output) return E_POINTER;
+    *output = nullptr;
+    Query *query = static_cast<Query *>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Query)));
+    if (!query) return E_OUTOFMEMORY;
+    HRESULT hr = open_context(&query->client, VSS_CTX_ALL);
+    if (SUCCEEDED(hr)) {
+        hr = query->client->backup->Query(GUID_NULL, VSS_OBJECT_NONE,
+                                         VSS_OBJECT_SNAPSHOT, &query->objects);
+    }
+    if (hr == S_OK && !query->objects) hr = E_UNEXPECTED;
+    if (FAILED(hr)) { kumade_vss_query_close(query); return hr; }
+    *output = query;
+    return S_OK;
+}
+extern "C" HRESULT kumade_vss_query_next(Query *query, Snapshot *output) {
+    if (!query || !output) return E_POINTER;
+    if (!query->objects) return S_FALSE;
+    ZeroMemory(output, sizeof(*output));
+    VSS_OBJECT_PROP object = {};
+    ULONG fetched = 0;
+    HRESULT hr = query->objects->Next(1, &object, &fetched);
+    if (FAILED(hr)) return hr;
+    if (!fetched) return S_FALSE;
+    if (object.Type != VSS_OBJECT_SNAPSHOT) return E_UNEXPECTED;
+    VSS_SNAPSHOT_PROP &p = object.Obj.Snap;
+    if (!p.m_pwszOriginalVolumeName || p.m_eStatus != VSS_SS_CREATED) {
+        hr = E_UNEXPECTED;
+    } else {
+        output->id = p.m_SnapshotId;
+        output->set = p.m_SnapshotSetId;
+        output->provider = p.m_ProviderId;
+        output->created = p.m_tsCreationTimestamp;
+        output->attributes = p.m_lSnapshotAttributes;
+        output->count = p.m_lSnapshotsCount;
+        hr = StringCchCopyW(output->original, 128, p.m_pwszOriginalVolumeName);
+        if (SUCCEEDED(hr) && p.m_pwszSnapshotDeviceObject) hr = StringCchCopyW(output->device, 512, p.m_pwszSnapshotDeviceObject);
+    }
+    query->client->free_props(&p);
+    return hr;
 }
 
 extern "C" HRESULT kumade_vss_supported(Client *c, const WCHAR *volume, BOOL *supported) {

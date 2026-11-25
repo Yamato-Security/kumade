@@ -57,6 +57,8 @@ enum Command {
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
+    /// List existing local Volume Shadow Copies without creating or deleting them
+    ListVss(kumade::vss_history::ListOptions),
     /// Discover files and write a plan without copying evidence
     Plan(CollectionArgs),
     /// Receive evidence through a temporary upload-only SFTP account
@@ -106,6 +108,9 @@ struct CollectionArgs {
     /// Acquire live files from owned, crash-consistent VSS snapshots
     #[arg(long, conflicts_with = "sources")]
     vss: bool,
+    /// Also collect existing snapshots: all, newest, newest N per volume, or a GUID
+    #[arg(long, num_args = 0..=1, default_missing_value = "all", value_name = "SELECTION", conflicts_with = "sources")]
+    vss_existing: Option<kumade::vss_history::Selection>,
     /// VSS snapshot creation deadline in seconds
     #[arg(long, value_name = "SECONDS", requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
     vss_timeout: Option<u64>,
@@ -465,6 +470,7 @@ fn run() -> Result<u8> {
             }
             return Ok(0);
         }
+        Some(Command::ListVss(options)) => return kumade::vss_history::run(&options),
         Some(Command::Verify { directory }) => {
             ui::banner();
             let (files, complete) = verify::verify(&directory)?;
@@ -495,7 +501,7 @@ fn run() -> Result<u8> {
         !plan_only || !options.vss,
         "plan does not create VSS snapshots; use collect --vss"
     );
-    if options.vss {
+    if options.vss || options.vss_existing.is_some() {
         kumade::vss::check_host()?;
     }
     ensure!(
@@ -545,6 +551,22 @@ fn run() -> Result<u8> {
     let destination = paths::resolve_future(&destination)?;
     let mut discovered = sources(&options, &destination)?;
     kumade::vss::select_sources(&mut discovered, &options.volumes)?;
+    // Fix the historical selection before creating any new snapshot set. Existing
+    // snapshots are read-only sources; no cleanup session ever takes their IDs.
+    let mut history = if let Some(selection) = &options.vss_existing {
+        let result = kumade::vss_history::prepare(&discovered.sources, selection)?;
+        if !options.quiet {
+            ui::field("Existing VSS snapshots", result.sources.len());
+            ui::field(
+                "Historical evidence",
+                "Kept separately; identical versions are not omitted",
+            );
+        }
+        result
+    } else {
+        SourceDiscovery::default()
+    };
+    discovered.issues.append(&mut history.issues);
     ensure!(
         !plan_only || !options.wizard,
         "The collection wizard is not used with plan"
@@ -574,7 +596,12 @@ fn run() -> Result<u8> {
             &defaults
         };
         let preflight = discovery::build_plan(
-            discovered.sources.clone(),
+            discovered
+                .sources
+                .iter()
+                .chain(&history.sources)
+                .cloned()
+                .collect(),
             &rules,
             preflight_ids,
             options.memory,
@@ -809,6 +836,7 @@ fn run() -> Result<u8> {
     } else {
         None
     };
+    discovered.sources.extend(history.sources);
     let sources = discovered.sources;
     let output = if options.vhdx.is_some() || options.e01.is_some() {
         let computer = sources

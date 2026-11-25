@@ -254,9 +254,10 @@ Raw reads bypass some access restrictions, not time. Read file identity/metadata
 
 ## 8. VSS policy and database consistency
 
-The current implementation supports opt-in, newly created no-writer snapshots;
-see [VSS acquisition](vss.md). Existing-snapshot enumeration and the volatile-first
-workflow below remain target-design work.
+The current implementation supports opt-in, newly created no-writer snapshots
+and [historical snapshot listing/collection](vss-existing.md). Existing-copy
+collection is explicitly enabled with `--vss-existing`; the earlier design's
+default-history proposal below is not the implemented default.
 
 Default behavior reads **existing** snapshots and live evidence as separate sources. Record snapshot GUID, set ID where available, origin volume, snapshot time and actual read interval. Cross-volume snapshots from unrelated times must not be described as one consistent machine state.
 

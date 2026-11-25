@@ -399,7 +399,8 @@ fn scoped_output_paths_preserve_user_globs_and_snapshot_mapping() {
                 created_utc: utc_now(),
                 attributes: 0,
                 consistency: "Synthetic fixture".into(),
-                writers_participated: false,
+                writers_participated: Some(false),
+                owned_by_collector: Some(true),
             });
             c.root = kumade::platform::canonicalize(&snapshot).unwrap();
         }

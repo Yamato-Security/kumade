@@ -1,0 +1,20 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+List existing local Volume Shadow Copies without creating or deleting them
+
+Usage: kumade list-vss [OPTIONS]
+
+Options:
+      --volume <VOLUME>  Filter by local source volume; repeat for multiple volumes
+  -o, --output <FILE>    Write a fresh CSV/JSON/JSONL file (otherwise display a table)
+  -t, --format <FORMAT>  Structured output format; without -o write structured rows to stdout [possible values: csv, json, jsonl]
+  -q, --quiet            Hide the banner and summary
+  -h, --help             Print help

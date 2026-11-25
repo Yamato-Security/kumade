@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `list-vss` and opt-in `--vss-existing` collection from existing local
+  snapshots. Support all/newest/newest-N-per-volume/GUID selection, structured
+  listings, distinct historical source roots and explicit ownership/unknown
+  writer provenance. Keep identical historical versions and never delete
+  enumerated snapshots. Older snapshot metadata remains readable.
+
 - Acquire physical RAM first with a separately supplied, hash/architecture-checked
   DumpIt toolkit (`--memory`, `--dumpit`). Disable vendor analytics, validate full
   dump structure/length, hash captured bytes and retain failed/partial captures.

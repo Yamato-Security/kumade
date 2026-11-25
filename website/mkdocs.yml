@@ -117,6 +117,7 @@ nav:
       - doctor: commands/doctor.md
       - forensic-copy: commands/forensic-copy.md
       - list: commands/list.md
+      - list-vss: commands/list-vss.md
       - live-info: commands/live-info.md
       - plan: commands/plan.md
       - receive: commands/receive.md
@@ -132,6 +133,7 @@ nav:
       - Live-inventory fields: collection/live-datasets.md
       - RAM and pagefiles: memory-acquisition.md
       - VSS snapshots: vss.md
+      - Historical VSS: vss-existing.md
       - Process-memory YARA: yara-process-scan.md
       - High-entropy binaries: high-entropy.md
       - Partition imaging: forensic-copy.md
