@@ -17,6 +17,7 @@ for investigation with Hayabusa, Takajo and Juntei.</p>
 [Get started](getting-started/index.md){ .md-button .md-button--primary }
 [Command reference](commands/index.md){ .md-button }
 [Benchmarks](benchmarks/index.md){ .md-button }
+[Compare collectors](tool-comparison.md){ .md-button }
 </div>
 
 </div>

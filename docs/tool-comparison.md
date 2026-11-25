@@ -1,106 +1,89 @@
-# Kumade: comparison of Windows triage collection tools
+# Collector comparison
 
-**Yamato Security · Design research · 18 November 2026**
+**Reviewed 25 November 2026.** This compares Kumade's implemented collector
+capabilities with four anonymized tools. The ratings come from public project
+documentation, source where available, release history and license terms.
+They do not establish identical artifact coverage or a speed ranking.
 
-This compares three Windows evidence collectors used as design references. It accompanies [Kumade's system design and architecture](architecture.md).
+<div class="km-comparison-legend" markdown>
 
-The review covered public documentation, artifact definitions and selected acquisition/orchestration code. No collector was executed and no speed, memory or artifact-completeness benchmark was performed. “Not established” means a capability was not demonstrated by this review; it does not prove that a tool cannot provide it. Kumade's recommendations below describe the target design; see [implementation status](implementation-status.md) for current features.
+<span class="km-support km-support-yes">○</span> **Supported** &nbsp;
+<span class="km-support km-support-partial">△</span> **Partial / indirect** &nbsp;
+<span class="km-support km-support-no">×</span> **Not provided in the reviewed collector**
 
-## 1. What each project actually is
+</div>
 
-| Tool | Primary role | Most valuable characteristic | Main limitation for Kumade's goal |
-|---|---|---|---|
-| **Washizukami-Collector** | Rust Windows collector with raw NTFS access | Closest architectural reference: portable Rust collector, definitions, hashing, VSS and memory integration | Deliberately curated coverage; several completeness, memory and packaging behaviors need stronger guarantees |
-| **CDIR Collector** | Native Windows first-response collector | Simple deployment and collection of locked artifacts, NTFS metadata and RAM | Smaller, comparatively fixed collection scope and older multi-component implementation |
-| **herosi/triage-collector** | Expanded CDIR-derived collector | Broad practical artifact list, configurable recursion, RAM and paging-file collection | Legacy dependencies and path/acquisition assumptions need modernization |
+The development row uses the cadence definition in note 6. A × in another row
+means the reviewed collector does not provide that workflow; it does not mean
+an analyst cannot build a separate script or integrate an unrelated tool.
 
-Sources: [Washizukami](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/README.md), [CDIR](https://github.com/CyberDefenseInstitute/CDIR/blob/b333b814fc3b32fe8800f73fcfd0413bf18e67fe/README_en.md), [triage-collector](https://github.com/herosi/triage-collector/blob/0cfe0affa7c62c65d1a5ecfb3429a7a2e00fc7c5/README.md).
+<div class="km-comparison" markdown>
 
-## 2. Capability comparison
+| Capability | Kumade | Tool A | Tool B | Tool C | Tool D |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Fast, targeted artifact collection¹ | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> |
+| Standalone Windows base collector² | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> |
+| Customize collection without rebuilding | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> |
+| Locked-file collection / raw NTFS reads | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> |
+| VSS-backed artifact collection | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| RAM capture integration³ | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Paired RAM + pagefile workflow³ | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Structured live-system inventory | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| YARA scan integration⁴ | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-partial" role="img" aria-label="Partial or indirect support" title="Partial or indirect support">△</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Automatic YARA Forge Core / Extended / Full rules | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| High-entropy PE discovery and collection | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Remote evidence delivery over SFTP | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> |
+| Stream SFTP payloads without a local collection archive | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Built-in SFTP receiver | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| NTFS VHDX output container | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Compressed E01 output container | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> |
+| Free for commercial engagements⁵ | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> |
+| Open-source collector | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-no" role="img" aria-label="Not provided in the reviewed collector" title="Not provided in the reviewed collector">×</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> | <span class="km-support km-support-yes" role="img" aria-label="Supported" title="Supported">○</span> |
+| Recent collector-engine development⁶ | <span class="km-support km-support-yes" role="img" aria-label="Ongoing public collector updates" title="Ongoing public collector updates">○</span> | <span class="km-support km-support-partial" role="img" aria-label="Intermittent public collector updates" title="Intermittent public collector updates">△</span> | <span class="km-support km-support-no" role="img" aria-label="No public collector-engine update found in the last 12 months" title="No public collector-engine update found in the last 12 months">×</span> | <span class="km-support km-support-no" role="img" aria-label="No public collector-engine update found in the last 12 months" title="No public collector-engine update found in the last 12 months">×</span> | <span class="km-support km-support-no" role="img" aria-label="No public collector-engine update found in the last 12 months" title="No public collector-engine update found in the last 12 months">×</span> |
 
-| Capability | Washizukami | CDIR | triage-collector |
-| --- | --- | --- | --- |
-| Acquire artifacts itself | Yes | Yes | Yes |
-| Read locked files | Raw NTFS; standard-copy fallback | NTFSParserDLL raw access | NTFSParserDLL raw access |
-| Change collection definitions without rebuilding | External YAML additions/overrides | INI toggles | INI plus user/system rules |
-| Run existing processing tools | WinPmem/YARA-X integrations | Memory helper integration | Memory helpers and separate analysis helpers |
-| VSS collection | Existing snapshots plus live volume | Not established | Not established |
-| Physical RAM | External WinPmem with `--mem` | External WinPmem | WinPmem; configurable DumpIt alternative |
-| Pagefile and swapfile | Supplied custom definitions; not core defaults | Not in the documented core list | Explicit acquisition support |
-| Collection hashes | SHA-256 while copying | Hash logging in source | MD5/SHA-1/SHA-256 logging in source |
-| Packaging | ZIP after directory collection | Directory output | Directory output |
-| Cloud transfer | Not established | Not established | Not established |
-| Rust implementation | Yes | C++ plus DLLs/helpers | C++ plus DLLs/helpers |
+</div>
 
-The project-specific sources below support the comparison. An external memory helper is distinct from a native acquisition implementation.
+## What the symbols include
 
-## 3. Washizukami-Collector
+1. **Speed:** ○ means designed for targeted triage, not a measured speed ranking. Kumade's default C:-only collection took **41s** in the documented Windows 11 ARM64 VM test. The run used 3.460 GiB of allocated output and reported partial source coverage. Other collectors were not benchmarked on that VM. See the benchmark methodology before comparing times.
+2. **Standalone:** Kumade and Tool A embed their base acquisition definitions. Tool B uses external definitions and a .NET Framework runtime; Tool C requires supporting DLLs; Tool D's self-contained package unpacks a bundled runtime into a cache. Optional memory providers and rule files are outside the standalone base-collection claim.
+3. **RAM and pagefiles:** Kumade invokes a separately supplied DumpIt provider; it does not bundle a memory driver. Tools A–C also integrate external memory utilities. Tool A can add paging files through custom definitions, and Tool B through targets/modules; those are marked △ for the paired capture workflow. Kumade's paired capture is coordinated but is not an atomic RAM/disk snapshot.
+4. **Inventory and YARA:** Kumade provides structured live inventory and a built-in process-memory YARA engine. Tool A integrates an external YARA-X executable to scan persistence-linked files. Tool B can invoke external inventory/scanning tools through modules (△); this does not imply a bundled engine or managed YARA Forge downloads.
+5. **Commercial use:** This row means no collector license fee for paid third-party engagements, subject to each license. Kumade is RPL-1.5; external memory providers and downloaded rules keep their own terms. Tool B's published terms exclude third-party-network / paid-engagement use, although internal-company, educational and government uses are treated separately.
+6. **Development activity:** This row rates visible **collector-engine** activity as of 2026-11-25: ○ ongoing updates, △ intermittent updates, × no public engine update found within the preceding 12 months. Tool A's latest release reviewed was August 2026; Tool B's published engine changelog ends in December 2022; Tool C's latest release was October 2024; Tool D's latest release was February 2021. Tool B's community collection definitions still receive updates, including November 2026; its × does not mean those definitions or vendor support have ended.
 
-### Good
+## Kumade's measured speed
 
-This is the closest reference for a Rust collector. It has a standalone executable, embedded artifact definitions, YAML customization, raw NTFS access, SHA-256 acquisition logs, existing-VSS collection, and external WinPmem integration. Its deliberate focus on a maintained core is understandable for first-response use. [Project overview](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/README.md).
+The default C:-only benchmark median was **41s**, with **3.460 GiB allocated
+output**, on a four-vCPU, 4 GiB Windows 11 ARM64 VM. These were warm-system
+measurements, and the live collections reported partial source coverage.
+This is an observation for that source and configuration, not a promise that
+every machine finishes in under a minute or that Kumade is faster than Tool A–D.
 
-The reviewed core contains **40 definitions across seven YAML files**. It includes eleven event-log channels, Jump Lists, ActivitiesCache, scheduled tasks and user hive companions. It would be inaccurate to describe the current core as only Security/System/Application logs. [Core definitions](https://github.com/tadmaddad/Washizukami-Collector/tree/2a8b84eafc34bb95f5373f1157d41f756af6c164/artifacts/core).
+Adding features changes the work. RAM plus pagefile, VSS and VHDX output took
+**2m 12s**; adding entropy discovery and YARA Forge Full took **7m 19s**. The
+corresponding maximum-feature SFTP case took **8m 14s** for collection/upload
+and **8m 24s** through receiver verification. These modes do not acquire
+identical payloads, so compare the configurations and coverage as well as time.
 
-### Tradeoffs and concerns
+[Benchmark overview](benchmarks/index.md) ·
+[Configuration measurements](benchmarks/2026-11-25/README.md) ·
+[Combined scans and SFTP](benchmarks/2026-11-25/Kumade-Combined-Scans-SFTP-Benchmarks.md)
 
-- Coverage is intentionally narrower than Kumade's objective. Core NTFS definitions omit `$LogFile` and `$UsnJrnl:$Max`; the SRUM definition selects `SRUDB.dat` rather than its whole recovery family. Paging files and Outlook examples are custom opt-ins. [NTFS definitions](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/artifacts/core/windows_ntfs.yaml), [SRUM](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/artifacts/core/windows_srum.yaml), [configuration](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/config.yaml).
-- Missing WinPmem and nonzero WinPmem exit status are logged, but `run_winpmem` returns `Ok(())` in those cases. An explicitly requested memory capture is therefore not enforced as a successful deliverable. [Memory adapter](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/src/exttools.rs#L65).
-- `create_zip` uses `std::fs::read` for each input, so its memory demand can grow with the largest file—especially a RAM dump. The main collection loop is sequential, and reported artifact failures do not themselves change its final `Ok(())`. [Main acquisition and ZIP code](https://github.com/tadmaddad/Washizukami-Collector/blob/2a8b84eafc34bb95f5373f1157d41f756af6c164/src/main.rs#L291).
+## Choose the workflow you need
 
-**What Kumade should take:** the small deployment footprint, raw-read fallback, embedded catalog and straightforward operator experience. Add bounded streaming, paired-memory validation, richer completeness accounting and storage-aware concurrency. Its AGPL-3.0 license must be respected; independent design inspiration is not permission to relabel its code as RPL.
+- **Acquire evidence:** Use the embedded catalogue or an explicit custom catalogue; inspect coverage and failure reports.
+- **Preserve volatile state:** Enable RAM when needed, retain the paired pagefile capture, and collect live-system inventory.
+- **Hunt while collecting:** Opt into process-memory YARA or entropy-guided PE collection. These add I/O, CPU work and potential false positives.
+- **Deliver evidence:** Choose directory, VHDX, E01 or SFTP output. Kumade's receiver creates temporary, upload-only credentials and prevents replacement or deletion of committed evidence.
 
-## 4. CDIR Collector
+VSS support differs between collectors: Kumade creates and cleans up owned
+acquisition snapshots; the other ○ ratings include reading existing shadow
+copies. SFTP means evidence delivery from the collector, not a central agent
+deployment platform. Tools B and D upload a locally prepared container/archive;
+Kumade can stream file payloads, although discovery, manifests, small metadata
+and optional providers can still require local memory or temporary disk space.
 
-### Good
-
-CDIR provides a simple incident-response collection flow with RAM, NTFS metadata, registry, Prefetch, event logs, WMI, SRUM and browser data. It supports `Windows.old` and uses NTFSParserDLL for raw acquisition. INI switches and a machine/time-named output directory make deployment understandable. [CDIR overview](https://github.com/CyberDefenseInstitute/CDIR/blob/b333b814fc3b32fe8800f73fcfd0413bf18e67fe/README_en.md).
-
-### Tradeoffs and concerns
-
-The documented package needs the executable, configuration, parser DLL, crypto libraries and architecture-specific memory helpers. Its fixed collection functions are less adaptable than a typed artifact catalog. The reviewed source includes legacy fixed-size path buffers and a vendored LibreSSL 2.5.5 directory; these warrant modernization and dependency review, not an unsupported claim of a specific exploitable vulnerability. [Acquisition source](https://github.com/CyberDefenseInstitute/CDIR/blob/b333b814fc3b32fe8800f73fcfd0413bf18e67fe/CDIR/CDIR.cpp), [repository components](https://github.com/CyberDefenseInstitute/CDIR/tree/b333b814fc3b32fe8800f73fcfd0413bf18e67fe/CDIR).
-
-Resumable acquisition, signed catalogs, cloud transport and a machine-readable completeness contract were not established. The repository declares GPL-2.0; copying its implementation requires an appropriate licensing basis.
-
-**What Kumade should take:** first-response simplicity and the established raw-acquisition model. Replace the scattered deployment components with a Rust core and explicitly versioned optional provider packages.
-
-## 5. herosi/triage-collector
-
-### Good
-
-This CDIR-derived project expands collection to paging files, `$LogFile`, transaction logs, service profiles and configurable recursive user/system paths. Its supplied INI covers practical evidence such as SYSVOL, NTDS, BITS, PCA, RDP cache, shell history and scheduled tasks. RAM can use WinPmem or a separately supplied DumpIt binary. [Project description](https://github.com/herosi/triage-collector/blob/0cfe0affa7c62c65d1a5ecfb3429a7a2e00fc7c5/README.md), [default INI](https://github.com/herosi/triage-collector/blob/0cfe0affa7c62c65d1a5ecfb3429a7a2e00fc7c5/triage-collector/triage-collector.ini).
-
-### Tradeoffs and concerns
-
-- The package retains C++/DLL/crypto-helper and external-driver dependencies. Bundled older helper versions should not be assumed compatible with current Windows security policy.
-- `get_analysisdata` acquires `pagefile.sys` and `swapfile.sys` using the OS-volume path. This does not demonstrate discovery of **all** active pagefiles on other volumes.
-- The separate registry-reading function converts one `REG_MULTI_SZ` buffer into a single string; it is not evidence of complete multi-pagefile enumeration. These are source-level limitations, not results from an executed test. [Paging and memory code](https://github.com/herosi/triage-collector/blob/0cfe0affa7c62c65d1a5ecfb3429a7a2e00fc7c5/triage-collector/triage-collector.cpp#L507).
-- Broad acquisition remains dependent on the supplied INI and commented entries. Resume, signed updates and future cloud upload were not established. The declared license is GPL-2.0.
-
-**What Kumade should take:** the expanded real-world artifact coverage and memory/paging workflow. Improve actual volume/profile discovery, long-path handling, provider qualification and explicit validation.
-
-## 6. Recommended foundation for Kumade
-
-**Use an independent Rust implementation, a broad tested catalog, and the existing Yamato analysis tools.** Do not fork one collector and inherit all of its acquisition and licensing assumptions.
-
-Kumade should collect original evidence; Juntei, Hayabusa and Takajo should remain independently usable processing stages. An explicitly requested processing stage can orchestrate approved tools when needed.
-
-The strongest improvements are:
-
-1. Discover every local volume and profile instead of relying on a handful of default paths.
-2. Collect all supported acquisition definitions by default, including database recovery companions, with no silent maximum-size or date filter.
-3. Preserve live/VSS origins, raw/derived distinctions, exact stream identities and original timestamps.
-4. Make locked-file acquisition, RAM/pagefile pairing, partial reads and parser validation visible in manifests and exit codes.
-5. Stream acquisition and packaging with bounded buffers; avoid reading a whole dump into RAM or requiring two complete copies on disk.
-6. Prove parity through fixture comparisons and realistic Windows tests, rather than asserting that Rust or a larger artifact list guarantees completeness.
-
-## 7. Reviewed revisions and licensing observations
-
-| Repository | Reviewed commit | Licensing observed |
-|---|---|---|
-| Washizukami-Collector | `2a8b84eafc34bb95f5373f1157d41f756af6c164` | AGPL-3.0 |
-| CDIR | `b333b814fc3b32fe8800f73fcfd0413bf18e67fe` | GPL-2.0 |
-| triage-collector | `0cfe0affa7c62c65d1a5ecfb3429a7a2e00fc7c5` | GPL-2.0 |
-| Juntei | `044ba8996ae1cc21f8565fa95868a836edce1c0b` | RPL-1.5 |
-
-Kumade's requested license is **RPL-1.5**, matching the reviewed [current Juntei license](https://github.com/Yamato-Security/juntei/blob/044ba8996ae1cc21f8565fa95868a836edce1c0b/LICENSE). Treat reference projects as design sources unless their code/data has an approved reuse basis; preserve third-party notices and audit dependency/provider licenses individually.
+[Capabilities and limits](overview/capabilities.md) ·
+[Choose a collection](getting-started/choose-options.md) ·
+[License and external components](resources/license.md)

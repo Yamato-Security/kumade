@@ -20,6 +20,46 @@ Windows examples below.
 **[Read the Kumade documentation](https://yamato-security.github.io/kumade/)** —
 installation, command reference, collection guides, output formats and benchmarks.
 
+## Collector comparison
+
+**○ Supported · △ Partial or indirect support · × Not provided in the reviewed collector.**
+Development activity uses the separate cadence definition in note 6. Tool A–D
+are anonymized comparisons of documented collector capabilities, reviewed on
+**2026-11-25**. Optional features may require extra configuration or tools.
+
+| Capability | Kumade | Tool A | Tool B | Tool C | Tool D |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Fast, targeted artifact collection¹ | ○ | ○ | ○ | ○ | ○ |
+| Standalone Windows base collector² | ○ | ○ | △ | × | △ |
+| Customize collection without rebuilding | ○ | ○ | ○ | △ | ○ |
+| Locked-file collection / raw NTFS reads | ○ | ○ | ○ | ○ | ○ |
+| VSS-backed artifact collection | ○ | ○ | ○ | × | × |
+| RAM capture integration³ | ○ | ○ | ○ | ○ | × |
+| Paired RAM + pagefile workflow³ | ○ | △ | △ | × | × |
+| Structured live-system inventory | ○ | × | △ | × | × |
+| YARA scan integration⁴ | ○ | ○ | △ | × | × |
+| Automatic YARA Forge Core / Extended / Full rules | ○ | × | × | × | × |
+| High-entropy PE discovery and collection | ○ | × | × | × | × |
+| Remote evidence delivery over SFTP | ○ | × | ○ | × | ○ |
+| Stream SFTP payloads without a local collection archive | ○ | × | × | × | × |
+| Built-in SFTP receiver | ○ | × | ○ | × | × |
+| NTFS VHDX output container | ○ | × | ○ | × | × |
+| Compressed E01 output container | ○ | × | × | × | × |
+| Free for commercial engagements⁵ | ○ | ○ | × | ○ | ○ |
+| Open-source collector | ○ | ○ | × | ○ | ○ |
+| Recent collector-engine development⁶ | ○ | △ | × | × | × |
+
+1. **Speed:** ○ means designed for targeted triage, not a measured speed ranking. Kumade's default C:-only collection took **41s** in the documented Windows 11 ARM64 VM test. The run used 3.460 GiB of allocated output and reported partial source coverage. Other collectors were not benchmarked on that VM. See the benchmark methodology before comparing times.
+2. **Standalone:** Kumade and Tool A embed their base acquisition definitions. Tool B uses external definitions and a .NET Framework runtime; Tool C requires supporting DLLs; Tool D's self-contained package unpacks a bundled runtime into a cache. Optional memory providers and rule files are outside the standalone base-collection claim.
+3. **RAM and pagefiles:** Kumade invokes a separately supplied DumpIt provider; it does not bundle a memory driver. Tools A–C also integrate external memory utilities. Tool A can add paging files through custom definitions, and Tool B through targets/modules; those are marked △ for the paired capture workflow. Kumade's paired capture is coordinated but is not an atomic RAM/disk snapshot.
+4. **Inventory and YARA:** Kumade provides structured live inventory and a built-in process-memory YARA engine. Tool A integrates an external YARA-X executable to scan persistence-linked files. Tool B can invoke external inventory/scanning tools through modules (△); this does not imply a bundled engine or managed YARA Forge downloads.
+5. **Commercial use:** This row means no collector license fee for paid third-party engagements, subject to each license. Kumade is RPL-1.5; external memory providers and downloaded rules keep their own terms. Tool B's published terms exclude third-party-network / paid-engagement use, although internal-company, educational and government uses are treated separately.
+6. **Development activity:** This row rates visible **collector-engine** activity as of 2026-11-25: ○ ongoing updates, △ intermittent updates, × no public engine update found within the preceding 12 months. Tool A's latest release reviewed was August 2026; Tool B's published engine changelog ends in December 2022; Tool C's latest release was October 2024; Tool D's latest release was February 2021. Tool B's community collection definitions still receive updates, including November 2026; its × does not mean those definitions or vendor support have ended.
+
+See the **[comparison guide](https://yamato-security.github.io/kumade/tool-comparison/)**
+for capability details and the **[collection benchmarks](#collection-benchmarks)**
+for Kumade's measurements.
+
 ## Implemented
 
 - [Volatility-aware acquisition](docs/acquisition-order.md): preserve fast live state and hot disk artifacts before bulk data, entropy analysis and compression.
@@ -291,7 +331,7 @@ The `ntfs` dependency currently brings `binrw 0.11.3`, for which Rust reports a
 future-compatibility warning; it does not fail the current build.
 
 See [validation results](docs/testing.md), [implementation status](docs/implementation-status.md),
-[architecture](docs/architecture.md) and [reference-tool comparison](docs/tool-comparison.md).
+[architecture](docs/architecture.md) and [collector comparison](docs/tool-comparison.md).
 
 Copyright © 2026 Shirofune Security Co., Ltd. Original Kumade code and definitions
 are licensed under [RPL-1.5](LICENSE). Third-party fixtures/dependencies keep their
