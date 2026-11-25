@@ -2,26 +2,26 @@
 
 **Measured results.** Native Windows 11 ARM64 VM, four virtual CPUs, 4 GiB RAM, one NTFS source/destination disk. These are observed times on this VM, not throughput guarantees for other systems.
 
-Kumade 0.1.0 at `aa86395`. YARA Forge release `20261122` is pinned. Values below are medians; optional configurations have two measured runs and the default has four controls. Timing and size deltas are differences from the default median, with percentages calculated from the unrounded values.
+Kumade 0.1.0 at `aa86395`. YARA Forge release `20261122` is pinned. Values below are medians; optional configurations have two measured runs and the default has four controls. Timing and size deltas are differences from the default median, with percentages calculated from the unrounded values. Durations and range endpoints are rounded independently to the nearest second (for example, `1m 42s`); exact seconds remain in the CSV files.
 
 ## Documentation table
 
-| Configuration | Runs | Time (s) | Extra time (s) | Time change | Output files (GiB) | Extra file size (GiB) | Disk used (GiB) | Extra disk used (GiB) |
+| Configuration | Runs | Time | Extra time | Time change | Output files (GiB) | Extra file size (GiB) | Disk used (GiB) | Extra disk used (GiB) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Default options (C: only) | 4 | 40.67 | 0.00 | 0.0% | 5.180 | 0.000 | 3.460 | 0.000 |
-| Without live inventory | 2 | 23.46 | -17.20 | -42.3% | 5.157 | -0.024 | 3.459 | -0.001 |
-| Single acquisition worker | 2 | 67.24 | +26.58 | +65.4% | 5.211 | +0.031 | 3.463 | +0.004 |
-| Add RAM, without paired pagefile | 2 | 97.87 | +57.20 | +140.7% | 9.142 | +3.962 | 7.452 | +3.992 |
-| Add RAM and paired pagefiles | 2 | 102.36 | +61.69 | +151.7% | 9.839 | +4.659 | 8.138 | +4.678 |
-| Add paging/swap/hibernation artifacts | 2 | 46.75 | +6.08 | +15.0% | 5.891 | +0.710 | 3.616 | +0.156 |
-| Read artifacts from VSS | 2 | 43.83 | +3.17 | +7.8% | 5.177 | -0.003 | 3.436 | -0.024 |
-| Save as NTFS VHDX | 2 | 58.58 | +17.91 | +44.0% | 3.507 | -1.674 | 3.507 | +0.047 |
-| Save as compressed E01 | 2 | 125.45 | +84.79 | +208.5% | 1.660 | -3.521 | 1.660 | -1.800 |
-| Add high-entropy PE discovery | 2 | 109.43 | +68.76 | +169.1% | 5.401 | +0.220 | 3.671 | +0.211 |
-| Add YARA Forge Core | 2 | 76.36 | +35.69 | +87.8% | 5.199 | +0.019 | 3.467 | +0.008 |
-| Add YARA Forge Extended | 2 | 86.93 | +46.26 | +113.8% | 5.183 | +0.002 | 3.477 | +0.018 |
-| Add YARA Forge Full | 2 | 91.04 | +50.38 | +123.9% | 5.184 | +0.004 | 3.479 | +0.019 |
-| RAM + pagefiles + VSS + VHDX | 2 | 131.54 | +90.87 | +223.5% | 7.680 | +2.499 | 7.680 | +4.220 |
+| Default options (C: only) | 4 | 41s | 0s | 0.0% | 5.180 | 0.000 | 3.460 | 0.000 |
+| Without live inventory | 2 | 23s | -17s | -42.3% | 5.157 | -0.024 | 3.459 | -0.001 |
+| Single acquisition worker | 2 | 1m 7s | +27s | +65.4% | 5.211 | +0.031 | 3.463 | +0.004 |
+| Add RAM, without paired pagefile | 2 | 1m 38s | +57s | +140.7% | 9.142 | +3.962 | 7.452 | +3.992 |
+| Add RAM and paired pagefiles | 2 | 1m 42s | +1m 2s | +151.7% | 9.839 | +4.659 | 8.138 | +4.678 |
+| Add paging/swap/hibernation artifacts | 2 | 47s | +6s | +15.0% | 5.891 | +0.710 | 3.616 | +0.156 |
+| Read artifacts from VSS | 2 | 44s | +3s | +7.8% | 5.177 | -0.003 | 3.436 | -0.024 |
+| Save as NTFS VHDX | 2 | 59s | +18s | +44.0% | 3.507 | -1.674 | 3.507 | +0.047 |
+| Save as compressed E01 | 2 | 2m 5s | +1m 25s | +208.5% | 1.660 | -3.521 | 1.660 | -1.800 |
+| Add high-entropy PE discovery | 2 | 1m 49s | +1m 9s | +169.1% | 5.401 | +0.220 | 3.671 | +0.211 |
+| Add YARA Forge Core | 2 | 1m 16s | +36s | +87.8% | 5.199 | +0.019 | 3.467 | +0.008 |
+| Add YARA Forge Extended | 2 | 1m 27s | +46s | +113.8% | 5.183 | +0.002 | 3.477 | +0.018 |
+| Add YARA Forge Full | 2 | 1m 31s | +50s | +123.9% | 5.184 | +0.004 | 3.479 | +0.019 |
+| RAM + pagefiles + VSS + VHDX | 2 | 2m 12s | +1m 31s | +223.5% | 7.680 | +2.499 | 7.680 | +4.220 |
 
 `GiB = 1,073,741,824 bytes`. “Output files” sums final file lengths; “Disk used” sums NTFS allocated bytes. Sparse NTFS streams and dynamic VHDX files can have a much larger reported file size than allocated storage. E01 size counts all compressed segments and the final JSON container report. VHDX virtual capacity is not treated as its saved file size. Small size differences also include background file/log/MFT growth and are not isolated feature-payload sizes.
 
@@ -56,22 +56,22 @@ The high-entropy runs additionally exclude this benchmark’s generated output t
 
 ## Timing variation and source coverage
 
-| Configuration | Time range (s) | Collected payloads, median | Partial payloads, median | Failed payloads, median | Discovery errors, median |
+| Configuration | Time range | Collected payloads, median | Partial payloads, median | Failed payloads, median | Discovery errors, median |
 |---|---:|---:|---:|---:|---:|
-| Default options (C: only) | 40.54–43.40 | 5836.5 | 20 | 4 | 0 |
-| Without live inventory | 20.97–25.96 | 5829.5 | 24 | 4 | 0 |
-| Single acquisition worker | 66.62–67.86 | 5830 | 28 | 4 | 0 |
-| Add RAM, without paired pagefile | 97.73–98.01 | 5839 | 17.5 | 4 | 0 |
-| Add RAM and paired pagefiles | 100.39–104.33 | 5831 | 26 | 4 | 0 |
-| Add paging/swap/hibernation artifacts | 45.04–48.45 | 5837.5 | 19.5 | 4 | 0 |
-| Read artifacts from VSS | 43.69–43.97 | 5848.5 | 6.5 | 4 | 0 |
-| Save as NTFS VHDX | 57.52–59.64 | 5826 | 28.5 | 4 | 1 |
-| Save as compressed E01 | 123.67–127.23 | 5831 | 25.5 | 4.5 | 1 |
-| Add high-entropy PE discovery | 104.44–114.42 | 5872.5 | 21.5 | 4 | 0 |
-| Add YARA Forge Core | 75.02–77.70 | 5828 | 26.5 | 4 | 0 |
-| Add YARA Forge Extended | 86.76–87.10 | 5827 | 26.5 | 4 | 0 |
-| Add YARA Forge Full | 90.37–91.71 | 5827 | 26.5 | 4 | 0 |
-| RAM + pagefiles + VSS + VHDX | 130.06–133.01 | 5843.5 | 13.5 | 4 | 1 |
+| Default options (C: only) | 41s–43s | 5836.5 | 20 | 4 | 0 |
+| Without live inventory | 21s–26s | 5829.5 | 24 | 4 | 0 |
+| Single acquisition worker | 1m 7s–1m 8s | 5830 | 28 | 4 | 0 |
+| Add RAM, without paired pagefile | 1m 38s | 5839 | 17.5 | 4 | 0 |
+| Add RAM and paired pagefiles | 1m 40s–1m 44s | 5831 | 26 | 4 | 0 |
+| Add paging/swap/hibernation artifacts | 45s–48s | 5837.5 | 19.5 | 4 | 0 |
+| Read artifacts from VSS | 44s | 5848.5 | 6.5 | 4 | 0 |
+| Save as NTFS VHDX | 58s–1m 0s | 5826 | 28.5 | 4 | 1 |
+| Save as compressed E01 | 2m 4s–2m 7s | 5831 | 25.5 | 4.5 | 1 |
+| Add high-entropy PE discovery | 1m 44s–1m 54s | 5872.5 | 21.5 | 4 | 0 |
+| Add YARA Forge Core | 1m 15s–1m 18s | 5828 | 26.5 | 4 | 0 |
+| Add YARA Forge Extended | 1m 27s | 5827 | 26.5 | 4 | 0 |
+| Add YARA Forge Full | 1m 30s–1m 32s | 5827 | 26.5 | 4 | 0 |
+| RAM + pagefiles + VSS + VHDX | 2m 10s–2m 13s | 5843.5 | 13.5 | 4 | 1 |
 
 Partial or failed artifacts are **not** silently counted as successful. Exit 3 / Partial records incomplete source coverage even when every retained output passes byte-integrity verification. Live files may change between planning and copying; VSS can change both consistency and what is readable. Therefore size differences are observed outcomes, not a promise of identical evidence coverage.
 
@@ -81,22 +81,22 @@ The entropy runs each analyzed 33,439 PE files and selected 38 candidates (138,2
 
 ## Resource and temporary-space observations
 
-| Configuration | Collector CPU (s) | Observed collector peak working set (MiB) | Observed C: free-space drop (GiB) |
+| Configuration | Collector CPU time | Observed collector peak working set (MiB) | Observed C: free-space drop (GiB) |
 |---|---:|---:|---:|
-| Default options (C: only) | 28.80 | 45.6 | 3.463 |
-| Without live inventory | 29.45 | 46.8 | 3.462 |
-| Single acquisition worker | 27.38 | 40.8 | 3.502 |
-| Add RAM, without paired pagefile | 71.45 | 46.8 | 7.455 |
-| Add RAM and paired pagefiles | 79.01 | 46.4 | 8.139 |
-| Add paging/swap/hibernation artifacts | 33.48 | 50.0 | 3.620 |
-| Read artifacts from VSS | 28.95 | 52.2 | 3.440 |
-| Save as NTFS VHDX | 32.02 | 56.4 | 3.520 |
-| Save as compressed E01 | 130.00 | 58.7 | 5.186 |
-| Add high-entropy PE discovery | 172.29 | 104.5 | 3.673 |
-| Add YARA Forge Core | 84.14 | 184.7 | 3.474 |
-| Add YARA Forge Extended | 106.87 | 238.2 | 3.481 |
-| Add YARA Forge Full | 112.17 | 258.4 | 3.482 |
-| RAM + pagefiles + VSS + VHDX | 85.28 | 62.2 | 12.387 |
+| Default options (C: only) | 29s | 45.6 | 3.463 |
+| Without live inventory | 29s | 46.8 | 3.462 |
+| Single acquisition worker | 27s | 40.8 | 3.502 |
+| Add RAM, without paired pagefile | 1m 11s | 46.8 | 7.455 |
+| Add RAM and paired pagefiles | 1m 19s | 46.4 | 8.139 |
+| Add paging/swap/hibernation artifacts | 33s | 50.0 | 3.620 |
+| Read artifacts from VSS | 29s | 52.2 | 3.440 |
+| Save as NTFS VHDX | 32s | 56.4 | 3.520 |
+| Save as compressed E01 | 2m 10s | 58.7 | 5.186 |
+| Add high-entropy PE discovery | 2m 52s | 104.5 | 3.673 |
+| Add YARA Forge Core | 1m 24s | 184.7 | 3.474 |
+| Add YARA Forge Extended | 1m 47s | 238.2 | 3.481 |
+| Add YARA Forge Full | 1m 52s | 258.4 | 3.482 |
+| RAM + pagefiles + VSS + VHDX | 1m 25s | 62.2 | 12.387 |
 
 CPU and memory here refer to the Kumade process, excluding external DumpIt and child PowerShell providers. The working-set peak is observed through the process counter; resource sampling runs at approximately 500 ms. The free-space drop is a whole-volume proxy including concurrent Windows writes and temporary VSS/container/staging allocations; it is **not** exact process-owned disk usage or a sufficient sizing rule. Provision the collector’s required reserves and additional room for memory/container staging.
 

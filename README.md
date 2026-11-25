@@ -67,25 +67,27 @@ the same NTFS virtual disk. All comparisons restrict collection to **C:** with
 scope; unrestricted all-volume collection was not benchmarked.
 
 **30 measured runs:** four default controls and two runs per optional configuration.
-Values are medians; changes are relative to the default median. Output sizes
+Values are medians; changes are relative to the default median. Durations are
+rounded independently to the nearest second; percentages use unrounded measurements.
+Exact seconds remain in the CSV files. Output sizes
 below are **allocated disk space**, including collection metadata.
 
 | Configuration | Time | Extra time | Time change | Disk used (GiB) | Extra disk used (GiB) |
 |---|---:|---:|---:|---:|---:|
-| Default options (C: only) | 40.7s | — | — | 3.460 | — |
-| Without live inventory | 23.5s | -17.2s | -42.3% | 3.459 | -0.001 |
-| One acquisition worker | 67.2s | +26.6s | +65.4% | 3.463 | +0.004 |
-| Add RAM only | 97.9s | +57.2s | +140.7% | 7.452 | +3.992 |
-| Add RAM + paired pagefile | 102.4s | +61.7s | +151.7% | 8.138 | +4.678 |
-| Add paging artifacts | 46.7s | +6.1s | +15.0% | 3.616 | +0.156 |
-| Read artifacts from VSS | 43.8s | +3.2s | +7.8% | 3.436 | -0.024 |
-| VHDX output | 58.6s | +17.9s | +44.0% | 3.507 | +0.047 |
-| Compressed E01 output | 125.5s | +84.8s | +208.5% | 1.660 | -1.800 |
-| Add high-entropy PE discovery | 109.4s | +68.8s | +169.1% | 3.671 | +0.211 |
-| Add YARA Forge Core | 76.4s | +35.7s | +87.8% | 3.467 | +0.008 |
-| Add YARA Forge Extended | 86.9s | +46.3s | +113.8% | 3.477 | +0.018 |
-| Add YARA Forge Full | 91.0s | +50.4s | +123.9% | 3.479 | +0.019 |
-| RAM + pagefile + VSS + VHDX | 131.5s | +90.9s | +223.5% | 7.680 | +4.220 |
+| Default options (C: only) | 41s | — | — | 3.460 | — |
+| Without live inventory | 23s | -17s | -42.3% | 3.459 | -0.001 |
+| One acquisition worker | 1m 7s | +27s | +65.4% | 3.463 | +0.004 |
+| Add RAM only | 1m 38s | +57s | +140.7% | 7.452 | +3.992 |
+| Add RAM + paired pagefile | 1m 42s | +1m 2s | +151.7% | 8.138 | +4.678 |
+| Add paging artifacts | 47s | +6s | +15.0% | 3.616 | +0.156 |
+| Read artifacts from VSS | 44s | +3s | +7.8% | 3.436 | -0.024 |
+| VHDX output | 59s | +18s | +44.0% | 3.507 | +0.047 |
+| Compressed E01 output | 2m 5s | +1m 25s | +208.5% | 1.660 | -1.800 |
+| Add high-entropy PE discovery | 1m 49s | +1m 9s | +169.1% | 3.671 | +0.211 |
+| Add YARA Forge Core | 1m 16s | +36s | +87.8% | 3.467 | +0.008 |
+| Add YARA Forge Extended | 1m 27s | +46s | +113.8% | 3.477 | +0.018 |
+| Add YARA Forge Full | 1m 31s | +50s | +123.9% | 3.479 | +0.019 |
+| RAM + pagefile + VSS + VHDX | 2m 12s | +1m 31s | +223.5% | 7.680 | +4.220 |
 
 Default output had **5.180 GiB of logical file lengths but used 3.460 GiB on
 disk** because of sparse data. Small size differences also reflect live-log and
