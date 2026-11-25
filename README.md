@@ -36,6 +36,7 @@ are anonymized comparisons of documented collector capabilities, reviewed on
 | VSS-backed artifact collection | ○ | ○ | ○ | × | × |
 | RAM capture integration³ | ○ | ○ | ○ | ○ | × |
 | Paired RAM + pagefile workflow³ | ○ | △ | △ | × | × |
+| `hiberfil.sys` acquisition⁷ | ○ | ○ | ○ | × | △ |
 | Structured live-system inventory | ○ | × | △ | × | × |
 | YARA scan integration⁴ | ○ | ○ | △ | × | × |
 | Automatic YARA Forge Core / Extended / Full rules | ○ | × | × | × | × |
@@ -55,6 +56,7 @@ are anonymized comparisons of documented collector capabilities, reviewed on
 4. **Inventory and YARA:** Kumade provides structured live inventory and a built-in process-memory YARA engine. Tool A integrates an external YARA-X executable to scan persistence-linked files. Tool B can invoke external inventory/scanning tools through modules (△); this does not imply a bundled engine or managed YARA Forge downloads.
 5. **Commercial use:** This row means no collector license fee for paid third-party engagements, subject to each license. Kumade is RPL-1.5; external memory providers and downloaded rules keep their own terms. Tool B's published terms exclude third-party-network / paid-engagement use, although internal-company, educational and government uses are treated separately.
 6. **Development activity:** This row rates visible **collector-engine** activity as of 2026-11-25: ○ ongoing updates, △ intermittent updates, × no public engine update found within the preceding 12 months. Tool A's latest release reviewed was August 2026; Tool B's published engine changelog ends in December 2022; Tool C's latest release was October 2024; Tool D's latest release was February 2021. Tool B's community collection definitions still receive updates, including November 2026; its × does not mean those definitions or vendor support have ended.
+7. **Hibernation file:** Kumade can collect `hiberfil.sys` with `--hibernation` or the existing broad `--paging` option; both are off by default. Tool A supplies an opt-in paging/hibernation definition that must be loaded. Tool B includes the file in its supplied memory-files target. Tool C has no hibernation-file collection path in its shipped configuration/source. Tool D can use a user-specified path with its raw NTFS collector, but has no dedicated supplied hibernation definition (△). These ratings describe documented configurations; live locked-file acquisition was not benchmarked across the other tools. VSS excludes the hibernation file, so acquire it without `--vss`.
 
 See the **[comparison guide](https://yamato-security.github.io/kumade/tool-comparison/)**
 for capability details and the **[collection benchmarks](#collection-benchmarks)**
