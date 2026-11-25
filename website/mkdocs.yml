@@ -131,6 +131,7 @@ nav:
       - Live-system inventory: live-info.md
       - Live-inventory fields: collection/live-datasets.md
       - RAM and pagefiles: memory-acquisition.md
+      - Hibernation file: hibernation-acquisition.md
       - VSS snapshots: vss.md
       - Process-memory YARA: yara-process-scan.md
       - High-entropy binaries: high-entropy.md

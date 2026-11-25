@@ -136,7 +136,9 @@ pub fn default_artifacts(rules: &Rules, explicit: &[String], paging: bool) -> Ve
         .catalog
         .artifacts
         .iter()
-        .filter(|d| paging || d.id != "windows.paging")
+        // The broad paging family already includes hiberfil.sys. Keep the dedicated
+        // hibernation family opt-in; --hibernation or an explicit ID selects it.
+        .filter(|d| d.id != "windows.hibernation" && (paging || d.id != "windows.paging"))
         .map(|d| d.id.clone())
         .collect()
 }
@@ -248,6 +250,7 @@ fn display_category(s: &str) -> &str {
         "ServerRoles" => "Server role artifacts",
         "OperatingSystem" => "Operating system logs",
         "Paging" => "Paging, swap, hibernation and existing memory dumps",
+        "Hibernation" => "Hibernation file only (hiberfil.sys)",
         "Memory" => "Other memory artifacts",
         _ => s,
     }
@@ -281,7 +284,7 @@ pub fn run<R: BufRead, W: Write>(
     )?;
     writeln!(
         prompt.output,
-        "Physical RAM: opt-in with DumpIt; active pagefiles are copied concurrently by default (--no-memory-pagefile to skip). Paging also includes swap/hibernation and existing dumps."
+        "Physical RAM: opt-in with DumpIt; active pagefiles are copied concurrently by default (--no-memory-pagefile to skip). Hibernation can be selected separately; the broad Paging group also includes it."
     )?;
     if windows
         && live
@@ -334,10 +337,10 @@ pub fn run<R: BufRead, W: Write>(
             continue;
         }
         categories
-            .entry(if d.id == "windows.paging" {
-                "Paging".into()
-            } else {
-                d.category.clone()
+            .entry(match d.id.as_str() {
+                "windows.paging" => "Paging".into(),
+                "windows.hibernation" => "Hibernation".into(),
+                _ => d.category.clone(),
             })
             .or_default()
             .push(d.id.clone());

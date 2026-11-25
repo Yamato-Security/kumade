@@ -8,12 +8,14 @@ Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 ```powershell
 .\kumade.exe collect -o E:\Evidence
 .\kumade.exe collect --yes --volume C: --vss --vhdx E:\Evidence
+.\kumade.exe collect --yes --volume C: --hibernation -o E:\Evidence
 ```
 
 `--yes` selects feature defaults plus explicit flags. It does not enable RAM,
-paging, VSS or scans automatically. Directory (`-o`), VHDX, E01 and SFTP are
+paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01 and SFTP are
 alternative outputs. Read [the wizard](../collection-wizard.md),
-[collection guide](../collection/index.md), [RAM](../memory-acquisition.md)
+[collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
+[hibernation](../hibernation-acquisition.md)
 and [output guide](../output/index.md).
 
 Acquisition defaults to available logical CPUs capped at four. `-T` accepts
@@ -48,6 +50,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Force the collection wizard, including when answers are piped
           --paging
               Include paging, swap, hibernation and existing memory dumps (default: off)
+          --hibernation
+              Include hiberfil.sys without other paging/dump files (default: off)
           --scan-processes
               Scan live process memory after hot disk artifacts (default: off)
           --yara-ruleset <YARA_RULESET>

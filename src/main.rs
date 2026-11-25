@@ -80,6 +80,9 @@ struct CollectionArgs {
     /// Include paging, swap, hibernation and existing memory dumps (default: off)
     #[arg(long)]
     paging: bool,
+    /// Include hiberfil.sys without other paging/dump files (default: off)
+    #[arg(long)]
+    hibernation: bool,
     /// Scan live process memory after hot disk artifacts (default: off)
     #[arg(long, conflicts_with = "sources")]
     scan_processes: bool,
@@ -560,14 +563,28 @@ fn run() -> Result<u8> {
         && !options.yes
         && !options.quiet
         && (options.wizard || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal()));
-    let defaults = kumade::wizard::default_artifacts(&rules, &options.artifacts, options.paging);
+    let mut defaults =
+        kumade::wizard::default_artifacts(&rules, &options.artifacts, options.paging);
+    if options.hibernation {
+        ensure!(
+            rules
+                .catalog
+                .artifacts
+                .iter()
+                .any(|d| d.id == "windows.hibernation"),
+            "--hibernation requires the windows.hibernation family in the selected catalog"
+        );
+        if !defaults.iter().any(|id| id == "windows.hibernation") {
+            defaults.push("windows.hibernation".into());
+        }
+    }
     let mut selected = defaults.clone();
     if interactive {
         if !options.quiet {
             ui::status("Estimating transfer sizes from file and NTFS metadata…");
         }
         // An open scope is sized over the whole catalog so every group has an
-        // estimate; an explicit scope is sized after --paging has been applied.
+        // estimate; an explicit scope is sized after optional family flags have been applied.
         let preflight_ids: &[String] = if options.artifacts.is_empty() {
             &[]
         } else {
@@ -676,7 +693,7 @@ fn run() -> Result<u8> {
             || options.scan_processes
             || options.memory
             || (options.sources.is_empty() && !options.no_live_info),
-        "Nothing selected for collection; use --paging or --artifact to select evidence"
+        "Nothing selected for collection; use --hibernation, --paging or --artifact to select evidence"
     );
     ensure!(
         !options.memory

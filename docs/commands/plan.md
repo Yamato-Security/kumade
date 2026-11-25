@@ -43,6 +43,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Force the collection wizard, including when answers are piped
           --paging
               Include paging, swap, hibernation and existing memory dumps (default: off)
+          --hibernation
+              Include hiberfil.sys without other paging/dump files (default: off)
           --scan-processes
               Scan live process memory after hot disk artifacts (default: off)
           --yara-ruleset <YARA_RULESET>

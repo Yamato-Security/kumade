@@ -6,6 +6,11 @@ It is off by default. The wizard also offers RAM capture, showing the approximat
 physical RAM size. Planning and wizard size estimation read metadata before capture;
 this is not an atomic machine snapshot.
 
+To preserve an existing saved hibernation state as well, select
+`--hibernation` or the `windows.hibernation` family. This copies `hiberfil.sys`
+separately from new RAM capture; it is off by default and is excluded from VSS.
+See [hibernation-file acquisition](hibernation-acquisition.md).
+
 ## Supply the vendor tool separately
 
 Obtain an authorized copy of [Magnet DumpIt](https://www.magnetforensics.com/resources/magnet-dumpit-for-windows/).
