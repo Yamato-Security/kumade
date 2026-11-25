@@ -27,7 +27,7 @@ pub const LABELS: [&str; 10] = [
     "Execution traces",
     "Other forensic artifacts",
     "Bulk user data and caches",
-    "Paging and existing memory dumps",
+    "Paging, hibernation and existing memory dumps",
 ];
 pub fn disk_priority(item: &PlannedFile) -> usize {
     let path = item
@@ -75,7 +75,7 @@ pub fn disk_priority(item: &PlannedFile) -> usize {
         .any(|id| has(id))
     {
         6
-    } else if has("windows.paging") {
+    } else if has("windows.paging") || has("windows.hibernation") {
         9
     } else if [
         "windows.outlook",

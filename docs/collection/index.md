@@ -4,8 +4,10 @@
 
 Kumade uses its embedded [artifact catalogue](catalogue.md) to discover supported
 files across selected local fixed volumes and profiles. Live-system inventory
-is included on a live host. The paging family is off by default; `--paging`
-adds existing pagefile/swap/hibernation/dump artifacts. New RAM capture is a
+is included on a live host. The paging and dedicated hibernation families are off by default; `--paging`
+adds existing pagefile/swap/hibernation/dump artifacts. `--hibernation` adds just
+the hibernation file; see [hibernation acquisition](../hibernation-acquisition.md).
+New RAM capture is a
 separate `--memory` feature with paired active pagefiles on by default.
 
 The default scope does not mean every file on the computer. A catalogue match

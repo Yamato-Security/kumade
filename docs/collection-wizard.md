@@ -33,7 +33,8 @@ without starting collection. Invalid yes/no and numeric answers are reprompted.
 
 | Feature | Default |
 |---|---|
-| Catalogue artifact categories | On, except the paging family |
+| Catalogue artifact categories | On, except the paging and dedicated hibernation families |
+| Hibernation file only | Off; `--hibernation` or explicit `--artifact windows.hibernation` enables it |
 | Paging/swap/hibernation/existing memory dumps | Off; `--paging` or explicit `--artifact windows.paging` enables them |
 | Live inventory | On for live collection, with at most two query workers |
 | Native/raw locked-file reads | Enabled where supported; not an optional integrity shortcut |
@@ -55,6 +56,13 @@ added family as well. The wizard groups only those
 explicitly scoped artifacts when `--artifact` was supplied, preventing an
 explicitly narrow selection from expanding to unrelated artifacts.
 
+`--hibernation` adds the dedicated hibernation family to an explicit scope as
+well. Its separate wizard choice offers `hiberfil.sys` without other paging or
+dump files. The broad Paging group still includes the hibernation file;
+overlapping selections are counted and copied once. See
+[hibernation acquisition](hibernation-acquisition.md) for the VSS exclusion and
+full/reduced-file limitations.
+
 Explicit feature flags become the wizard's initial answers. `--vhdx`/`--e01`
 fix the output mode; otherwise the wizard offers VHDX and E01 with No defaults.
 An explicit `-T` value is the initial worker count and can be adjusted. Offline
@@ -72,6 +80,7 @@ source metadata. These numbers illustrate the display:
 ```text
 Windows event logs (2GiB; 180 files/streams) (Y/n):
 NTFS and file system artifacts (28GiB; 12 files/streams) (Y/n):
+Hibernation file only (hiberfil.sys) (4GiB; 1 files/streams) (y/N):
 Paging, swap, hibernation and existing memory dumps (16GiB; 3 files/streams) (y/N):
 Live system inventory (output size unknown; two query workers) (Y/n):
 VSS (30GiB selected evidence; snapshot growth unknown) (y/N):

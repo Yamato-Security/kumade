@@ -8,6 +8,12 @@
   writer provenance. Keep identical historical versions and never delete
   enumerated snapshots. Older snapshot metadata remains readable.
 
+- Add opt-in `--hibernation`, a dedicated `windows.hibernation` family and a
+  size-estimating wizard choice for `hiberfil.sys`. Preserve existing broad
+  paging selections and deduplicate overlaps. Use verified copying/raw NTFS
+  fallback without changing hibernation settings; document VSS exclusions and
+  full versus reduced hibernation-file limitations.
+
 - Acquire physical RAM first with a separately supplied, hash/architecture-checked
   DumpIt toolkit (`--memory`, `--dumpit`). Disable vendor analytics, validate full
   dump structure/length, hash captured bytes and retain failed/partial captures.

@@ -119,8 +119,10 @@ files or interpret entropy as a malware verdict. See [the guide](high-entropy.md
 
 
 Interactive collection now has a [size-estimating wizard](collection-wizard.md).
-The paging family is off by default; `--paging` or explicit artifact selection
-enables it. `--yes` suppresses prompts for automation. Optional embedded
+The paging and dedicated hibernation families are off by default; `--paging`
+enables the broad paging family, and `--hibernation` adds just `hiberfil.sys`.
+Explicit artifact selection is also supported. See [hibernation acquisition](hibernation-acquisition.md).
+`--yes` suppresses prompts for automation. Optional embedded
 process-memory YARA runs use the existing engine and are sealed with the
 collection, including native container output.
 
