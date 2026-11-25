@@ -59,6 +59,8 @@ enum Command {
     },
     /// List existing local Volume Shadow Copies without creating or deleting them
     ListVss(kumade::vss_history::ListOptions),
+    /// Download or update a compressed YARA Forge rule package
+    UpdateRules(kumade::yara_rules::UpdateOptions),
     /// Discover files and write a plan without copying evidence
     Plan(CollectionArgs),
     /// Receive evidence through a temporary upload-only SFTP account
@@ -88,7 +90,7 @@ struct CollectionArgs {
     /// Scan live process memory after hot disk artifacts (default: off)
     #[arg(long, conflicts_with = "sources")]
     scan_processes: bool,
-    /// YARA Forge package for the optional process scan (default: core)
+    /// YARA Forge package (bundled selection by default, otherwise core)
     #[arg(
         long,
         value_enum,
@@ -96,7 +98,7 @@ struct CollectionArgs {
         conflicts_with = "yara_rules"
     )]
     yara_ruleset: Option<kumade::yara_scan::RuleSet>,
-    /// Use local YARA rules instead of downloading YARA Forge
+    /// Use a local Forge ZIP or YARA source for the process scan
     #[arg(long, requires = "scan_processes")]
     yara_rules: Option<PathBuf>,
     /// YARA Forge release for the process scan (default: latest)
@@ -421,6 +423,10 @@ fn run() -> Result<u8> {
             );
             ui::field("Raw NTFS acquisition", "Available");
             ui::field(
+                "Bundled YARA Forge",
+                kumade::yara_rules::bundle_description(),
+            );
+            ui::field(
                 "Partition imaging",
                 if cfg!(windows) {
                     "forensic-copy; external destination and elevation required"
@@ -473,6 +479,7 @@ fn run() -> Result<u8> {
             }
             return Ok(0);
         }
+        Some(Command::UpdateRules(options)) => return kumade::yara_rules::update(&options),
         Some(Command::ListVss(options)) => return kumade::vss_history::run(&options),
         Some(Command::Verify { directory }) => {
             ui::banner();
@@ -640,9 +647,7 @@ fn run() -> Result<u8> {
             yara_available: options.sources.is_empty()
                 && cfg!(windows)
                 && kumade::yara_scan::check_host().is_ok(),
-            yara_ruleset: options
-                .yara_ruleset
-                .unwrap_or(kumade::yara_scan::RuleSet::Core),
+            yara_ruleset: options.yara_ruleset.unwrap_or_default(),
             output: if options.sftp.sftp.is_some() {
                 kumade::wizard::Output::Sftp
             } else if options.e01.is_some() {
@@ -963,9 +968,7 @@ fn run() -> Result<u8> {
         process_scan: if options.scan_processes {
             Some(kumade::yara_scan::Options {
                 output: PathBuf::new(),
-                ruleset: options
-                    .yara_ruleset
-                    .unwrap_or(kumade::yara_scan::RuleSet::Core),
+                ruleset: options.yara_ruleset.unwrap_or_default(),
                 rules_release: options
                     .yara_release
                     .clone()

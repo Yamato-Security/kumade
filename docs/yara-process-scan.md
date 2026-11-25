@@ -3,7 +3,7 @@
 Run a native-architecture Windows build from an elevated terminal:
 
 ```powershell
-# Default: download YARA Forge Core, scan all processes except this collector.
+# Bundled binaries use their embedded pack offline; the standard build downloads Core.
 .\kumade.exe scan-processes -o .\Yara-Core
 .\kumade.exe scan-processes --ruleset extended --rules-release 20261115 -o .\Yara-Extended
 .\kumade.exe scan-processes --ruleset full --rules-release 20261115 -o .\Yara-Full
@@ -15,16 +15,78 @@ This is opt-in. The standalone command remains available; `collect --scan-proces
 
 ## Rules
 
-Core is the default. Extended and Full include broader hunting rules that require more analyst review and resources. Packages are downloaded over HTTPS only when `--rules` is absent. `--rules-release YYYYMMDD` makes the release selection repeatable; `latest` is convenient but changes over time. Keep `Rules.yar` and its recorded SHA-256 for exact reproducibility. Archives are size limited and only the expected rule member is read; no archive paths are extracted. Local UTF-8 rules have includes disabled, so one supplied rule file cannot cause reads of arbitrary local files. All rules must compile; an error aborts the scan and is saved in `CompilationError.txt`. Warnings are saved in `CompilationWarnings.txt`. Rule console output is suppressed without changing its return value or condition semantics.
+Core is the default. Extended and Full include broader hunting rules that require more analyst review and resources. A matching embedded pack is used offline when `--rules` is absent. Standard binaries download the selected pack; requesting a different set or dated release also downloads that pack over HTTPS. `--rules-release YYYYMMDD` makes the release selection repeatable; `latest` is convenient but changes over time. Keep the original ZIP or bundled executable and the hashes recorded in `RuleSource.json` for reproducibility. Archives are size limited and only the expected rule member is read; no archive paths are extracted. Local UTF-8 rules have includes disabled, so one supplied rule file cannot cause reads of arbitrary local files. All rules must compile; an error aborts the scan and is saved in `CompilationError.txt`. Warnings are saved in `CompilationWarnings.txt`. Rule console output is suppressed without changing its return value or condition semantics.
 
-Kumade does not bundle or relicense Forge rules. The downloaded source retains its individual authors, source URLs and license notices. Review those terms before redistributing a rule pack.
+Optional Core/Extended/Full binaries embed the exact compressed Forge ZIP. Rules retain their individual authors, source URLs and license notices; they are not relicensed under Kumade’s RPL. Bundled releases also provide the unmodified source ZIP and rule-notice metadata as separate assets.
+
+## Compressed/offline rule inputs and updates
+
+Choose an executable ending in `-yara-core.exe`, `-yara-extended.exe` or
+`-yara-full.exe` for offline use. Each contains one complete, compressed ZIP.
+The chosen pack is also that binary's default in the collection wizard. Use
+`doctor` to inspect its exact embedded release and archive hash.
+
+The ZIP member is decompressed **in RAM**, then compiled by Boreal. YARA cannot
+evaluate compressed bytes directly. Kumade does not extract member paths, create
+a rules directory, or write `Rules.yar` while scanning. Normal scan results and
+provenance are still written to the requested results directory.
+
+```powershell
+# Offline collection with a bundled binary:
+.\kumade-0.1.0-win-aarch64-yara-core.exe collect --yes --scan-processes -o E:\Evidence
+
+# Download the latest selected pack as one versioned ZIP:
+.\kumade.exe update-rules --ruleset core -o E:\YaraRules
+.\kumade.exe update-rules --ruleset extended -o E:\YaraRules
+.\kumade.exe update-rules --ruleset full -o E:\YaraRules
+
+# Use the ZIP reported by update-rules (replace the date if newer):
+.\kumade.exe scan-processes --rules E:\YaraRules\yara-forge-rules-full-20261122.zip -o E:\YaraResults
+.\kumade.exe collect --yes --scan-processes --yara-rules E:\YaraRules\yara-forge-rules-full-20261122.zip -o E:\Evidence
+```
+
+`--rules` / `--yara-rules` accepts either one official Forge ZIP or local UTF-8
+YARA source. The ZIP's ruleset is identified from its expected member path;
+archives with multiple/mismatching packs or duplicate rule members are refused.
+Includes stay disabled. Explicit local inputs take precedence over embedded rules.
+No rule directories beside the executable or in the working directory are
+silently loaded.
+
+`update-rules` works on the analyst's machine as well as Windows. Without `-o`,
+it writes to `YaraRules` beside the executable; choose another destination if
+that location is read-only. It resolves `latest` once, checks the download size
+and GitHub release-asset SHA-256, validates the archive and compiles every rule
+before saving it. Hash checking detects corruption and disagreement with release
+metadata; it does not independently authenticate the rule authors. Failed updates
+leave existing packs intact. Matching existing ZIPs are reused; different contents
+under an existing versioned name are never overwritten. Older versions remain.
+
+Updating does not rewrite the executable or automatically select a local file.
+Use the exact ZIP path printed by the command. An embedded pack stays at its
+recorded release until a newer bundled executable is downloaded. The word
+`latest` in a scan's default options does not force a matching embedded pack to
+contact the network.
+
+## Building bundled binaries
+
+The **Release packages** workflow can build the standard executable plus all
+three Forge variants for Windows x86, x64 and ARM64. Enable `bundle_rules` and
+select a date tag or `latest`; one resolved tag is used across every platform.
+Each executable download also has a ZIP containing only that executable.
+
+For a local build, run `scripts/prepare_yara_bundle.py --ruleset core --release
+20261122 --output <DIR>`, set `KUMADE_YARA_FORGE_ZIP`,
+`KUMADE_YARA_FORGE_RELEASE` and `KUMADE_YARA_FORGE_SHA256` from its output, and
+build with `cargo build --release --features bundled-yara-core`. Replace `core`
+with `extended` or `full` consistently. Features are mutually exclusive. Builds
+verify the archive hash before embedding it and never download during compilation.
 
 ## Results
 
 - `YaraDetections.csv` / `.jsonl`: one row per matching process/rule. Includes hostname, PID, verified image path, process creation time, rule/tags/metadata and up to 16 pattern/address/length/XOR-key locations (one first occurrence per pattern, so an early frequent pattern does not hide later patterns). XOR key 0 indicates no XOR transformation for that match. Raw process bytes are not saved.
 - `YaraProcesses.csv` / `.jsonl`: every selected/enumerated process, including failures, exits, timeouts and the collector exclusion. Read counts/bytes include module refetches, not unique memory coverage. Guard regions are explicitly counted and excluded.
 - `Summary.json`: completion marker, rule/source hashes, counts, compilation/scan/total elapsed time, collector CPU seconds and peak working set (including rule compilation). `RunStarted.json` without `Summary.json` indicates an interrupted or failed run. Tables can be empty while still containing CSV headers.
-- `Rules.yar`: exact rule source used. No sensitive process bytes are stored in it.
+- `RuleSource.json`: input kind, pack/release, origin, archive SHA-256 and expanded rule-source SHA-256. Expanded rule source is not written to disk.
 
 `Scanned` means the eligible readable pages were scanned under the recorded limits, not that the process is safe. `Partial` retains any rule matches already returned by the engine while recording read failures, deadline expiration or target exit. `Failed` means a process could not be opened/identified/scanned. Exit 0 means all in-scope processes completed, not that no rules matched. Exit 3 indicates incomplete process coverage; exit 2 indicates a setup, compile or output error. Matches alone do not change the exit code.
 

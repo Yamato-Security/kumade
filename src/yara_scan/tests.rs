@@ -27,7 +27,7 @@ fn invalid_release_cannot_change_download_host_or_path() {
 #[test]
 fn bounded_reads_and_wrong_zip_are_rejected() {
     assert!(read_bounded(&b"1234"[..], 3).is_err());
-    assert!(archive_source(b"invalid".to_vec(), RuleSet::Core).is_err());
+    assert!(archive_source(b"invalid", RuleSet::Core).is_err());
 }
 #[test]
 fn no_silent_compile_skips_and_no_includes() {
@@ -88,6 +88,10 @@ fn partial_accounting_outputs_and_empty_csv_headers() {
         serde_json::from_slice(&fs::read(out.join("Summary.json")).unwrap()).unwrap();
     assert_eq!(summary["Incomplete"], 1);
     assert_eq!(summary["Status"], "Partial");
+    assert!(!out.join("Rules.yar").exists());
+    let source: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("RuleSource.json")).unwrap()).unwrap();
+    assert_eq!(source["Kind"], "LocalSource");
     assert!(
         fs::read_to_string(out.join("YaraDetections.csv"))
             .unwrap()

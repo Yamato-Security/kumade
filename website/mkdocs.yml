@@ -122,6 +122,7 @@ nav:
       - plan: commands/plan.md
       - receive: commands/receive.md
       - scan-processes: commands/scan-processes.md
+      - update-rules: commands/update-rules.md
       - verify: commands/verify.md
       - verify-delivery: commands/verify-delivery.md
   - Collection:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Load local or bundled YARA Forge ZIPs directly into memory without expanded
+  rule files on the target. Add `update-rules` with Core/Extended/Full selection,
+  pinned release metadata/hash validation and versioned non-clobbering ZIPs.
+  Build optional offline ruleset variants for Windows x86, x64 and ARM64;
+  preserve compressed source and rule notices as separate release assets.
+
 - Add `list-vss` and opt-in `--vss-existing` collection from existing local
   snapshots. Support all/newest/newest-N-per-volume/GUID selection, structured
   listings, distinct historical source roots and explicit ownership/unknown

@@ -20,6 +20,7 @@ Commands:
   live-info        Capture live Windows response inventory without copying forensic artifacts
   list             List the embedded or explicitly selected acquisition catalog
   list-vss         List existing local Volume Shadow Copies without creating or deleting them
+  update-rules     Download or update a compressed YARA Forge rule package
   plan             Discover files and write a plan without copying evidence
   receive          Receive evidence through a temporary upload-only SFTP account
   verify-delivery  Verify an SFTP delivery locally and optionally reconstruct files
@@ -39,9 +40,9 @@ Options:
       --scan-processes
           Scan live process memory after hot disk artifacts (default: off)
       --yara-ruleset <YARA_RULESET>
-          YARA Forge package for the optional process scan (default: core) [possible values: core, extended, full]
+          YARA Forge package (bundled selection by default, otherwise core) [possible values: core, extended, full]
       --yara-rules <YARA_RULES>
-          Use local YARA rules instead of downloading YARA Forge
+          Use a local Forge ZIP or YARA source for the process scan
       --yara-release <YARA_RELEASE>
           YARA Forge release for the process scan (default: latest)
   -d, --source <DIR>

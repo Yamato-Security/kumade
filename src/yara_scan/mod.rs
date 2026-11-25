@@ -14,7 +14,7 @@ use serde::Serialize;
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{BufWriter, Cursor, Read, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -22,27 +22,12 @@ use std::{
 #[cfg(windows)]
 mod windows;
 
-const MAX_ARCHIVE: u64 = 64 * 1024 * 1024;
-const MAX_RULES: u64 = 128 * 1024 * 1024;
+pub use crate::yara_rules::RuleSet;
+use crate::yara_rules::rule_url;
+#[cfg(test)]
+use crate::yara_rules::{archive_source, read_bounded};
 const MAX_SAMPLES: usize = 16;
 
-#[derive(Clone, Copy, Debug, Default, ValueEnum, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RuleSet {
-    #[default]
-    Core,
-    Extended,
-    Full,
-}
-impl RuleSet {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Core => "core",
-            Self::Extended => "extended",
-            Self::Full => "full",
-        }
-    }
-}
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum Format {
     #[default]
@@ -55,13 +40,13 @@ pub struct Options {
     /// New result directory (existing directories are refused)
     #[arg(short, long, value_name = "DIR")]
     pub output: PathBuf,
-    /// YARA Forge package to download (default: core)
-    #[arg(long, value_enum, default_value = "core", conflicts_with = "rules")]
+    /// YARA Forge package (bundled selection by default, otherwise core)
+    #[arg(long, value_enum, default_value_t, conflicts_with = "rules")]
     pub ruleset: RuleSet,
     /// Forge release tag YYYYMMDD, or latest
     #[arg(long, default_value = "latest", conflicts_with = "rules")]
     pub rules_release: String,
-    /// Local UTF-8 YARA source, used without network access (includes disabled)
+    /// Local Forge ZIP or UTF-8 YARA source (offline; includes disabled)
     #[arg(long, value_name = "FILE")]
     pub rules: Option<PathBuf>,
     /// Result table format
@@ -206,68 +191,12 @@ pub fn detections(
     }).collect()
 }
 
-fn read_bounded(mut reader: impl Read, limit: u64) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.by_ref().take(limit + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= limit,
-        "Rule download/source exceeds size limit"
-    );
-    Ok(bytes)
-}
-fn archive_source(bytes: Vec<u8>, set: RuleSet) -> Result<Vec<u8>> {
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).context("Invalid Forge ZIP")?;
-    // Read a single exact member into memory; no archive-controlled extraction paths.
-    let expected = format!("packages/{}/yara-rules-{}.yar", set.name(), set.name());
-    let file = zip
-        .by_name(&expected)
-        .context("Forge archive lacks expected rule member")?;
-    ensure!(file.size() <= MAX_RULES, "Forge rule source is too large");
-    read_bounded(file, MAX_RULES)
-}
-fn rule_url(set: RuleSet, release: &str) -> Result<String> {
-    ensure!(
-        release == "latest" || (release.len() == 8 && release.bytes().all(|b| b.is_ascii_digit())),
-        "--rules-release must be latest or an eight-digit tag such as 20261115"
-    );
-    let base = if release == "latest" {
-        "https://github.com/YARAHQ/yara-forge/releases/latest/download".to_string()
-    } else {
-        format!("https://github.com/YARAHQ/yara-forge/releases/download/{release}")
-    };
-    Ok(format!("{base}/yara-forge-rules-{}.zip", set.name()))
-}
-fn load_rules(options: &Options) -> Result<(String, String)> {
-    let (data, provenance) = if let Some(path) = &options.rules {
-        (
-            read_bounded(
-                File::open(path).context("Cannot open local rules")?,
-                MAX_RULES,
-            )?,
-            "Local source".into(),
-        )
-    } else {
-        let url = rule_url(options.ruleset, &options.rules_release)?;
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .https_only(true)
-            .timeout_global(Some(Duration::from_secs(120)))
-            .build()
-            .into();
-        let mut response = agent
-            .get(&url)
-            .call()
-            .context("Cannot download YARA Forge rules (use --rules for offline scanning)")?;
-        let data = read_bounded(response.body_mut().as_reader(), MAX_ARCHIVE)?;
-        let archive_hash = crate::model::sha256(&data);
-        (
-            archive_source(data, options.ruleset)?,
-            format!("{url}\nArchiveSHA256: {archive_hash}"),
-        )
-    };
-    Ok((
-        String::from_utf8(data).context("Rules must be UTF-8")?,
-        provenance,
-    ))
+fn load_rules(options: &Options) -> Result<crate::yara_rules::Loaded> {
+    crate::yara_rules::load(
+        options.rules.as_deref(),
+        options.ruleset,
+        &options.rules_release,
+    )
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -397,8 +326,14 @@ fn run_with(
         &options.output.join("RunStarted.json"),
         b"{\"Status\":\"Started\",\"CompletionMarker\":\"Summary.json\"}\n",
     )?;
-    let (source, provenance) = load_rules(options)?;
-    write_new(&options.output.join("Rules.yar"), source.as_bytes())?;
+    let loaded = load_rules(options)?;
+    let source = loaded.source;
+    let provenance = loaded.provenance;
+    // Rule source is compiled in memory; do not write expanded signatures on a target.
+    write_new(
+        &options.output.join("RuleSource.json"),
+        &serde_json::to_vec_pretty(&provenance)?,
+    )?;
     let source_hash = crate::model::sha256(source.as_bytes());
     let compile_start = Instant::now();
     let (scanner, warnings) =
@@ -506,7 +441,7 @@ fn run_with(
     let summary = serde_json::json!({
         "Status": if incomplete == 0 {"Finished"} else {"Partial"},
         "SeDebugPrivilege":privilege,"CompilationWarnings":warnings.len(),"Engine":"boreal", "EngineVersion":"1.4.0", "KumadeVersion":env!("CARGO_PKG_VERSION"),
-        "RuleSet": if options.rules.is_some() {"local"} else {options.ruleset.name()}, "RulesRelease":if options.rules.is_some() {None} else {Some(&options.rules_release)},
+        "RuleSet":provenance.ruleset, "RulesRelease":provenance.release,
         "RuleSource":provenance,"RulesSHA256":source_hash,"Rules":rules,"PublicRules":public_rules,"MaxMatchesPerPattern":1000,
         "Processes":process_rows.len(),"Scanned":succeeded,"Incomplete":incomplete,
         "Skipped":process_rows.iter().filter(|p| p.status=="Skipped").count(),

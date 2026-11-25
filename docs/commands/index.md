@@ -13,6 +13,7 @@ Run `kumade.exe --help` for the root menu, or `kumade.exe COMMAND --help` for a 
 | [`plan`](plan.md) | Inspect scope and size estimates |
 | [`receive`](receive.md) | Receive upload-only SFTP evidence |
 | [`scan-processes`](scan-processes.md) | Hunt in live process memory |
+| [`update-rules`](update-rules.md) | Download compressed YARA Forge rules |
 | [`verify`](verify.md) | Check a retained local collection |
 | [`verify-delivery`](verify-delivery.md) | Verify or restore an SFTP delivery |
 

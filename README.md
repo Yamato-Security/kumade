@@ -347,6 +347,23 @@ own licenses; see [fixture provenance](tests/fixtures/SOURCES.md).
 
 Use `kumade scan-processes -o Yara-Results` for an opt-in live memory scan with YARA Forge Core (default), Extended, Full or local rules. See [process-memory scanning](docs/yara-process-scan.md) for options, coverage/error reporting and interpretation limits.
 
+## Offline YARA Forge packages
+
+Optional Windows executables ending in `-yara-core.exe`, `-yara-extended.exe`
+or `-yara-full.exe` contain that compressed ruleset and scan without extracting
+rules onto the target. Decompression and compilation happen in memory. The
+standard executable also accepts Forge ZIPs with `--rules` / `--yara-rules`.
+
+```powershell
+kumade update-rules --ruleset core -o E:\YaraRules
+kumade update-rules --ruleset extended -o E:\YaraRules
+kumade update-rules --ruleset full -o E:\YaraRules
+```
+
+Updates stay in versioned ZIP files. Use the ZIP path printed by the command;
+the bundled executable is not rewritten. See the [YARA guide](docs/yara-process-scan.md)
+for offline use, provenance, build variants and rule licensing.
+
 ## Remote SFTP delivery
 
 Start a built-in receiver with `kumade receive --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. It generates temporary upload-only credentials and verifies received evidence automatically. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).

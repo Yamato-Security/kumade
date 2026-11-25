@@ -414,7 +414,7 @@ pub fn run<R: BufRead, W: Write>(
         if choices.yara && !choices.local_yara {
             writeln!(
                 prompt.output,
-                "YARA Forge rules are downloaded: 1. Core  2. Extended  3. Full"
+                "YARA Forge: 1. Core  2. Extended  3. Full (matching bundled pack uses no network)"
             )?;
             let default = match choices.yara_ruleset {
                 crate::yara_scan::RuleSet::Core => 1,
