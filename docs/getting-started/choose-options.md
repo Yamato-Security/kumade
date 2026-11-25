@@ -7,6 +7,7 @@
 | Normal unattended artifact collection | `collect --yes -o E:\Evidence` | [First collection](first-collection.md) |
 | Current host state only | `live-info -o E:\Live-Inventory` | [Live inventory](../live-info.md) |
 | Select a single disk family | `collect --yes --artifact windows.prefetch -o E:\Evidence` | [Catalogue](../collection/catalogue.md) |
+| Add the hibernation file | `collect --yes --hibernation -o E:\Evidence` | [Hibernation](../hibernation-acquisition.md) |
 | Read selected artifacts from a snapshot | `collect --yes --vss --volume C: -o E:\Evidence` | [VSS](../vss.md) |
 | Acquire new RAM and active pagefiles | `collect --yes --memory --dumpit E:\Tools\DumpIt -o E:\Evidence` | [RAM](../memory-acquisition.md) |
 | Native NTFS container | `collect --yes --vhdx E:\Evidence` | [VHDX](../vhdx-output.md) |

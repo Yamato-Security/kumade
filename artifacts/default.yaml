@@ -157,6 +157,11 @@ Artifacts:
     Name: SQL log and configuration stores in standard installation paths
     Category: ServerRoles
     Patterns: ['Program Files/Microsoft SQL Server/**/Log/**', 'Program Files/Microsoft SQL Server/**/Binn/*.ini', 'Program Files (x86)/Microsoft SQL Server/**/Log/**']
+  - Id: windows.hibernation
+    Name: Hibernation file
+    Category: Memory
+    Patterns: ['hiberfil.sys']
+    RawPaths: ['hiberfil.sys']
   - Id: windows.paging
     Name: Paging, swap, hibernation and existing memory dump files
     Category: Memory

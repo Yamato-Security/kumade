@@ -24,7 +24,7 @@ def catalogue():
              f"Kumade currently ships **{len(data['Artifacts'])} acquisition families**. This reference is generated from "
              '[the embedded catalogue](https://github.com/Yamato-Security/kumade/blob/main/artifacts/default.yaml) on every documentation build.', '',
              'A family is a set of collection paths, not a parser or a promise that every host contains those files. '
-             'All shipped families are selected by default except `windows.paging`. RAM capture, live inventory, entropy discovery and YARA are separate features.', '',
+             'All shipped families are selected by default except `windows.paging` and `windows.hibernation`. RAM capture, live inventory, entropy discovery and YARA are separate features.', '',
              '## How to read the paths', '',
              '- **Volume** paths are relative to each selected volume root, for example `Windows/Prefetch/**`.',
              '- **Profile** paths are relative to each discovered profile, including applicable service profiles. They are not restricted to the logged-on user.',
@@ -46,6 +46,10 @@ def catalogue():
             if item['Id'] == 'windows.paging':
                 lines += ['', 'Off by default. Add `--paging` or select `--artifact windows.paging`. '
                           'This is distinct from the active pagefiles paired with a new `--memory` capture.']
+            if item['Id'] == 'windows.hibernation':
+                lines += ['', 'Off by default. Add `--hibernation` or select `--artifact windows.hibernation`. '
+                          'The broad paging family also includes this file; overlapping selections are deduplicated. '
+                          'See [hibernation acquisition](../hibernation-acquisition.md) for VSS and saved-memory limitations.']
             lines += ['']
     return '\n'.join(lines)
 

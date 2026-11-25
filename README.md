@@ -66,6 +66,8 @@ for Kumade's measurements.
 
 - Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. `--yes` accepts defaults without prompts for automation; `--paging` opts into large paging/hibernation/existing dump files.
 
+- Optional [hibernation-file acquisition](docs/hibernation-acquisition.md): `--hibernation` adds `hiberfil.sys` without enabling other paging/dump files. The dedicated wizard choice shows its estimated size; existing broad `--paging` selections keep their scope. Uses verified copying and raw NTFS fallback without changing Windows power settings.
+
 - Optional [high-entropy binary collection](docs/high-entropy.md): `--high-entropy` scans selected source drives for PE executable-section packing candidates, copies them through normal acquisition, and records sealed CSV/JSONL analysis with source hashes.
 
 - Optional [VSS acquisition](docs/vss.md) with `--vss`: owned crash-consistent snapshots for locked-file collection and partition imaging, snapshot provenance and automatic cleanup. `--volume C:` selects live collection volumes.
@@ -74,7 +76,7 @@ for Kumade's measurements.
 
 - [Live-response inventory](docs/live-info.md): 59 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.
 
-- Embedded acquisition catalog with 43 artifact families, including event logs,
+- Embedded acquisition catalog with 44 artifact families, including event logs,
   registry, Prefetch, Jump Lists, SRUM recovery families, browsers, Outlook,
   local GPO/SYSVOL, Defender and standard paging-file locations.
 - Offline collection from Windows volume directories on Linux, macOS and Windows.
