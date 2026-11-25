@@ -1,0 +1,157 @@
+site_name: Kumade
+site_description: Windows evidence collection, live response, RAM acquisition and verified SFTP delivery by Yamato Security.
+site_author: Yamato Security
+site_url: https://yamato-security.github.io/kumade/
+repo_url: https://github.com/Yamato-Security/kumade
+repo_name: Yamato-Security/kumade
+edit_uri: ''
+copyright: Copyright &copy; 2026 Shirofune Security Co., Ltd.
+docs_dir: ../docs
+site_dir: site
+watch:
+  - ../art
+  - ../artifacts
+  - ../src/live_info/datasets.json
+  - ../CHANGELOG.md
+hooks:
+  - scripts/site_content.py
+theme:
+  name: material
+  language: en
+  logo: assets/kumade-logo.png
+  favicon: assets/kumade-logo.png
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.tooltips
+extra_css:
+  - stylesheets/extra.css
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+plugins:
+  - search:
+      lang: en
+validation:
+  nav:
+    not_found: warn
+    omitted_files: info
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Yamato-Security/kumade
+      name: Kumade on GitHub
+    - icon: fontawesome/brands/x-twitter
+      link: https://twitter.com/SecurityYamato
+      name: Yamato Security on X
+nav:
+  - Home: index.md
+  - Overview:
+      - About Kumade: overview/index.md
+      - Capabilities and limits: overview/capabilities.md
+      - Acquisition order: acquisition-order.md
+      - Implementation status: implementation-status.md
+      - Changelog: overview/changelog.md
+  - Getting Started:
+      - Install Kumade: getting-started/index.md
+      - First collection: getting-started/first-collection.md
+      - Choose a collection: getting-started/choose-options.md
+      - Collection wizard: collection-wizard.md
+      - Build from source: getting-started/build.md
+      - Troubleshooting: getting-started/troubleshooting.md
+  - Commands:
+      - Command list: commands/index.md
+      - collect: commands/collect.md
+      - doctor: commands/doctor.md
+      - forensic-copy: commands/forensic-copy.md
+      - list: commands/list.md
+      - live-info: commands/live-info.md
+      - plan: commands/plan.md
+      - receive: commands/receive.md
+      - scan-processes: commands/scan-processes.md
+      - verify: commands/verify.md
+      - verify-delivery: commands/verify-delivery.md
+  - Collection:
+      - Collection guide: collection/index.md
+      - Artifact catalogue: collection/catalogue.md
+      - Locked files and NTFS: collection/locked-files.md
+      - Offline directories: collection/offline.md
+      - Live-system inventory: live-info.md
+      - Live-inventory fields: collection/live-datasets.md
+      - RAM and pagefiles: memory-acquisition.md
+      - VSS snapshots: vss.md
+      - Process-memory YARA: yara-process-scan.md
+      - High-entropy binaries: high-entropy.md
+      - Partition imaging: forensic-copy.md
+  - Output:
+      - Output guide: output/index.md
+      - Directory layout: output/directory.md
+      - NTFS VHDX: vhdx-output.md
+      - Compressed E01: e01-output.md
+      - SFTP delivery: SFTP.md
+      - Built-in SFTP receiver: SFTP-Receiver.md
+      - Manifests and verification: output/verification.md
+      - Analyze the collection: output/analysis.md
+  - Benchmarks:
+      - Performance overview: benchmarks/index.md
+      - Collection options: benchmarks/2026-11-25/README.md
+      - Combined scans and SFTP: benchmarks/2026-11-25/Kumade-Combined-Scans-SFTP-Benchmarks.md
+      - Validation history: testing.md
+  - Resources:
+      - Further reading: resources/index.md
+      - Acknowledgements: resources/acknowledgements.md
+      - Development: resources/development.md
+      - Architecture proposal: architecture.md
+      - Reference-tool comparison: tool-comparison.md
+      - License: resources/license.md

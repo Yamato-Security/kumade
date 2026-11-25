@@ -1,0 +1,35 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+Receive evidence through a temporary upload-only SFTP account
+
+Usage: kumade receive [OPTIONS] --output <OUTPUT>
+
+Options:
+      --listen <LISTEN>
+          Bind address (explicitly select a network interface for remote collection) [default: 127.0.0.1:2222]
+  -o, --output <OUTPUT>
+          Evidence parent; creates a new protected session directory
+      --expires <EXPIRES>
+          Credential lifetime: seconds, or a suffix s/m/h (maximum: 7 days) [default: 2h]
+      --max-gib <MAX_GIB>
+          Maximum stored upload bytes in GiB (compressed bytes) [default: 100]
+      --max-decoded-gib <MAX_DECODED_GIB>
+          Maximum total decoded bytes during readback in GiB [default: 1024]
+      --max-files <MAX_FILES>
+          Maximum number of upload objects, including journals and probes [default: 100000]
+      --max-connections <MAX_CONNECTIONS>
+          Maximum simultaneous SSH connections (authenticated or not) [default: 8]
+      --allow-ip <ALLOW_IPS>
+          Accept connections only from these exact IP addresses; repeat
+      --reserve-mib <RESERVE_MIB>
+          Keep this much free disk space in MiB [default: 2048]
+  -h, --help
+          Print help

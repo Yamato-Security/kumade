@@ -11,3 +11,7 @@
 *.dmp
 
 __pycache__/
+
+# Local documentation tooling and generated HTML.
+/.venv-docs/
+/website/site/

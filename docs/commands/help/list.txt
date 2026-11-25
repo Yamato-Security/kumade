@@ -1,0 +1,17 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+List the embedded or explicitly selected acquisition catalog
+
+Usage: kumade list [OPTIONS]
+
+Options:
+      --catalog <CATALOG>
+  -h, --help               Print help

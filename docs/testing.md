@@ -1,6 +1,9 @@
 # Local validation
 
-Validation date: 18 November 2026. Version: `0.1.0`.
+This page retains dated validation history for version `0.1.0`, beginning on
+18 November 2026. Later live tests and [38 measured benchmark runs](benchmarks/index.md)
+cover additional capabilities. Treat the initial results below as historical
+scope, not a statement that subsequently implemented features are still absent.
 
 ## VHDX metadata round trips (19 November 2026)
 
@@ -88,9 +91,9 @@ The following sections retain the initial release validation for context.
   required. This is an import-table check, not a Windows runtime test.
 
 The release workflow builds Windows x86 (32-bit), x64 and ARM64 packages with Rust 1.100.0
-and the locked dependency versions. CI runs on Windows only (x64 natively and
-x86 through WOW64); Kumade targets Windows, so Linux and macOS are not built in
-CI. The libewf-based E01 oracle (`KUMADE_EWFVERIFY`, see
+and the locked dependency versions. CI includes native Windows x64, x86 through WOW64, and Ubuntu OpenSSH/SFTP
+receiver tests. Published collector packages target Windows; macOS is not a
+release-build CI target. The libewf-based E01 oracle (`KUMADE_EWFVERIFY`, see
 [E01 output](e01-output.md)) remains a local check. Windows ARM64 is cross-built. Windows MSVC
 packages statically link the C runtime. Windows x86 tests run on the x64 Windows
 runner through WOW64; this does not qualify live acquisition on a native 32-bit
@@ -151,8 +154,10 @@ above now cover several of those gaps. Broader controlled-system testing remains
 necessary before production use: privilege
 adjustment, device geometry, locked hives/event logs, access-denied directories,
 long names, destination ACLs and FAT/exFAT behavior all need live qualification.
-Memory, VSS and cloud providers are not implemented and are not counted as
-successful acquisition capabilities.
+The initial release did not implement RAM/VSS providers. Current source now
+implements external DumpIt, paired pagefiles, owned VSS and SFTP delivery;
+see the feature guides and [later benchmark conditions](benchmarks/index.md).
+Cloud upload remains unimplemented. Broader platform qualification is still required.
 
 Rust also reports a future-compatibility warning for transitive dependency
 `binrw 0.11.3` through `ntfs 0.4`; current checks and builds succeed.
