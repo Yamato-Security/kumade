@@ -4,7 +4,7 @@
 
 **Language:** Rust, edition 2024. **License:** Reciprocal Public License 1.5 (`RPL-1.5`), matching current Juntei. **Initial platform:** Windows. **Initial destination:** local disk or an explicitly selected network share. **Future destinations:** S3-compatible storage, Azure Blob Storage and other approved cloud backends.
 
-This document describes the target design. The initial implementation is available; [implementation status](implementation-status.md) distinguishes its current features from planned capabilities. Parity with the reference tools has not been demonstrated. The accompanying [tool comparison](tool-comparison.md) documents the researched projects, their strengths, limitations, licensing and reviewed revisions.
+This document describes the target design. The initial implementation is available; [implementation status](implementation-status.md) distinguishes its current features from planned capabilities. Parity with the reference tools has not been demonstrated. The [collector comparison](tool-comparison.md) summarizes current documented capabilities and qualifications using anonymized tool labels.
 
 ## 1. Product definition
 

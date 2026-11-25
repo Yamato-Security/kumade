@@ -99,6 +99,7 @@ nav:
   - Home: index.md
   - Overview:
       - About Kumade: overview/index.md
+      - Collector comparison: tool-comparison.md
       - Capabilities and limits: overview/capabilities.md
       - Acquisition order: acquisition-order.md
       - Implementation status: implementation-status.md
@@ -153,5 +154,4 @@ nav:
       - Acknowledgements: resources/acknowledgements.md
       - Development: resources/development.md
       - Architecture proposal: architecture.md
-      - Reference-tool comparison: tool-comparison.md
       - License: resources/license.md
