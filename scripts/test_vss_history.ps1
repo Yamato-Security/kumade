@@ -87,7 +87,10 @@ assign
     $snapshotIds += New-TestSnapshot
     [IO.File]::WriteAllText($evidence, 'current-version-C')
 
-    $listing = @(Invoke-Kumade -Arguments @('list-vss','--volume',$volume,'-t','json') | ConvertFrom-Json)
+    $json = Invoke-Kumade -Arguments @('list-vss','--volume',$volume,'-t','json')
+    [IO.File]::WriteAllText((Join-Path $WorkDirectory 'Snapshots.json'), $json)
+    $listing = $json | ConvertFrom-Json
+    $listing = @($listing)
     if ($listing.Count -ne 2) { throw "Expected two historical snapshots, got $($listing.Count)" }
     foreach ($id in $snapshotIds) {
         $row = @($listing | Where-Object SnapshotId -eq $id)
@@ -124,7 +127,8 @@ assign
             if (@($rows | Where-Object {$_.SourcePath -like '*UNCHANGED.pf'}).Count -ne 3) { throw 'Identical historical versions were omitted' }
             if (@($rows | Where-Object {$_.SourcePath -like '*DELETED.pf'}).Count -ne 1) { throw 'Deleted historical evidence was lost' }
         }
-        $after = @(Invoke-Kumade -Arguments @('list-vss','--volume',$volume,'-t','json') | ConvertFrom-Json)
+        $after = Invoke-Kumade -Arguments @('list-vss','--volume',$volume,'-t','json') | ConvertFrom-Json
+        $after = @($after)
         if ($after.Count -ne 2) { throw 'Collection created a residual snapshot or removed historical evidence' }
         foreach ($id in $snapshotIds) { if ($after.SnapshotId -notcontains $id) { throw 'Historical snapshot was deleted' } }
         $cases += @{Case=$test.Name; Payloads=$rows.Count; HistoricalSources=$historical.Count; Verified=$true}
