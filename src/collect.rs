@@ -505,11 +505,11 @@ impl Journal {
             self.errors.serialize(r)?;
             self.errors.flush()?;
         }
+        // Preserve the local observation even if its remote checkpoint fails.
+        self.json.get_ref().sync_data()?;
         if let Some(target) = &self.remote {
             target.checkpoint(r)?;
         }
-        // The append is durable before this task is considered journaled.
-        self.json.get_ref().sync_data()?;
         Ok(())
     }
     fn finish(&mut self) -> Result<()> {
@@ -906,7 +906,7 @@ pub fn collect_with_capacity(
                                 if let Err(e) = j.append(&record)
                                     && let Ok(mut v) = journal_errors.lock()
                                 {
-                                    v.push(e.to_string());
+                                    v.push(format!("{e:#}"));
                                 }
                             }
                             Err(e) => {
@@ -1365,7 +1365,18 @@ pub(crate) fn commit_payload(from: &Path, to: &Path) -> Result<()> {
         );
         Ok(())
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        // SAFETY: both paths are NUL-terminated; RENAME_EXCL refuses existing destinations.
+        if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } != 0 {
+            return Err(io::Error::last_os_error()).context("Cannot exclusively commit payload");
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         fs::hard_link(from, to)
             .context("Destination must support exclusive hard-link commits on this platform")?;

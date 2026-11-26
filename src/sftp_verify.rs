@@ -400,12 +400,15 @@ fn verify_objects(
                 && !matches!(source, Source::Local(root) if path.starts_with(root) || root.starts_with(&path)),
             "Restore directory must be new and outside incoming"
         );
-        fs::create_dir(&path)?;
+        let parent = path.parent().context("Missing restore parent")?;
+        let staged = tempfile::Builder::new()
+            .prefix(".kumade-unverified-")
+            .tempdir_in(parent)?;
         ensure!(
-            platform::protect_output_root(&path)? != "FilesystemHasNoPersistentACLs",
+            platform::protect_output_root(staged.path())? != "FilesystemHasNoPersistentACLs",
             "Restore requires access controls"
         );
-        Some(platform::canonicalize(&path)?)
+        Some((staged, path))
     } else {
         None
     };
@@ -419,7 +422,8 @@ fn verify_objects(
         let mut buffer = vec![0u8; 1024 * 1024];
         let mut hash = Sha256::new();
         let mut total = 0u64;
-        let mut output = if let Some(root) = &restore {
+        let mut output = if let Some((staged, _)) = &restore {
+            let root = staged.path();
             let path =
                 root.join(relative(&object.relative_path)?.join(std::path::MAIN_SEPARATOR_STR));
             let parent = path.parent().context("Missing output parent")?;
@@ -641,6 +645,28 @@ fn verify_objects(
             && summary.bytes_acquired == bytes,
         "Summary counters differ from records"
     );
+    if let Some((staged, destination)) = restore {
+        // Publish only after every object, the manifest and the summary have verified.
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        {
+            collect::commit_payload(staged.path(), &destination)
+                .context("Cannot publish verified restore directory")?;
+            let _ = staged.keep();
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            // Directory hard links cannot implement the exclusive-rename fallback.
+            fs::create_dir(&destination)?;
+            ensure!(
+                platform::protect_output_root(&destination)? != "FilesystemHasNoPersistentACLs",
+                "Restore requires access controls"
+            );
+            for entry in fs::read_dir(staged.path())? {
+                let entry = entry?;
+                fs::rename(entry.path(), destination.join(entry.file_name()))?;
+            }
+        }
+    }
     Ok(Receipt{schema_version:1,kind:match source { Source::Local(_) => "KumadeTrustedSftpReadback", Source::S3(_) => "KumadeTrustedS3Readback" }.into(),version:env!("CARGO_PKG_VERSION").into(),verified_utc:utc_now(),delivery_id:delivery.delivery_id,delivery_sha256:expected_hash.into(),collection_name:delivery.collection_name,objects_verified:delivery.objects.len(),payload_records_verified:count,stored_bytes,logical_bytes,payload_hashes_verified:true,acquisition_state:if summary.completeness=="PendingServerReadbackVerification"{"CompleteWithinSelectedPrototypeScope".into()}else{"Partial".into()},collector_acquisition_state:summary.completeness,limitations:vec!["Readback integrity does not establish source authenticity or acquisition completeness. Compare DeliverySHA256 with the collector over a trusted channel.".into(),"Source timestamps/ACLs and named streams remain inventories/exports, not native metadata restoration.".into()]})
 }
 

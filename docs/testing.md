@@ -157,7 +157,7 @@ long names, destination ACLs and FAT/exFAT behavior all need live qualification.
 The initial release did not implement RAM/VSS providers. Current source now
 implements external DumpIt, paired pagefiles, owned VSS and SFTP delivery;
 see the feature guides and [later benchmark conditions](benchmarks/index.md).
-Direct S3 delivery tests exercise multipart retries, conditional writes and independent restore with synthetic evidence. Run `python scripts/test_s3.py --binary target/debug/kumade` (append `.exe` on Windows). Broader platform qualification is still required.
+Direct S3 delivery tests exercise multipart part replay, lost acknowledgements at each publication stage, aborted uploads, conflicting objects, invalid checksums, recovery after a lost final response, and verified restore with synthetic evidence. Run `python scripts/test_s3.py --binary target/debug/kumade` (append `.exe` on Windows). Broader platform qualification is still required.
 
 Rust also reports a future-compatibility warning for transitive dependency
 `binrw 0.11.3` through `ntfs 0.4`; current checks and builds succeed.

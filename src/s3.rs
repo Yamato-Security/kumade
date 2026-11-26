@@ -11,12 +11,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use aws_sdk_s3::{
     Client,
-    config::{
-        BehaviorVersion, ConfigBag, Credentials, Intercept, Region, RuntimeComponents,
-        interceptors::BeforeTransmitInterceptorContextRef, retry::RetryConfig,
-        timeout::TimeoutConfig,
-    },
-    error::{BoxError, ProvideErrorMetadata, SdkError},
+    config::{BehaviorVersion, Credentials, Region, retry::RetryConfig, timeout::TimeoutConfig},
     primitives::ByteStream,
     types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
 };
@@ -27,10 +22,7 @@ use std::{
     env,
     io::{self, Read, Write},
     path::PathBuf,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU32, Ordering},
-    },
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use url::Url;
@@ -160,39 +152,26 @@ impl Location {
     }
 }
 
-/// Counts transmissions of one request. When S3 stores a create-only write but its
-/// response is lost, the SDK's automatic retry is refused because the key now exists.
-#[derive(Clone, Debug, Default)]
-struct Attempts(Arc<AtomicU32>);
-impl Intercept for Attempts {
-    fn name(&self) -> &'static str {
-        "KumadeAttempts"
+// A create-only conflict cannot identify which bytes won the write. Only a
+// positive acknowledgement can advance an upload-only collection.
+fn confirm_write(
+    etag: Option<&str>,
+    checksum: Option<&str>,
+    expected: &str,
+    parts: Option<usize>,
+) -> Result<()> {
+    ensure!(
+        etag.is_some_and(|tag| !tag.trim().trim_matches('"').is_empty()),
+        "Missing S3 ETag"
+    );
+    if let Some(actual) = checksum {
+        // S3 composite SHA-256 values may carry a suffix with the part count.
+        ensure!(
+            actual == expected || parts.is_some_and(|n| actual == format!("{expected}-{n}")),
+            "S3 acknowledged a different SHA-256"
+        );
     }
-    fn read_before_attempt(
-        &self,
-        _: &BeforeTransmitInterceptorContextRef<'_>,
-        _: &RuntimeComponents,
-        _: &mut ConfigBag,
-    ) -> Result<(), BoxError> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
-}
-impl Attempts {
-    /// Accept a conflict only after this request was retried, because an earlier attempt
-    /// may have been stored before its acknowledgement was lost. A conflict on the first
-    /// attempt is a genuine collision. verify-s3 checks every stored hash either way.
-    fn retried_conflict<E: ProvideErrorMetadata, R>(
-        &self,
-        error: &SdkError<E, R>,
-        codes: &[&str],
-    ) -> bool {
-        self.0.load(Ordering::Relaxed) > 1
-            && error
-                .as_service_error()
-                .and_then(|e| e.code())
-                .is_some_and(|code| codes.contains(&code))
-    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -289,23 +268,32 @@ impl Bucket {
     }
     fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
         let checksum = STANDARD.encode(Sha256::digest(&data));
-        let attempts = Attempts::default();
-        match self.runtime.block_on(
-            self.client
-                .put_object()
-                .bucket(&self.location.bucket)
-                .key(key)
-                .if_none_match("*")
-                .checksum_sha256(checksum)
-                .body(data.into())
-                .customize()
-                .interceptor(attempts.clone())
-                .send(),
-        ) {
-            Ok(_) => Ok(()),
-            Err(e) if attempts.retried_conflict(&e, &["PreconditionFailed"]) => Ok(()),
-            Err(e) => Err(e).with_context(|| format!("Create-only S3 PUT failed for {key}")),
-        }
+        let unconfirmed = || {
+            format!(
+                "S3 delivery unconfirmed for s3://{}/{key}",
+                self.location.bucket
+            )
+        };
+        let response = self
+            .runtime
+            .block_on(
+                self.client
+                    .put_object()
+                    .bucket(&self.location.bucket)
+                    .key(key)
+                    .if_none_match("*")
+                    .checksum_sha256(&checksum)
+                    .body(data.into())
+                    .send(),
+            )
+            .with_context(unconfirmed)?;
+        confirm_write(
+            response.e_tag(),
+            response.checksum_sha256(),
+            &checksum,
+            None,
+        )
+        .with_context(unconfirmed)
     }
     pub(crate) fn open(&self, name: &str) -> Result<Box<dyn Read>> {
         crate::sftp::validate_object_name(name)?;
@@ -336,6 +324,7 @@ impl Store for Bucket {
             buffer: Vec::new(),
             id: None,
             parts: Vec::new(),
+            composite_sha256: Sha256::new(),
             failure: None,
         }))
     }
@@ -345,10 +334,14 @@ impl Store for Bucket {
             "checkpoints/{}.json",
             sha256(record.observation_id.as_bytes())
         ))?;
-        self.put(
+        let result = self.put(
             &key,
             serde_json::to_vec(&serde_json::json!({"Record":record, "Object":object}))?,
-        )
+        );
+        if let Err(e) = &result {
+            self.upload_error.get_or_init(|| format!("{e:#}"));
+        }
+        result
     }
 }
 
@@ -358,6 +351,7 @@ struct Upload {
     buffer: Vec<u8>,
     id: Option<String>,
     parts: Vec<CompletedPart>,
+    composite_sha256: Sha256,
     failure: Option<String>,
 }
 impl Upload {
@@ -378,11 +372,22 @@ impl Upload {
                         .checksum_algorithm(ChecksumAlgorithm::Sha256)
                         .send(),
                 )
-                .context("Initiate S3 multipart upload")?;
-            self.id = Some(response.upload_id.context("Missing S3 upload ID")?);
+                .with_context(|| {
+                    format!(
+                        "S3 delivery unconfirmed for {} (multipart initiation)",
+                        self.key
+                    )
+                })?;
+            self.id = Some(
+                response
+                    .upload_id
+                    .filter(|id| !id.trim().is_empty())
+                    .context("S3 delivery unconfirmed: missing multipart upload ID")?,
+            );
         }
         let data = std::mem::take(&mut self.buffer);
-        let checksum = STANDARD.encode(Sha256::digest(&data));
+        let digest = Sha256::digest(&data);
+        let checksum = STANDARD.encode(digest);
         let number = (self.parts.len() + 1) as i32;
         // ByteStream::from(Vec) is replayable by the SDK, including a dropped response.
         let part = s
@@ -398,17 +403,14 @@ impl Upload {
                     .body(ByteStream::from(data))
                     .send(),
             )
-            .with_context(|| format!("Upload S3 part {number}"))?;
-        ensure!(
-            part.checksum_sha256
-                .as_deref()
-                .is_none_or(|actual| actual == checksum),
-            "S3 part checksum mismatch"
-        );
+            .with_context(|| format!("S3 delivery unconfirmed for {} (part {number})", self.key))?;
+        confirm_write(part.e_tag(), part.checksum_sha256(), &checksum, None)
+            .with_context(|| format!("S3 delivery unconfirmed for {} (part {number})", self.key))?;
+        self.composite_sha256.update(digest);
         self.parts.push(
             CompletedPart::builder()
                 .part_number(number)
-                .e_tag(part.e_tag.context("Missing S3 part ETag")?)
+                .set_e_tag(part.e_tag)
                 .checksum_sha256(checksum)
                 .build(),
         );
@@ -451,34 +453,37 @@ impl Upload {
             self.part()?;
         }
         let s = &self.bucket;
+        let count = self.parts.len();
+        let checksum = STANDARD.encode(std::mem::take(&mut self.composite_sha256).finalize());
         let parts = CompletedMultipartUpload::builder()
             .set_parts(Some(std::mem::take(&mut self.parts)))
             .build();
-        let attempts = Attempts::default();
-        match s.runtime.block_on(
-            s.client
-                .complete_multipart_upload()
-                .bucket(&s.location.bucket)
-                .key(&self.key)
-                .set_upload_id(self.id.clone())
-                .if_none_match("*")
-                .multipart_upload(parts)
-                .customize()
-                .interceptor(attempts.clone())
-                .send(),
-        ) {
-            Ok(_) => {}
-            // A completed upload ID can also be reported as no longer existing.
-            Err(e) if attempts.retried_conflict(&e, &["PreconditionFailed", "NoSuchUpload"]) => {}
-            Err(e) => {
-                return Err(e).with_context(|| {
-                    format!(
-                        "Create-only S3 multipart completion failed for {}",
-                        self.key
-                    )
-                });
-            }
-        }
+        let unconfirmed = || {
+            format!(
+                "S3 delivery unconfirmed for s3://{}/{} (multipart completion)",
+                s.location.bucket, self.key
+            )
+        };
+        let response = s
+            .runtime
+            .block_on(
+                s.client
+                    .complete_multipart_upload()
+                    .bucket(&s.location.bucket)
+                    .key(&self.key)
+                    .set_upload_id(self.id.clone())
+                    .if_none_match("*")
+                    .multipart_upload(parts)
+                    .send(),
+            )
+            .with_context(unconfirmed)?;
+        confirm_write(
+            response.e_tag(),
+            response.checksum_sha256(),
+            &checksum,
+            Some(count),
+        )
+        .with_context(unconfirmed)?;
         self.id = None;
         Ok(())
     }
