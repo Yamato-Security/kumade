@@ -273,7 +273,7 @@ fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscove
             "--computer applies to offline --source inputs"
         );
         return platform::live_sources(
-            if options.remote() && options.s3.s3_recovery_dir.is_none() {
+            if options.remote() && options.s3.workspace_dir().is_none() {
                 None
             } else {
                 Some(destination)
@@ -566,7 +566,7 @@ fn run() -> Result<u8> {
             .sftp_staging_dir
             .clone()
             .or_else(|| options.s3.s3_staging_dir.clone())
-            .or_else(|| options.s3.s3_recovery_dir.clone())
+            .or_else(|| options.s3.workspace_dir().map(Path::to_path_buf))
             .unwrap_or_else(std::env::temp_dir)
     } else {
         options
@@ -754,13 +754,13 @@ fn run() -> Result<u8> {
         !options.memory
             || !options.sources.is_empty()
             || !options.remote()
-            || options.s3.s3_recovery_dir.is_some()
+            || options.s3.workspace_dir().is_some()
             || options.memory_options.memory_staging_dir.is_some()
             || plan_only,
         "DumpIt needs a staged RAM file for remote delivery; specify --memory-staging-dir <external-directory>"
     );
     // Authenticate and verify the upload-only policy before collecting evidence.
-    let mut phases = if options.s3.s3_recovery_dir.is_some() {
+    let mut phases = if options.s3.workspace_dir().is_some() {
         Some(kumade::s3_phases::Run::start(
             &options.s3,
             &destination,
@@ -1136,6 +1136,30 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test]
+    fn hybrid_requires_s3_and_a_single_staging_destination() {
+        assert!(Cli::try_parse_from(["kumade", "collect", "--s3-hybrid-dir", "stage"]).is_err());
+        for other in [
+            "--s3-recovery-dir",
+            "--s3-staging-dir",
+            "--memory-staging-dir",
+            "-o",
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "kumade",
+                    "collect",
+                    "--s3",
+                    "s3://evidence-test/case/",
+                    "--s3-hybrid-dir",
+                    "stage",
+                    other,
+                    "second"
+                ])
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn sftp_options_require_explicit_pin_and_refuse_ambiguous_outputs() {
         for args in [

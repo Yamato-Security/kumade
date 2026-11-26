@@ -27,6 +27,15 @@ use std::{
 };
 
 pub fn verify(root: &Path) -> Result<(usize, bool)> {
+    verify_with(root, |_| Ok(None))
+}
+
+// Recovery can bind streamed payloads to durable upload acknowledgements.
+// Ordinary verification always opens and hashes the actual restored files.
+pub(crate) fn verify_with(
+    root: &Path,
+    acknowledged: impl Fn(&Record) -> Result<Option<(u64, String)>>,
+) -> Result<(usize, bool)> {
     let root = crate::platform::canonicalize(root)?;
     // Inventory-only output from `live-info` has no Run.json. A collection that
     // stopped before writing its outer seal must not pass on the inner seal alone.
@@ -233,7 +242,8 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
                 "Manifest observation is absent from the plan"
             );
         }
-        if record.status == "Acquired"
+        let transferred = run["HybridS3"] == true && record.status == "Transferred";
+        if (record.status == "Acquired" || transferred)
             && let Some(expected_hash) = entropy_hashes.get(&record.observation_id)
         {
             ensure!(
@@ -243,18 +253,24 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
         }
         match record.status.as_str() {
             "Acquired" => acquired += 1,
+            "Transferred" if transferred => acquired += 1,
             "Partial" => partial += 1,
             "Failed" => failed += 1,
             "NotPresent" => {}
             _ => anyhow::bail!("Unknown manifest result status"),
         }
         if let Some(path) = &record.relative_output_path {
-            let payload = if native_streams {
-                metadata::payload_path(&root, path, record.stream_name.as_deref())?
-            } else {
-                paths::safe_join(&root, path)?
+            let (bytes, digest) = match acknowledged(&record)? {
+                Some(result) => result,
+                None => {
+                    let payload = if native_streams {
+                        metadata::payload_path(&root, path, record.stream_name.as_deref())?
+                    } else {
+                        paths::safe_join(&root, path)?
+                    };
+                    hash_file(&payload)?
+                }
             };
-            let (bytes, digest) = hash_file(&payload)?;
             ensure!(
                 bytes == record.bytes_read && record.sha256.as_ref() == Some(&digest),
                 "Payload failed verification: {path}"
@@ -262,7 +278,7 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
             checked += 1;
         } else {
             ensure!(
-                record.status != "Acquired",
+                record.status != "Acquired" && !transferred,
                 "Acquired record has no payload"
             );
         }

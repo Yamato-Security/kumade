@@ -36,6 +36,9 @@ pub struct S3Args {
     /// Protected external directory for phased uploads and restartable delivery
     #[arg(long, requires = "s3", conflicts_with_all = ["s3_staging_dir", "memory_staging_dir"])]
     pub s3_recovery_dir: Option<PathBuf>,
+    /// Stage volatile evidence and receipts here; stream disk artifacts directly to S3
+    #[arg(long, requires = "s3", conflicts_with_all = ["s3_recovery_dir", "s3_staging_dir", "memory_staging_dir"])]
+    pub s3_hybrid_dir: Option<PathBuf>,
     #[command(flatten)]
     pub connection: ConnectionArgs,
     /// Existing protected parent for local collection metadata
@@ -44,6 +47,14 @@ pub struct S3Args {
     /// Multipart buffer or recovery chunk size in MiB (default 8, range 5–256)
     #[arg(long, requires="s3", value_parser=clap::value_parser!(u16).range(5..=256))]
     pub s3_part_mib: Option<u16>,
+}
+
+impl S3Args {
+    pub fn workspace_dir(&self) -> Option<&std::path::Path> {
+        self.s3_hybrid_dir
+            .as_deref()
+            .or(self.s3_recovery_dir.as_deref())
+    }
 }
 
 #[derive(clap::Args, Clone)]

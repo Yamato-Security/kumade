@@ -174,6 +174,7 @@ struct DestinationPolicy<'a> {
     remote: Option<&'a Arc<crate::sftp::Target>>,
     native_ntfs: bool,
     phased_s3: bool,
+    hybrid: Option<&'a crate::s3_phases::hybrid::Disk>,
     source_sparse: bool,
     host_reserve: Option<&'a HostReserve>,
 }
@@ -246,6 +247,9 @@ fn acquire_one_inner(
         }
         record.finished_utc = utc_now();
         return record;
+    }
+    if let Some(disk) = destination.hybrid {
+        return disk.acquire(record, source, item, raw_cache);
     }
     if let Some(target) = destination.remote {
         return crate::sftp::acquire(record, source, item, raw_cache, target);
@@ -601,11 +605,9 @@ fn collect_inner(
         "Native NTFS metadata output requires Windows"
     );
     fs::create_dir_all(&parent)?;
-    let required_payload = if options.remote.is_some() {
-        0
-    } else {
-        plan.known_bytes
-    };
+    let hybrid = phases.and_then(|p| p.disk.as_ref());
+    let streaming = options.remote.is_some() || hybrid.is_some();
+    let required_payload = if streaming { 0 } else { plan.known_bytes };
     let available = fs2::available_space(&parent)?;
     ensure!(
         available
@@ -698,10 +700,11 @@ fn collect_inner(
             "hostname": computer, "Collector": "Kumade", "CollectionStartedUtc": plan.created_utc
         }),
     )?;
-    write_json_new(
-        &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"ExistingVssEnabled":plan.sources.iter().any(|s|s.snapshot.as_ref().is_some_and(|v|v.owned_by_collector==Some(false))),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && (options.remote.is_some() || phases.is_some())) {Some(metadata::FILES)}else{None},"Limitations":["New VSS snapshots are crash-consistent without application writers; historical writer consistency is unknown; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
-    )?;
+    let mut run_metadata = serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"ExistingVssEnabled":plan.sources.iter().any(|s|s.snapshot.as_ref().is_some_and(|v|v.owned_by_collector==Some(false))),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && (options.remote.is_some() || phases.is_some())) {Some(metadata::FILES)}else{None},"Limitations":["New VSS snapshots are crash-consistent without application writers; historical writer consistency is unknown; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]});
+    if hybrid.is_some() {
+        run_metadata["HybridS3"] = true.into();
+    }
+    write_json_new(&root.join("Run.json"), &run_metadata)?;
     let mut prior_live = early
         .as_ref()
         .map(|e| e.import(&root))
@@ -916,6 +919,7 @@ fn collect_inner(
                                 remote: options.remote.as_ref(),
                                 native_ntfs: options.ntfs_metadata,
                                 phased_s3: phases.is_some(),
+                                hybrid,
                                 source_sparse: sparse_sources.contains(&(
                                     source.id.clone(),
                                     item.source_path.display().to_string(),
@@ -1025,7 +1029,7 @@ fn collect_inner(
     if options.remote.is_some() {
         summary.completeness = "PendingServerReadbackVerification".into();
     }
-    let entropy_version_mismatches = if options.remote.is_some() {
+    let entropy_version_mismatches = if streaming {
         let expected: HashMap<_, _> = plan
             .files
             .iter()
@@ -1101,13 +1105,8 @@ fn collect_inner(
                 family.status = "Partial".into();
                 family.reason="Acquisition or discovery was incomplete; consult the manifest and discovery issues".into();
             } else if family.acquired > 0 {
-                family.status = if options.remote.is_some() {
-                    "Transferred"
-                } else {
-                    "Acquired"
-                }
-                .into();
-                family.reason = if options.remote.is_some() { "All discovered members streamed; server readback remains pending" } else { "All discovered members were copied and hash-verified; format/atomic consistency is not established" }.into();
+                family.status = if streaming { "Transferred" } else { "Acquired" }.into();
+                family.reason = if streaming { "All discovered members streamed; server readback remains pending" } else { "All discovered members were copied and hash-verified; format/atomic consistency is not established" }.into();
             } else if family.not_present > 0 {
                 family.status = "NotPresent".into();
                 family.reason = "Raw candidates were not present".into();

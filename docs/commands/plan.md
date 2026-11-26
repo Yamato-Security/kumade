@@ -151,6 +151,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Stream to s3://BUCKET/PREFIX using temporary AWS credentials
           --s3-recovery-dir <S3_RECOVERY_DIR>
               Protected external directory for phased uploads and restartable delivery
+          --s3-hybrid-dir <S3_HYBRID_DIR>
+              Stage volatile evidence and receipts here; stream disk artifacts directly to S3
           --s3-region <S3_REGION>
               AWS region (default: AWS_REGION, AWS_DEFAULT_REGION or us-east-1)
           --s3-endpoint <S3_ENDPOINT>

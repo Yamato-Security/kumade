@@ -45,6 +45,12 @@ class Store(BaseHTTPRequestHandler):
         if key in s.objects:
             self.reply(412, b"<Error><Code>PreconditionFailed</Code></Error>")
             return
+        if getattr(s, "block_bytes", None) == data:
+            s.blocked.set()
+            assert s.release_block.wait(45)
+            s.objects[key] = data
+            self.close_connection = True
+            return
         if s.deny_all or (s.deny_bytes is not None and data == s.deny_bytes):
             self.reply(403, b"<Error><Code>AccessDenied</Code></Error>")
             return
@@ -231,6 +237,21 @@ def main(binary):
             assert server.put_attempts[hashlib.sha256(second_chunk).digest()] == 2
             assert (ws3 / "live-published.json").read_bytes() == marker
             assert not (ws3 / "collection-published.json").exists()
+            # Replay the same protected volatile capture using a hybrid session.
+            hw = root / "hybrid-volatile"
+            hw.mkdir()
+            for lock in ["Upload.lock", "Acquisition.lock"]:
+                (hw / lock).touch()
+            (hw / "Streamed").mkdir()
+            session.update(Id=str(uuid.uuid4()), Hybrid=True)
+            (hw / "Session.json").write_text(json.dumps(session))
+            shutil.copytree(early, hw / early.name)
+            invoke(["resume-s3", "--workspace", hw, *original], code=3)
+            verify(hw, "live", root / "hybrid-live")
+            verify(hw, "memory", root / "hybrid-ram")
+            assert (root / "hybrid-live" / livefile).read_bytes() == live
+            assert (root / "hybrid-ram" / mr["RelativeOutputPath"]).read_bytes() == ram
+            assert (root / "hybrid-ram" / pr["RelativeOutputPath"]).read_bytes() == paged
             print("PASS: original RAM, pagefile and live rows recover independently after a stopped acquisition")
             print("PASS: independent hot evidence during delivery, lost final ACK, repeated resume, cold-start outage, source removal/change and tamper rejection")
         finally:

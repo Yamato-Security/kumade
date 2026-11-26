@@ -367,6 +367,11 @@ for offline use, provenance, build variants and rule licensing.
 
 ## Amazon S3 delivery
 
+When staging space is limited, use `--s3-hybrid-dir E:\Evidence`. It preserves
+requested RAM, paired pagefiles and live tables while disk artifacts stream
+directly to S3. `resume-s3` recovers the original volatile evidence and identifies
+which disk files were acknowledged. [Compare the three S3 modes](docs/S3.md#hybrid-collection)
+
 For interrupted networks, add `--s3-recovery-dir E:\Evidence` on external
 storage. Analysts can verify volatile evidence before the full case finishes.
 `resume-s3` sends outstanding staged data without acquiring RAM or querying

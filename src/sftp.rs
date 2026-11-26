@@ -1094,6 +1094,39 @@ pub(crate) fn relative_payload(item: &PlannedFile) -> Result<String> {
         )?)
     }
 }
+pub(crate) fn mark_transferred(
+    record: &mut Record,
+    item: &PlannedFile,
+    before: crate::model::Fingerprint,
+    after: crate::model::Fingerprint,
+    digest: &str,
+) {
+    record.logical_size = Some(before.size);
+    record.created_utc = before.created_ns.clone();
+    record.modified_utc = before.modified_ns.clone();
+    record.accessed_utc = before.accessed_ns.clone();
+    record.source_file_id = before.identity.clone();
+    record.changed_during_read = !discovery::same_version(&before, &after)
+        || item
+            .before
+            .as_ref()
+            .is_some_and(|p| !discovery::same_version(p, &before));
+    record.status = if record.changed_during_read
+        || item.expected_sha256.as_ref().is_some_and(|h| h != digest)
+    {
+        "Partial"
+    } else {
+        "Transferred"
+    }
+    .into();
+    record.reason = if record.status == "Partial" {
+        "Source metadata/content changed; streamed version retained; server readback is pending"
+    } else {
+        "Remote object upload acknowledged; independent readback is pending"
+    }
+    .into();
+}
+
 pub(crate) fn acquire(
     mut record: Record,
     source: &Source,
@@ -1143,28 +1176,8 @@ pub(crate) fn acquire(
         let mut object = upload.finish()?;
         match copied {
             Ok((before, after)) => {
-                record.logical_size = Some(before.size);
-                record.created_utc = before.created_ns.clone();
-                record.modified_utc = before.modified_ns.clone();
-                record.accessed_utc = before.accessed_ns.clone();
-                record.source_file_id = before.identity.clone();
-                record.changed_during_read = !discovery::same_version(&before, &after)
-                    || item
-                        .before
-                        .as_ref()
-                        .is_some_and(|p| !discovery::same_version(p, &before));
-                record.status = if record.changed_during_read
-                    || item
-                        .expected_sha256
-                        .as_ref()
-                        .is_some_and(|h| Some(h) != record.sha256.as_ref())
-                {
-                    "Partial"
-                } else {
-                    "Transferred"
-                }
-                .into();
-                record.reason=if record.status=="Partial"{"Source metadata/content changed; streamed version retained; server readback is pending"}else{"Remote object upload acknowledged; independent readback is pending"}.into();
+                let digest = object.logical_sha256.as_str();
+                mark_transferred(&mut record, item, before, after, digest);
             }
             Err(e) => {
                 record.status = "Failed".into();

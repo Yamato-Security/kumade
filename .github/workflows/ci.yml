@@ -30,6 +30,7 @@ jobs:
       - run: python3 scripts/test_sftp_receiver.py --binary target/debug/kumade
       - run: python3 scripts/test_s3.py --binary target/debug/kumade
       - run: python3 scripts/test_s3_phases.py --binary target/debug/kumade
+      - run: python3 scripts/test_s3_hybrid.py --binary target/debug/kumade
       - run: python3 scripts/test_sftp_resume.py --binary target/debug/kumade
       # An isolated localhost sshd and random account, removed by the test.
       # Does not edit or reload the runner's system sshd configuration.
@@ -82,6 +83,8 @@ jobs:
         run: python scripts/test_s3.py --binary target/debug/kumade.exe
       - name: Phased S3 acquisition and resume
         run: python scripts/test_s3_phases.py --binary target/debug/kumade.exe
+      - name: Hybrid S3 direct disk streaming and interrupted collection salvage
+        run: python scripts/test_s3_hybrid.py --binary target/debug/kumade.exe
       - name: Concurrent SFTP collectors and interrupted transfer (x64)
         run: python scripts/test_sftp_resume.py --binary target/debug/kumade.exe
       - name: Isolated VSS acquisition

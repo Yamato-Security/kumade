@@ -25,7 +25,10 @@ use std::{
 };
 use uuid::Uuid;
 
-const PHASES: [&str; 4] = ["live", "memory", "hot-disk", "collection"];
+#[path = "s3_hybrid.rs"]
+pub(crate) mod hybrid;
+
+const PHASES: [&str; 5] = ["live", "memory", "hot-disk", "recovered-disk", "collection"];
 
 #[derive(clap::Args)]
 pub struct ResumeArgs {
@@ -49,6 +52,8 @@ struct Session {
     endpoint: Option<String>,
     region: String,
     part_mib: u16,
+    #[serde(default)]
+    hybrid: bool,
 }
 impl Session {
     fn location(&self, parent: &Location) -> Result<Location> {
@@ -350,6 +355,7 @@ fn collection_plan(workspace: &Path, root: &Path, summary: &Summary) -> Result<P
 }
 pub struct Run {
     computer: String,
+    pub(crate) disk: Option<hybrid::Disk>,
     _acquisition_lock: File,
     root: PathBuf,
     signal: Option<mpsc::Sender<()>>,
@@ -362,7 +368,7 @@ impl Run {
     pub fn start(args: &S3Args, parent: &Path, sources: &[Source], started: &str) -> Result<Self> {
         ensure!(
             parent.is_dir(),
-            "--s3-recovery-dir requires an existing protected destination"
+            "The S3 workspace requires an existing protected destination"
         );
         for source in sources {
             ensure!(
@@ -407,6 +413,7 @@ impl Run {
                 .map(ToString::to_string),
             region,
             part_mib: args.s3_part_mib.unwrap_or(8),
+            hybrid: args.s3_hybrid_dir.is_some(),
         };
         save(&root.join("Session.json"), &session)?;
         ui::field("S3 recovery workspace", root.display());
@@ -417,6 +424,15 @@ impl Run {
         let (tx, rx) = mpsc::channel();
         let workspace = root.clone();
         let connection = args.connection.clone();
+        let disk = if session.hybrid {
+            ui::field(
+                "S3 hybrid mode",
+                "Volatile evidence retained here; disk files stream directly to S3",
+            );
+            Some(hybrid::Disk::open(&root, &session, &dest, &connection)?)
+        } else {
+            None
+        };
         let worker = thread::spawn(move || {
             let result = (|| -> Result<()> {
                 let mut uploader = Uploader::open(&workspace, &dest, &connection)?;
@@ -435,6 +451,7 @@ impl Run {
         });
         Ok(Self {
             computer: session.computer,
+            disk,
             _acquisition_lock: acquisition_lock,
             root,
             signal: Some(tx),
@@ -607,13 +624,7 @@ impl Uploader {
         }
         // Allocate a fresh immutable key on each attempt. A lost acknowledgement
         // can leave an orphan, but can never substitute another writer's bytes.
-        let key = format!("{}-data-{}", self.session.id, Uuid::new_v4());
-        self.bucket.put(&self.location.key(&key)?, data)?;
-        let chunk = Chunk {
-            sha256: digest,
-            bytes,
-            key,
-        };
+        let chunk = store_chunk(&self.bucket, &self.location, self.session.id, data, digest)?;
         let mut line = serde_json::to_vec(&chunk)?;
         line.push(b'\n');
         self.log.write_all(&line)?;
@@ -624,6 +635,11 @@ impl Uploader {
     }
     fn member(&mut self, dir: &Path, file: Entry) -> Result<Member> {
         relative(&file.path)?;
+        if self.session.hybrid
+            && let Some(ack) = hybrid::acknowledged(&self.root, self.session.id, &file)?
+        {
+            return Ok(ack);
+        }
         ensure!(digest_valid(&file.sha256), "Invalid staged hash");
         let chunk_size = u64::from(self.session.part_mib) << 20;
         let large = file.bytes > chunk_size;
@@ -739,6 +755,8 @@ pub fn resume(args: &ResumeArgs) -> Result<u8> {
             print_phase(scope, &up.location, &json(&saved)?);
         }
     }
+    // Publish already sealed phases even if a crash damaged later acquisition metadata.
+    up.publish_available()?;
     // If the process exited between sealing the disk collection and publishing
     // its transfer plan, rebuild that plan only from the frozen local case.
     let acquisition_lock = open_lock(&up.root, "Acquisition.lock")?;
@@ -779,12 +797,22 @@ pub fn resume(args: &ResumeArgs) -> Result<u8> {
             &up.session.started_utc,
         )?);
         if case.join("Seal.json").is_file() {
-            crate::verify::verify(&case)?;
+            if up.session.hybrid {
+                if let Err(error) = hybrid::validate_seal(&up.root, &case, up.session.id) {
+                    hybrid::recover(&up.root, &case, up.session.id)?;
+                    up.publish_available()?;
+                    return Err(error).context("Final collection did not verify; available disk receipts recovered independently");
+                }
+            } else {
+                crate::verify::verify(&case)?;
+            }
             let summary = json(&case.join("Summary.json"))?;
             save(
                 &up.root.join("collection-plan.json"),
                 &collection_plan(&up.root, &case, &summary)?,
             )?;
+        } else if up.session.hybrid {
+            hybrid::recover(&up.root, &case, up.session.id)?;
         }
     }
     up.publish_available()?;
@@ -802,6 +830,23 @@ pub fn resume(args: &ResumeArgs) -> Result<u8> {
         0
     })
 }
+fn store_chunk(
+    bucket: &Bucket,
+    location: &Location,
+    id: Uuid,
+    data: Vec<u8>,
+    digest: String,
+) -> Result<Chunk> {
+    let bytes = data.len() as u64;
+    let key = format!("{id}-data-{}", Uuid::new_v4());
+    bucket.put(&location.key(&key)?, data)?;
+    Ok(Chunk {
+        sha256: digest,
+        bytes,
+        key,
+    })
+}
+
 fn validate_key(id: Uuid, key: &str) -> Result<()> {
     let nonce = key
         .strip_prefix(&format!("{id}-data-"))

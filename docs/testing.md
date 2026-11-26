@@ -157,6 +157,8 @@ long names, destination ACLs and FAT/exFAT behavior all need live qualification.
 The initial release did not implement RAM/VSS providers. Current source now
 implements external DumpIt, paired pagefiles, owned VSS and SFTP delivery;
 see the feature guides and [later benchmark conditions](benchmarks/index.md).
+Run `python scripts/test_s3_hybrid.py --binary target/debug/kumade` for the hybrid end-to-end test. It checks staging footprint, interrupted transfers, a killed collector, restore after removal of the source, and NTFS alternate streams on Windows. The phase suite also recovers synthetic RAM, pagefiles and process tables from a hybrid workspace.
+
 Direct S3 delivery tests exercise multipart part replay, lost acknowledgements at each publication stage, aborted uploads, conflicting objects, invalid checksums, recovery after a lost final response, and verified restore with synthetic evidence. Run `python scripts/test_s3.py --binary target/debug/kumade` (append `.exe` on Windows). Broader platform qualification is still required.
 
 Rust also reports a future-compatibility warning for transitive dependency
