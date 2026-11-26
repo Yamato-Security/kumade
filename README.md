@@ -367,6 +367,12 @@ for offline use, provenance, build variants and rule licensing.
 
 ## Amazon S3 delivery
 
+For interrupted networks, add `--s3-recovery-dir E:\Evidence` on external
+storage. Analysts can verify volatile evidence before the full case finishes.
+`resume-s3` sends outstanding staged data without acquiring RAM or querying
+the host again. [Phased collection and recovery](docs/S3.md#recoverable-phased-collection)
+
+
 Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --s3-region ap-northeast-1 --yes`
 with temporary AWS credentials. Each host streams to its own prefix. The collector
 retries interrupted parts. Use `kumade verify-s3` on an analyst workstation to check

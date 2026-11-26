@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add external S3 recovery workspaces, independently verifiable live, memory and
+  hot-disk phases, and chunk-level `resume-s3` delivery of the original evidence.
+
 - Add direct Amazon S3 collection with short-lived credentials, conditional
   writes, multipart retries and per-host evidence prefixes. Add `verify-s3`
   for independent SHA-256 readback and restoration. Unconfirmed writes retain

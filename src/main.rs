@@ -65,6 +65,8 @@ enum Command {
     Plan(CollectionArgs),
     /// Receive evidence through a temporary upload-only SFTP account
     Receive(kumade::sftp_receive::Options),
+    /// Resume phased S3 uploads from a protected workspace without reading original sources
+    ResumeS3(kumade::s3_phases::ResumeArgs),
     /// Verify an SFTP delivery locally and optionally reconstruct files
     VerifyDelivery(kumade::sftp_verify::Options),
     /// Verify an S3 collection against its delivery hash and optionally restore it
@@ -270,11 +272,13 @@ fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscove
             options.computer.is_none(),
             "--computer applies to offline --source inputs"
         );
-        return platform::live_sources(if options.remote() {
-            None
-        } else {
-            Some(destination)
-        });
+        return platform::live_sources(
+            if options.remote() && options.s3.s3_recovery_dir.is_none() {
+                None
+            } else {
+                Some(destination)
+            },
+        );
     }
     let computer = options.computer.as_deref().unwrap_or("OfflineComputer");
     ensure!(
@@ -360,6 +364,7 @@ fn run() -> Result<u8> {
     };
     let (mut options, plan_only) = match cli.command {
         Some(Command::Receive(args)) => return kumade::sftp_receive::run(&args),
+        Some(Command::ResumeS3(args)) => return kumade::s3_phases::resume(&args),
         Some(Command::VerifyS3(args)) => return kumade::s3::verify(&args),
         Some(Command::VerifyDelivery(args)) => return kumade::sftp_verify::run(&args),
         Some(Command::ScanProcesses(args)) => return kumade::yara_scan::run(&args),
@@ -561,6 +566,7 @@ fn run() -> Result<u8> {
             .sftp_staging_dir
             .clone()
             .or_else(|| options.s3.s3_staging_dir.clone())
+            .or_else(|| options.s3.s3_recovery_dir.clone())
             .unwrap_or_else(std::env::temp_dir)
     } else {
         options
@@ -748,13 +754,26 @@ fn run() -> Result<u8> {
         !options.memory
             || !options.sources.is_empty()
             || !options.remote()
+            || options.s3.s3_recovery_dir.is_some()
             || options.memory_options.memory_staging_dir.is_some()
             || plan_only,
         "DumpIt needs a staged RAM file for remote delivery; specify --memory-staging-dir <external-directory>"
     );
     // Authenticate and verify the upload-only policy before collecting evidence.
+    let mut phases = if options.s3.s3_recovery_dir.is_some() {
+        Some(kumade::s3_phases::Run::start(
+            &options.s3,
+            &destination,
+            &discovered.sources,
+            &started_utc,
+        )?)
+    } else {
+        None
+    };
     let mut s3_delivery = None;
-    let remote = if options.s3.s3.is_some() {
+    let remote = if phases.is_some() {
+        None
+    } else if options.s3.s3.is_some() {
         let computer = discovered
             .sources
             .first()
@@ -778,6 +797,9 @@ fn run() -> Result<u8> {
     } else {
         None
     };
+    let destination = phases
+        .as_ref()
+        .map_or(destination, |p| p.workspace().to_owned());
     let destination = staging
         .as_ref()
         .map_or(destination, |s| s.path().to_owned());
@@ -872,6 +894,9 @@ fn run() -> Result<u8> {
             }),
         )?
     };
+    if let (Some(phases), Some(capture)) = (&phases, &early) {
+        phases.volatile(capture)?;
+    }
     if let (Some(target), Some(capture)) = (&remote, &early) {
         target.upload_early(capture)?;
     }
@@ -951,7 +976,7 @@ fn run() -> Result<u8> {
         )?;
     }
     #[cfg(windows)]
-    if remote.is_some() || options.vhdx.is_some() || options.e01.is_some() {
+    if options.remote() || options.vhdx.is_some() || options.e01.is_some() {
         kumade::metadata::enable_privileges()?;
         kumade::metadata::augment_streams(&mut plan)?;
     }
@@ -1025,6 +1050,11 @@ fn run() -> Result<u8> {
         e01::collect(&plan, &output, options.e01_size_gib, &collect_options)
     } else if options.vhdx.is_some() {
         vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)
+    } else if let Some(phases) = &phases {
+        collect::collect_phased(&plan, &output, &collect_options, phases).map(|(root, summary)| {
+            remote_root = Some(root);
+            summary
+        })
     } else {
         collect::collect(&plan, &output, &collect_options).map(|(root, summary)| {
             remote_root = Some(root);
@@ -1046,6 +1076,20 @@ fn run() -> Result<u8> {
     };
     if options.vss && !options.quiet {
         ui::field("VSS cleanup", "Owned snapshot set released");
+    }
+    if let Some(phases) = phases.take() {
+        phases.complete(
+            remote_root
+                .as_deref()
+                .context("Missing staged collection")?,
+            &summary,
+        )?;
+        // Volatile capture and disk evidence remain available until trusted readback.
+        return Ok(if summary.completeness == "Partial" {
+            3
+        } else {
+            0
+        });
     }
     if let Some(target) = &remote {
         let (name, digest) = target.publish(

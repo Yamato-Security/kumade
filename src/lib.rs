@@ -49,3 +49,5 @@ pub mod sftp_verify;
 pub mod memory;
 
 pub mod pagefile;
+
+pub mod s3_phases;

@@ -534,7 +534,24 @@ pub fn collect_with_capacity(
     initial: &Plan,
     parent: &Path,
     options: &Options,
+    capacity: Option<&mut CapacityHook<'_>>,
+) -> Result<(PathBuf, Summary)> {
+    collect_inner(initial, parent, options, capacity, None)
+}
+pub fn collect_phased(
+    plan: &Plan,
+    parent: &Path,
+    options: &Options,
+    phases: &crate::s3_phases::Run,
+) -> Result<(PathBuf, Summary)> {
+    collect_inner(plan, parent, options, None, Some(phases))
+}
+fn collect_inner(
+    initial: &Plan,
+    parent: &Path,
+    options: &Options,
     mut capacity: Option<&mut CapacityHook<'_>>,
+    phases: Option<&crate::s3_phases::Run>,
 ) -> Result<(PathBuf, Summary)> {
     ensure!(
         options.remote.is_none() || !options.ntfs_metadata,
@@ -680,7 +697,7 @@ pub fn collect_with_capacity(
     )?;
     write_json_new(
         &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"ExistingVssEnabled":plan.sources.iter().any(|s|s.snapshot.as_ref().is_some_and(|v|v.owned_by_collector==Some(false))),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && options.remote.is_some()) {Some(metadata::FILES)}else{None},"Limitations":["New VSS snapshots are crash-consistent without application writers; historical writer consistency is unknown; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
+        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"ExistingVssEnabled":plan.sources.iter().any(|s|s.snapshot.as_ref().is_some_and(|v|v.owned_by_collector==Some(false))),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && (options.remote.is_some() || phases.is_some())) {Some(metadata::FILES)}else{None},"Limitations":["New VSS snapshots are crash-consistent without application writers; historical writer consistency is unknown; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
     )?;
     let mut prior_live = early
         .as_ref()
@@ -708,7 +725,8 @@ pub fn collect_with_capacity(
         ui::status("Collecting evidence…");
         println!();
     }
-    let capture_metadata = options.ntfs_metadata || (cfg!(windows) && options.remote.is_some());
+    let capture_metadata =
+        options.ntfs_metadata || (cfg!(windows) && (options.remote.is_some() || phases.is_some()));
     let mut ntfs_metadata = capture_metadata.then(Vec::<metadata::Snapshot>::new);
     let mut snapshot_keys = std::collections::HashSet::new();
     let mut sparse_sources = std::collections::HashSet::new();
@@ -820,7 +838,7 @@ pub fn collect_with_capacity(
                 &copies,
             )?;
             #[cfg(windows)]
-            if options.ntfs_metadata || options.remote.is_some() {
+            if options.ntfs_metadata || options.remote.is_some() || phases.is_some() {
                 metadata::augment_streams(plan)?;
             }
             if let Some(hook) = capacity.as_mut() {
@@ -921,6 +939,18 @@ pub fn collect_with_capacity(
                         progress.inc(1);
                     })
             });
+        }
+        if section == 0
+            && let Some(phases) = phases
+        {
+            let rows = records
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
+            let discovery_failed = plan
+                .issues
+                .iter()
+                .any(|issue| matches!(issue.status.as_str(), "Failed" | "Unsupported"));
+            phases.hot_disk(&root, &rows, discovery_failed)?;
         }
     }
     progress.finish_and_clear();
@@ -1134,7 +1164,7 @@ pub fn collect_with_capacity(
                 "Restoring NTFS metadata and original permissions…"
             });
         }
-        if options.remote.is_some() {
+        if options.remote.is_some() || phases.is_some() {
             summary.metadata_errors = metadata::remote_inventory(snapshots, &records) as u64;
         } else {
             summary.metadata_errors = metadata::restore(&root, snapshots, &records) as u64;

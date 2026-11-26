@@ -161,6 +161,9 @@ pub fn prepare_configured(
     result.map(Some)
 }
 impl Capture {
+    pub(crate) fn seal_hash(&self) -> &str {
+        &self.seal_hash
+    }
     pub fn path(&self) -> &Path {
         &self.root
     }

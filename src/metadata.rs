@@ -374,7 +374,8 @@ pub(crate) fn remote_inventory(snapshots: &mut [Snapshot], records: &[Record]) -
     // partial) binds a metadata row; failed and absent candidates have no
     // payload to bind, so their rows are inventory without a payload.
     for record in records.iter().filter(|r| {
-        r.relative_output_path.is_some() && matches!(r.status.as_str(), "Transferred" | "Partial")
+        r.relative_output_path.is_some()
+            && matches!(r.status.as_str(), "Acquired" | "Transferred" | "Partial")
     }) {
         files
             .entry((&record.source_id, &record.source_path))

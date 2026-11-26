@@ -212,3 +212,5 @@ deferred entropy after core payloads, collected-copy analysis after live-source
 deletion, and same-drive output exclusions. Windows tests check fast process
 state before hot disk files and HostInfo afterward, plus expansion of a newly
 owned dynamic VHDX with payload hash preservation.
+
+Run `python scripts/test_s3_phases.py --binary target/debug/kumade` to exercise phase verification and restart recovery. It uses synthetic RAM, pagefile, live inventory and disk evidence.

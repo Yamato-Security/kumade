@@ -33,12 +33,15 @@ pub struct S3Args {
     /// Stream to s3://BUCKET/PREFIX using temporary AWS credentials
     #[arg(long, conflicts_with_all = ["output", "e01", "vhdx", "sftp"])]
     pub s3: Option<Location>,
+    /// Protected external directory for phased uploads and restartable delivery
+    #[arg(long, requires = "s3", conflicts_with_all = ["s3_staging_dir", "memory_staging_dir"])]
+    pub s3_recovery_dir: Option<PathBuf>,
     #[command(flatten)]
     pub connection: ConnectionArgs,
     /// Existing protected parent for local collection metadata
     #[arg(long, requires = "s3")]
     pub s3_staging_dir: Option<PathBuf>,
-    /// Multipart buffer per active stream (MiB, default 8, maximum 10,000 parts/object)
+    /// Multipart buffer or recovery chunk size in MiB (default 8, range 5–256)
     #[arg(long, requires="s3", value_parser=clap::value_parser!(u16).range(5..=256))]
     pub s3_part_mib: Option<u16>,
 }
@@ -55,7 +58,7 @@ pub struct ConnectionArgs {
 
 #[derive(clap::Args)]
 pub struct VerifyArgs {
-    /// Full s3:// URI of the final UUID-delivery.json printed by the collector
+    /// Full s3:// URI of the delivery or phase manifest printed by the collector
     #[arg(long)]
     pub s3: Location,
     #[command(flatten)]
@@ -138,7 +141,7 @@ impl std::str::FromStr for Location {
     }
 }
 impl Location {
-    fn key(&self, name: &str) -> Result<String> {
+    pub(crate) fn key(&self, name: &str) -> Result<String> {
         let key = if self.prefix.is_empty() {
             name.into()
         } else {
@@ -147,7 +150,7 @@ impl Location {
         ensure!(key.len() <= 1024, "S3 key exceeds 1024 bytes");
         Ok(key)
     }
-    fn uri(&self) -> String {
+    pub(crate) fn uri(&self) -> String {
         format!("s3://{}/{}", self.bucket, self.prefix)
     }
 }
@@ -184,7 +187,7 @@ pub(crate) struct Bucket {
     upload_error: Arc<OnceLock<String>>,
 }
 impl Bucket {
-    fn connect(
+    pub(crate) fn connect(
         location: Location,
         args: &ConnectionArgs,
         part_bytes: usize,
@@ -266,7 +269,7 @@ impl Bucket {
         }
         Ok(())
     }
-    fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
+    pub(crate) fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
         let checksum = STANDARD.encode(Sha256::digest(&data));
         let unconfirmed = || {
             format!(
@@ -548,6 +551,12 @@ pub fn verify(args: &VerifyArgs) -> Result<u8> {
         .rsplit_once('/')
         .context("Use the full delivery URI printed by the collector")?;
     let delivery = name.to_owned();
+    if name.contains("-phase-") {
+        let name = name.to_owned();
+        location.prefix = prefix.to_owned();
+        let bucket = Bucket::connect(location, &args.connection, 0, false)?;
+        return crate::s3_phases::verify(args, &bucket, &name);
+    }
     let id = Uuid::parse_str(
         name.strip_suffix("-delivery.json")
             .context("Expected UUID-delivery.json")?,

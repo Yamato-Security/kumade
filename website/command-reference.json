@@ -13,6 +13,7 @@
     "update-rules",
     "verify",
     "verify-delivery",
+    "resume-s3",
     "verify-s3"
   ]
 }
