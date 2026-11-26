@@ -1,7 +1,9 @@
 # Acquisition order and volatility
 
-Kumade's collection pipeline prioritizes rapidly changing state. This applies
-to directory, VHDX and E01 collection. Metadata-only source discovery and wizard
+Kumade acquires rapidly changing evidence first. The sequence below describes
+directory, VHDX and E01 collection. With [recoverable S3 delivery](S3.md),
+Kumade captures requested RAM first and publishes the smaller fast live-inventory
+phase before uploading RAM. Metadata-only source discovery and wizard
 size estimation happen before acquisition so the operator can choose scope;
 they do not perform entropy analysis or copy evidence payloads.
 

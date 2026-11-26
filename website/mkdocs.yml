@@ -1,5 +1,5 @@
 site_name: Kumade
-site_description: Windows evidence collection, live response, RAM acquisition and verified SFTP delivery by Yamato Security.
+site_description: Windows evidence collection, live response, RAM acquisition and verified SFTP and Amazon S3 delivery by Yamato Security.
 site_author: Yamato Security
 site_url: https://yamato-security.github.io/kumade/
 repo_url: https://github.com/Yamato-Security/kumade

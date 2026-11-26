@@ -10,9 +10,8 @@ payload hashes without reading original source evidence.
 ```
 
 For containers, inspect a read-only mounted run directory using the
-[container guide](../output/index.md). For remote delivery, use the trusted
-receiver or `verify-delivery`, rather than treating local upload metadata as
-verified evidence. A verified partial collection remains partial.
+[container guide](../output/index.md). For SFTP, use the trusted receiver or `verify-delivery`. For S3, use
+`verify-s3` with the collector’s printed URI and SHA-256. A verified partial collection remains partial.
 Read [verification semantics](../output/verification.md).
 
 ## Full command help

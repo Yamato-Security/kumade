@@ -149,7 +149,7 @@ payload/alternate stream. Original directory acquisitions remain supported.
 ```powershell
 Mount-DiskImage -ImagePath E:\Evidence\HOST01.vhdx -Access ReadOnly
 # Replace X: and the run directory with the mounted location:
-.\kumade.exe verify X:\HOST01_<UTC>_<RUNID>
+.\kumade.exe verify X:\HOST01_2026-11-25_09-00-00
 Dismount-DiskImage -ImagePath E:\Evidence\HOST01.vhdx
 ```
 

@@ -16,7 +16,7 @@ shows help. `plan` remains a noninteractive planning command.
 .\kumade.exe collect --yes -o E:\Evidence
 .\kumade.exe collect --no-wizard --paging --vss --vhdx E:\Evidence
 
-# Explicit optional process scan, using Core unless another pack is requested:
+# Optional process scan. The standard binary defaults to Core, bundled binaries to their embedded pack:
 .\kumade.exe collect --yes --scan-processes -o E:\Evidence
 .\kumade.exe collect --yes --scan-processes --yara-ruleset extended -o E:\Evidence
 .\kumade.exe collect --yes --scan-processes --yara-rules .\local.yar -o E:\Evidence
@@ -38,11 +38,11 @@ without starting collection. Invalid yes/no and numeric answers are reprompted.
 | Paging/swap/hibernation/existing memory dumps | Off; `--paging` or explicit `--artifact windows.paging` enables them |
 | Live inventory | On for live collection, with at most two query workers |
 | Native/raw locked-file reads | Enabled where supported; not an optional integrity shortcut |
-| SHA-256 and destination readback | Required |
+| SHA-256 and destination readback | Local copies are checked by the collector. Remote readback uses the SFTP receiver or `verify-s3` on the analyst workstation. |
 | Full-drive PE entropy discovery | Off |
-| Live process-memory YARA | Off; Core and two workers when selected |
+| Live process-memory YARA | Off; two workers by default, using Core on the standard binary or the embedded pack on bundled binaries |
 | VSS | Off |
-| Directory output | Default; VHDX/E01 selectable on Windows |
+| Destination | Defaults to directory output. Windows also offers VHDX/E01. Select SFTP or S3 with explicit connection options. |
 | Acquisition workers | Available logical CPUs, capped at four; `-T` accepts 1–128 |
 | Full partition imaging | Off; a separate guided mode using `forensic-copy` |
 | New physical RAM capture | Off; `--memory` requires a separately supplied DumpIt toolkit |
@@ -63,8 +63,9 @@ overlapping selections are counted and copied once. See
 [hibernation acquisition](hibernation-acquisition.md) for the VSS exclusion and
 full/reduced-file limitations.
 
-Explicit feature flags become the wizard's initial answers. `--vhdx`/`--e01`
-fix the output mode; otherwise the wizard offers VHDX and E01 with No defaults.
+Explicit feature flags become the wizard's initial answers. `--vhdx`, `--e01`,
+`--sftp` and `--s3` fix the output mode. With directory output on Windows,
+the wizard can offer VHDX and E01.
 An explicit `-T` value is the initial worker count and can be adjusted. Offline
 sources do not offer live inventory, VSS or process-memory YARA. VSS and YARA
 are also disabled in the wizard when the binary cannot support the native host

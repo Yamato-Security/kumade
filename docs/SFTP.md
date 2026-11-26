@@ -1,8 +1,10 @@
 # Direct SFTP evidence delivery
 
 Kumade can stream collected files and raw NTFS streams directly to a dedicated
-Kumade receiver or hardened Linux OpenSSH evidence server. No local evidence-payload copy or container is
-created. Compression is streaming gzip (fast level); sparse logical zero ranges
+Kumade receiver or hardened Linux OpenSSH evidence server. Disk payloads stream
+without a local archive. Metadata is staged locally, as are RAM and paired
+pagefiles when a live memory capture is requested. Compression is streaming gzip
+(fast level); sparse logical zero ranges
 compress in transit. Memory is bounded per worker, rather than proportional to
 file size. This mode is separate from VHDX/E01 output.
 
@@ -151,7 +153,7 @@ for downstream tools that expect a particular acquisition layout.
 
 ## Forensic footprint and limits
 
-Payloads are streamed without local staging, including locked-file raw NTFS
+Disk payloads are streamed without local staging, including locked-file raw NTFS
 fallback. **Metadata is staged locally** in a private directory: plans, manifests,
 seals, live inventory and optional entropy/YARA reports. These can be substantial
 for a comprehensive entropy inventory. Prefer an external drive or a preconfigured

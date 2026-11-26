@@ -1,6 +1,6 @@
 # Kumade implementation status
 
-Updated 25 November 2026. The architecture document is the target design;
+Updated 27 November 2026. The architecture document is the target design;
 this file distinguishes it from the code actually implemented.
 
 The first increment uses one Rust package with separate library modules for
@@ -11,16 +11,19 @@ verification. Splitting the stable modules into workspace crates remains possibl
 
 | Command | Current behavior |
 |---|---|
-| `collect` / collection options without a subcommand | Plan, acquire, hash-verify and seal a new local collection |
+| `collect` / collection options without a subcommand | Acquire selected artifacts in a directory, VHDX or E01, or deliver them over SFTP or S3 |
 | No arguments | Display help without starting collection |
 | `doctor` | Describe compiled capabilities and unfinished providers |
 | `list` | List embedded or explicitly supplied acquisition definitions |
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
+| `list-vss` | List existing local shadow copies and their UTC creation times |
 | `verify` | Verify sealed metadata, observation accounting and every referenced payload |
 | `forensic-copy` | Copy a logical partition to a verified image on a separate external drive; optional VSS |
 | `live-info` | Capture structured current host state without ordinary artifact acquisition |
 | `scan-processes` | Scan readable live process memory with YARA Forge or local rules |
 | `receive` | Run a temporary upload-only SFTP receiver with automatic trusted readback |
+| `update-rules` | Download and validate a compressed YARA Forge ruleset |
+| `resume-s3` | Resume uploads from a retained hybrid or fully staged S3 workspace |
 | `verify-s3` | Verify an S3 collection independently and optionally restore its files |
 | `verify-delivery` | Verify a revoked SFTP delivery and optionally restore a working copy |
 
@@ -48,8 +51,8 @@ snapshots on native elevated Windows. Artifact collection supports repeated
 `--volume` selection. Both normal reads and raw NTFS fallback use the snapshot;
 unsupported volumes and snapshot-omitted paging files are explicit partial results,
 never a live fallback. Snapshot provenance is retained and only this requester’s
-set is cleaned up. Application writers and existing-snapshot enumeration remain
-unimplemented. See [VSS acquisition](vss.md) for prerequisites and limitations.
+set is cleaned up. Use `list-vss` to enumerate existing copies and `collect --vss-existing` to select
+them. See [historical snapshots](vss-existing.md) and [new VSS acquisition](vss.md).
 
 ## Integrity and failure behavior
 
@@ -95,8 +98,8 @@ No live company system or private company evidence is used in platform CI.
 3. Broader historical VSS/provider qualification and application-writer coordination.
    Existing copies are listed by `list-vss` and collected with `--vss-existing`.
 4. Structural validation using existing Yamato parsers without altering originals.
-5. Disk-backed planning, device-aware concurrency, durable resume/cancellation.
-6. Portable definition import, streaming archives and cloud transport.
+5. Disk-backed planning, device-aware concurrency and resuming interrupted local acquisitions.
+6. Portable definition import, streaming archives and additional cloud destinations.
 
 All proposed full-profile definitions should receive positive/versioned fixtures
 and independent comparison before a release claims broad production coverage.
@@ -135,6 +138,12 @@ payloads with metadata staging; RAM additionally requires an explicit protected
 staging parent. The receiver revokes its temporary credential and validates
 stored/decoded hashes. See [RAM](memory-acquisition.md), [live inventory](live-info.md)
 and [SFTP](SFTP.md).
+
+[Amazon S3 delivery](S3.md) defaults to a hybrid workspace for volatile evidence
+and upload receipts. Disk files stream to the bucket. Use `resume-s3` to publish
+recoverable evidence after an interruption and `verify-s3` for independent
+readback. `--s3-recovery-dir` stages the full case. `--s3-direct` streams a
+collection without a restartable workspace.
 
 The [published benchmarks](benchmarks/index.md) include 38 measured runs on
 Windows 11 ARM64, including RAM/pagefiles, VSS, containers, entropy, YARA and

@@ -15,7 +15,7 @@ Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01, SFTP and S3 are
 alternative outputs. Read [the wizard](../collection-wizard.md),
 [collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
-[hibernation](../hibernation-acquisition.md)
+[hibernation](../hibernation-acquisition.md), [S3 delivery and recovery](../S3.md)
 and [output guide](../output/index.md).
 
 Acquisition defaults to available logical CPUs capped at four. `-T` accepts
