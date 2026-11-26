@@ -121,7 +121,7 @@ def main(binary):
         def run(args, success=True, host=None):
             result = subprocess.run([str(binary), *map(str, args), "--s3-endpoint", endpoint],
                                     env=dict(env, AWS_ACCESS_KEY_ID="TEST-ANALYST" if host is None else "TEST-UPLOAD-" + host),
-                                    capture_output=True, text=True, timeout=90)
+                                    capture_output=True, encoding="utf-8", timeout=90)
             assert (result.returncode == 0) == success, (result.stdout, result.stderr)
             return dict(line.split(": ", 1) for line in result.stdout.splitlines() if ": " in line)
 
