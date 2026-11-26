@@ -41,6 +41,12 @@ class Bucket(BaseHTTPRequestHandler):
     def error(self, status, code):
         self.respond(status, f"<Error><Code>{code}</Code></Error>".encode())
 
+    def lose_ack(self, kind):
+        # The object is already stored; only the response is lost, so the retry conflicts.
+        self.server.lose_acks.discard(kind)
+        self.close_connection = True
+        self.connection.shutdown(socket.SHUT_RDWR)
+
     def handle_request(self):
         path = urlsplit(self.path)
         key = unquote(path.path).removeprefix("/evidence-test/")
@@ -94,6 +100,8 @@ class Bucket(BaseHTTPRequestHandler):
                 if self.headers.get("x-amz-checksum-sha256") != checksum(data):
                     return self.error(400, "BadDigest")
                 store.objects[key] = data
+                if "put" in store.lose_acks and key.startswith("case/LOSTACK_") and "/checkpoints/" in key:
+                    return self.lose_ack("put")
                 return self.respond(200, headers={"ETag": '"stored"'})
             if self.command == "POST" and "uploadId" in params:
                 parts = store.pending.pop(key)
@@ -101,6 +109,8 @@ class Bucket(BaseHTTPRequestHandler):
                     number = int(entry.findtext("{*}PartNumber"))
                     assert entry.findtext("{*}ChecksumSHA256") == checksum(parts[number])
                 store.objects[key] = b"".join(parts[i] for i in sorted(parts))
+                if "complete" in store.lose_acks and key.startswith("case/LOSTACK_"):
+                    return self.lose_ack("complete")
                 return self.respond(200, b'<CompleteMultipartUploadResult><ETag>"multipart"</ETag></CompleteMultipartUploadResult>')
         self.error(400, "InvalidRequest")
 
@@ -112,6 +122,7 @@ def main(binary):
         server.lock = threading.Lock()
         server.objects, server.pending, server.attempts = {}, {}, {}
         server.dropped = server.deny = server.collide = False
+        server.lose_acks = set()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         endpoint = f"http://127.0.0.1:{server.server_port}"
@@ -172,6 +183,15 @@ def main(binary):
                 bad = root / (host + "-bad-receipt")
                 run([*verify, "--receipt", bad], success=False)
                 assert not bad.exists()
+            # S3 stores a create-only PUT and a multipart completion, but both responses are
+            # lost. The SDK retries see PreconditionFailed; the collection must still succeed.
+            server.lose_acks = {"put", "complete"}
+            lost = collect("LOSTACK", data)
+            assert not server.lose_acks and not server.pending
+            restored = root / "LOSTACK-restored"
+            run(["verify-s3", "--s3", lost["Remote delivery"], "--sha256", lost["Delivery SHA256"],
+                 "--receipt", root / "LOSTACK-receipt", "--restore", restored])
+            assert (restored / "C/Windows/Prefetch/A.pf").read_bytes() == data
             server.deny = True
             collect("DENIED", data, success=False)
             assert not server.pending
@@ -183,7 +203,7 @@ def main(binary):
         finally:
             server.shutdown()
             thread.join()
-    print("PASS: two sources, part retry after lost ACK, create-only writes, readback/restore, tampering and denied writes")
+    print("PASS: two sources, part/PUT/completion retries after lost ACKs, create-only writes, readback/restore, tampering and denied writes")
 
 
 if __name__ == "__main__":

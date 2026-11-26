@@ -11,7 +11,12 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use aws_sdk_s3::{
     Client,
-    config::{BehaviorVersion, Credentials, Region, retry::RetryConfig, timeout::TimeoutConfig},
+    config::{
+        BehaviorVersion, ConfigBag, Credentials, Intercept, Region, RuntimeComponents,
+        interceptors::BeforeTransmitInterceptorContextRef, retry::RetryConfig,
+        timeout::TimeoutConfig,
+    },
+    error::{BoxError, ProvideErrorMetadata, SdkError},
     primitives::ByteStream,
     types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
 };
@@ -22,7 +27,10 @@ use std::{
     env,
     io::{self, Read, Write},
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU32, Ordering},
+    },
     time::Duration,
 };
 use url::Url;
@@ -152,6 +160,41 @@ impl Location {
     }
 }
 
+/// Counts transmissions of one request. When S3 stores a create-only write but its
+/// response is lost, the SDK's automatic retry is refused because the key now exists.
+#[derive(Clone, Debug, Default)]
+struct Attempts(Arc<AtomicU32>);
+impl Intercept for Attempts {
+    fn name(&self) -> &'static str {
+        "KumadeAttempts"
+    }
+    fn read_before_attempt(
+        &self,
+        _: &BeforeTransmitInterceptorContextRef<'_>,
+        _: &RuntimeComponents,
+        _: &mut ConfigBag,
+    ) -> Result<(), BoxError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+impl Attempts {
+    /// Accept a conflict only after this request was retried, because an earlier attempt
+    /// may have been stored before its acknowledgement was lost. A conflict on the first
+    /// attempt is a genuine collision. verify-s3 checks every stored hash either way.
+    fn retried_conflict<E: ProvideErrorMetadata, R>(
+        &self,
+        error: &SdkError<E, R>,
+        codes: &[&str],
+    ) -> bool {
+        self.0.load(Ordering::Relaxed) > 1
+            && error
+                .as_service_error()
+                .and_then(|e| e.code())
+                .is_some_and(|code| codes.contains(&code))
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Bucket {
     location: Location,
@@ -246,19 +289,23 @@ impl Bucket {
     }
     fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
         let checksum = STANDARD.encode(Sha256::digest(&data));
-        self.runtime
-            .block_on(
-                self.client
-                    .put_object()
-                    .bucket(&self.location.bucket)
-                    .key(key)
-                    .if_none_match("*")
-                    .checksum_sha256(checksum)
-                    .body(data.into())
-                    .send(),
-            )
-            .with_context(|| format!("Create-only S3 PUT failed for {key}"))?;
-        Ok(())
+        let attempts = Attempts::default();
+        match self.runtime.block_on(
+            self.client
+                .put_object()
+                .bucket(&self.location.bucket)
+                .key(key)
+                .if_none_match("*")
+                .checksum_sha256(checksum)
+                .body(data.into())
+                .customize()
+                .interceptor(attempts.clone())
+                .send(),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) if attempts.retried_conflict(&e, &["PreconditionFailed"]) => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("Create-only S3 PUT failed for {key}")),
+        }
     }
     pub(crate) fn open(&self, name: &str) -> Result<Box<dyn Read>> {
         crate::sftp::validate_object_name(name)?;
@@ -407,23 +454,31 @@ impl Upload {
         let parts = CompletedMultipartUpload::builder()
             .set_parts(Some(std::mem::take(&mut self.parts)))
             .build();
-        s.runtime
-            .block_on(
-                s.client
-                    .complete_multipart_upload()
-                    .bucket(&s.location.bucket)
-                    .key(&self.key)
-                    .set_upload_id(self.id.clone())
-                    .if_none_match("*")
-                    .multipart_upload(parts)
-                    .send(),
-            )
-            .with_context(|| {
-                format!(
-                    "Create-only S3 multipart completion failed for {}",
-                    self.key
-                )
-            })?;
+        let attempts = Attempts::default();
+        match s.runtime.block_on(
+            s.client
+                .complete_multipart_upload()
+                .bucket(&s.location.bucket)
+                .key(&self.key)
+                .set_upload_id(self.id.clone())
+                .if_none_match("*")
+                .multipart_upload(parts)
+                .customize()
+                .interceptor(attempts.clone())
+                .send(),
+        ) {
+            Ok(_) => {}
+            // A completed upload ID can also be reported as no longer existing.
+            Err(e) if attempts.retried_conflict(&e, &["PreconditionFailed", "NoSuchUpload"]) => {}
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!(
+                        "Create-only S3 multipart completion failed for {}",
+                        self.key
+                    )
+                });
+            }
+        }
         self.id = None;
         Ok(())
     }
