@@ -53,7 +53,7 @@ No rule directories beside the executable or in the working directory are
 silently loaded.
 
 `update-rules` works on the analyst's machine as well as Windows. Without `-o`,
-it writes to `YaraRules` beside the executable; choose another destination if
+it writes the ZIP directly into the directory containing the executable; choose another destination if
 that location is read-only. It resolves `latest` once, checks the download size
 and GitHub release-asset SHA-256, validates the archive and compiles every rule
 before saving it. Hash checking detects corruption and disagreement with release

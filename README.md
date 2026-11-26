@@ -355,12 +355,13 @@ rules onto the target. Decompression and compilation happen in memory. The
 standard executable also accepts Forge ZIPs with `--rules` / `--yara-rules`.
 
 ```powershell
-kumade update-rules --ruleset core -o E:\YaraRules
-kumade update-rules --ruleset extended -o E:\YaraRules
-kumade update-rules --ruleset full -o E:\YaraRules
+kumade update-rules --ruleset core
+kumade update-rules --ruleset extended
+kumade update-rules --ruleset full
 ```
 
-Updates stay in versioned ZIP files. Use the ZIP path printed by the command;
+Updates save versioned ZIP files beside the executable by default; use `-o` to
+choose another directory. Use the ZIP path printed by the command;
 the bundled executable is not rewritten. See the [YARA guide](docs/yara-process-scan.md)
 for offline use, provenance, build variants and rule licensing.
 

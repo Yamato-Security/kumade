@@ -141,14 +141,14 @@ standalone `--ruleset` spelling. Its result files are sealed with the collection
 SHA-256 and compilation before saving it. Existing different contents are refused.
 
 ```powershell
-.\kumade.exe update-rules --ruleset core -o E:\YaraRules
-.\kumade.exe update-rules --ruleset extended -o E:\YaraRules
-.\kumade.exe update-rules --ruleset full -o E:\YaraRules
+.\kumade.exe update-rules --ruleset core
+.\kumade.exe update-rules --ruleset extended
+.\kumade.exe update-rules --ruleset full
 ```
 
 Use the ZIP path printed by the command with `scan-processes --rules <ZIP>` or
 `collect --scan-processes --yara-rules <ZIP>`. Without `-o`, download beside the
-executable under `YaraRules`. Updating does not rewrite the embedded executable.
+executable, without creating a subdirectory. Updating does not rewrite the embedded executable.
 See [compressed/offline rules](../yara-process-scan.md#compressedoffline-rule-inputs-and-updates).
 '''),
     'verify': ('Check a retained local collection', r'''Read the saved collection, validate seals/accounting and compare retained

@@ -308,21 +308,24 @@ pub struct UpdateOptions {
     /// Forge release tag YYYYMMDD or latest
     #[arg(long, default_value = "latest")]
     pub rules_release: String,
-    /// Destination for versioned ZIP files (default: YaraRules beside this executable)
+    /// Destination for versioned ZIP files (default: same directory as this executable)
     #[arg(short, long, value_name = "DIR")]
     pub output: Option<PathBuf>,
     /// Suppress routine messages
     #[arg(short, long)]
     pub quiet: bool,
 }
-pub fn update(options: &UpdateOptions) -> Result<u8> {
-    let directory = match &options.output {
-        Some(path) => path.clone(),
-        None => std::env::current_exe()?
+fn update_directory(output: Option<&Path>) -> Result<PathBuf> {
+    match output {
+        Some(path) => Ok(path.to_path_buf()),
+        None => Ok(std::env::current_exe()?
             .parent()
             .context("Executable has no parent")?
-            .join("YaraRules"),
-    };
+            .to_path_buf()),
+    }
+}
+pub fn update(options: &UpdateOptions) -> Result<u8> {
+    let directory = update_directory(options.output.as_deref())?;
     if !options.quiet {
         crate::ui::banner();
         crate::ui::field("Ruleset", options.ruleset);
@@ -442,6 +445,16 @@ mod tests {
         let mut bytes = fixture(RuleSet::Core, None);
         bytes.truncate(bytes.len() / 2);
         assert!(archive_source(bytes, RuleSet::Core).is_err());
+    }
+    #[test]
+    fn updates_default_to_the_executable_directory_and_honor_explicit_output() {
+        let executable = std::env::current_exe().unwrap();
+        assert_eq!(
+            update_directory(None).unwrap(),
+            executable.parent().unwrap()
+        );
+        let explicit = Path::new("chosen-output-codex");
+        assert_eq!(update_directory(Some(explicit)).unwrap(), explicit);
     }
     #[test]
     fn publishing_a_zip_is_idempotent_and_never_clobbers_different_contents() {
