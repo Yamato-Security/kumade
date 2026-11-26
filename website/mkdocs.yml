@@ -125,6 +125,7 @@ nav:
       - update-rules: commands/update-rules.md
       - verify: commands/verify.md
       - verify-delivery: commands/verify-delivery.md
+      - verify-s3: commands/verify-s3.md
   - Collection:
       - Collection guide: collection/index.md
       - Artifact catalogue: collection/catalogue.md
@@ -145,6 +146,7 @@ nav:
       - NTFS VHDX: vhdx-output.md
       - Compressed E01: e01-output.md
       - SFTP delivery: SFTP.md
+      - Amazon S3: S3.md
       - Built-in SFTP receiver: SFTP-Receiver.md
       - Manifests and verification: output/verification.md
       - Analyze the collection: output/analysis.md

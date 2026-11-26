@@ -79,7 +79,7 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
     let run: serde_json::Value = serde_json::from_reader(File::open(root.join("Run.json"))?)?;
     ensure!(
         run["RemoteDelivery"].is_null(),
-        "SFTP collections are verified on the trusted server with `kumade verify-delivery` or scripts/sftp_restore.py; uploader acknowledgements are not readback verification"
+        "Use `kumade verify-delivery` for SFTP or `kumade verify-s3` for S3 to verify the uploaded evidence"
     );
     if run["EvidenceLayout"] == "DriveRoots" {
         ensure!(

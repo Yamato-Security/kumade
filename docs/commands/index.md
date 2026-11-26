@@ -16,6 +16,7 @@ Run `kumade.exe --help` for the root menu, or `kumade.exe COMMAND --help` for a 
 | [`update-rules`](update-rules.md) | Download compressed YARA Forge rules |
 | [`verify`](verify.md) | Check a retained local collection |
 | [`verify-delivery`](verify-delivery.md) | Verify or restore an SFTP delivery |
+| [`verify-s3`](verify-s3.md) | Verify or restore an S3 delivery |
 
 [Root help snapshot](help/kumade.txt). These pages describe current source behavior. A release sharing the same version label may predate recent flags.
 

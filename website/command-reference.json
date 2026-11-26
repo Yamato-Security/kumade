@@ -12,6 +12,7 @@
     "scan-processes",
     "update-rules",
     "verify",
-    "verify-delivery"
+    "verify-delivery",
+    "verify-s3"
   ]
 }

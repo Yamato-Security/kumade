@@ -40,6 +40,7 @@ pub mod wizard;
 pub mod early;
 pub mod ordering;
 
+pub mod s3;
 pub mod sftp;
 
 pub mod sftp_receive;

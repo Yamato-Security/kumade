@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add direct Amazon S3 collection with short-lived credentials, conditional
+  writes, multipart retries and per-host evidence prefixes. Add `verify-s3`
+  for independent SHA-256 readback and restoration.
+
 - Accept concurrent SFTP collections on one listener with `receive --sources N`.
   Each computer gets its own expiring credentials, inbox and readback receipt.
   A running collector can reconnect to a running Kumade receiver and continue

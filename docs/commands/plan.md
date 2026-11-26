@@ -102,7 +102,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --memory-timeout <MEMORY_TIMEOUT>
               RAM capture deadline in seconds [default: 1800]
           --memory-staging-dir <DIR>
-              Explicit RAM staging parent (required with --memory and SFTP; prefer external storage)
+              Explicit RAM staging parent (required with --memory and remote delivery; prefer external storage)
       -q, --quiet
               Suppress progress and routine console messages
           --high-entropy
@@ -147,6 +147,16 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Maximum reconnect attempts per collection with a resume-capable receiver (default: 3)
           --sftp-no-compression
               Disable gzip payload compression (sparse zero ranges will use network bandwidth)
+          --s3 <S3>
+              Stream to s3://BUCKET/PREFIX using temporary AWS credentials
+          --s3-region <S3_REGION>
+              AWS region (default: AWS_REGION, AWS_DEFAULT_REGION or us-east-1)
+          --s3-endpoint <S3_ENDPOINT>
+              Explicit S3-compatible HTTPS endpoint (HTTP allowed on loopback for testing)
+          --s3-staging-dir <S3_STAGING_DIR>
+              Existing protected parent for local collection metadata
+          --s3-part-mib <S3_PART_MIB>
+              Multipart buffer per active stream (MiB, default 8, maximum 10,000 parts/object)
       -v, --verbose
               List each file being copied instead of displaying a progress bar
       -h, --help

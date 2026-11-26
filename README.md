@@ -300,7 +300,7 @@ uses hashes, not an authenticated signing identity.
 ## Not implemented yet
 
 Application-writer-coordinated VSS backups, external processing,
-image-source CLI support, ZIP archive packaging, cloud upload, resuming after process restart,
+image-source CLI support, ZIP archive packaging, resuming after process restart,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.
 
@@ -364,6 +364,13 @@ Updates save versioned ZIP files beside the executable by default; use `-o` to
 choose another directory. Use the ZIP path printed by the command;
 the bundled executable is not rewritten. See the [YARA guide](docs/yara-process-scan.md)
 for offline use, provenance, build variants and rule licensing.
+
+## Amazon S3 delivery
+
+Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --s3-region ap-northeast-1 --yes`
+with temporary AWS credentials. Each host streams to its own prefix. The collector
+retries interrupted parts. Use `kumade verify-s3` on an analyst workstation to check
+the recorded SHA-256 and optionally restore the evidence. [S3 permissions and setup](docs/S3.md)
 
 ## Remote SFTP delivery
 

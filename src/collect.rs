@@ -538,7 +538,7 @@ pub fn collect_with_capacity(
 ) -> Result<(PathBuf, Summary)> {
     ensure!(
         options.remote.is_none() || !options.ntfs_metadata,
-        "SFTP exports streams and metadata separately; native container output is incompatible"
+        "Remote delivery exports streams and metadata separately; native container output is incompatible"
     );
     let mut owned_plan = initial.clone();
     let plan = &mut owned_plan;

@@ -161,6 +161,10 @@ pub trait RemoteWrite: Write + Send {
 }
 pub trait Store: Send + Sync {
     fn create(&self, name: &str, mode: u32) -> Result<Box<dyn RemoteWrite>>;
+    /// Object stores may publish acquisition progress before the journal closes.
+    fn checkpoint(&self, _record: &Record, _object: Option<&Object>) -> Result<()> {
+        Ok(())
+    }
 }
 struct HostPin(String);
 impl client::Handler for HostPin {
@@ -852,6 +856,7 @@ impl Upload {
 pub struct Target {
     store: Arc<dyn Store>,
     id: String,
+    delivery_kind: &'static str,
     gzip: bool,
     objects: Mutex<BTreeMap<String, Object>>,
     journal: Mutex<Option<Upload>>,
@@ -862,8 +867,17 @@ impl Target {
         &self.id
     }
     pub fn from_store(store: Arc<dyn Store>, gzip: bool) -> Result<Arc<Self>> {
-        let id = uuid::Uuid::new_v4().to_string();
+        Self::new_delivery(store, gzip, uuid::Uuid::new_v4(), "KumadeSftpDelivery")
+    }
+    pub(crate) fn new_delivery(
+        store: Arc<dyn Store>,
+        gzip: bool,
+        id: uuid::Uuid,
+        delivery_kind: &'static str,
+    ) -> Result<Arc<Self>> {
+        let id = id.to_string();
         let target = Arc::new(Self {
+            delivery_kind,
             store,
             id,
             gzip,
@@ -949,6 +963,7 @@ impl Target {
             .map_err(|_| anyhow::anyhow!("SFTP inventory poisoned"))?
             .get(&record.observation_id)
             .cloned();
+        self.store.checkpoint(record, object.as_ref())?;
         self.event(&serde_json::json!({"Event":"Acquisition","Record":record,"Object":object}))
     }
     fn retain(&self, id: String, object: Object) -> Result<()> {
@@ -1044,7 +1059,7 @@ impl Target {
         let mut delivery = self.begin("delivery.json".into(), "Delivery.json".into(), false)?;
         serde_json::to_writer(
             &mut delivery,
-            &serde_json::json!({"SchemaVersion":1,"Kind":"KumadeSftpDelivery","DeliveryId":self.id,"CollectionName":root.file_name().context("Missing collection name")?.to_string_lossy(),"Objects":objects,"Summary":summary,"ReadbackVerification":"PendingTrustedServerVerification","FinishedUtc":utc_now()}),
+            &serde_json::json!({"SchemaVersion":1,"Kind":self.delivery_kind,"DeliveryId":self.id,"CollectionName":root.file_name().context("Missing collection name")?.to_string_lossy(),"Objects":objects,"Summary":summary,"ReadbackVerification":"PendingTrustedServerVerification","FinishedUtc":utc_now()}),
         )?;
         let name = delivery.name.clone();
         let expected = hex(&delivery.logical.clone().finalize());
@@ -1149,7 +1164,7 @@ pub(crate) fn acquire(
                     "Transferred"
                 }
                 .into();
-                record.reason=if record.status=="Partial"{"Source metadata/content changed; streamed version retained; server readback is pending"}else{"SFTP write/fsync/close acknowledged; trusted server readback is pending"}.into();
+                record.reason=if record.status=="Partial"{"Source metadata/content changed; streamed version retained; server readback is pending"}else{"Remote object upload acknowledged; independent readback is pending"}.into();
             }
             Err(e) => {
                 record.status = "Failed".into();
@@ -1163,7 +1178,7 @@ pub(crate) fn acquire(
     })();
     if let Err(e) = result {
         record.status = "Failed".into();
-        record.reason = format!("SFTP acquisition failed: {e:#}; no local payload fallback");
+        record.reason = format!("Remote acquisition failed: {e:#}; no local payload fallback");
     }
     record.finished_utc = utc_now();
     record
@@ -1178,10 +1193,10 @@ impl Staging {
         // Do not silently create an arbitrary parent tree on the evidence disk.
         ensure!(
             parent.is_dir(),
-            "SFTP staging parent must already be a directory"
+            "Remote metadata staging parent must already be a directory"
         );
         let directory = tempfile::Builder::new()
-            .prefix("kumade-sftp-metadata-")
+            .prefix("kumade-remote-metadata-")
             .tempdir_in(parent)?;
         let protection = crate::platform::protect_output_root(directory.path()).and_then(|policy| {
             ensure!(policy != "FilesystemHasNoPersistentACLs", "Metadata staging requires persistent access controls; choose an NTFS or other protected staging filesystem");
@@ -1218,7 +1233,7 @@ impl Drop for Staging {
     fn drop(&mut self) {
         if let Some(directory) = self.directory.take() {
             eprintln!(
-                "SFTP metadata retained after incomplete delivery: {}",
+                "Remote metadata retained after incomplete delivery: {}",
                 directory.keep().display()
             );
         }
