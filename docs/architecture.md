@@ -2,7 +2,7 @@
 
 **System design and implementation architecture · Proposal v0.1 · 18 November 2026**
 
-**Language:** Rust, edition 2024. **License:** Reciprocal Public License 1.5 (`RPL-1.5`), matching current Juntei. **Initial platform:** Windows. **Initial destination:** local disk or an explicitly selected network share. **Future destinations:** S3-compatible storage, Azure Blob Storage and other approved cloud backends.
+**Language:** Rust, edition 2024. **License:** Reciprocal Public License 1.5 (`RPL-1.5`), matching current Juntei. **Initial platform:** Windows. **Initial destination:** local disk or an explicitly selected network share. **Remote destinations:** SFTP and [S3](S3.md). Azure Blob Storage remains a future destination.
 
 This document describes the target design. The initial implementation is available; [implementation status](implementation-status.md) distinguishes its current features from planned capabilities. Parity with the reference tools has not been demonstrated. The [collector comparison](tool-comparison.md) summarizes current documented capabilities and qualifications using anonymized tool labels.
 

@@ -157,7 +157,9 @@ long names, destination ACLs and FAT/exFAT behavior all need live qualification.
 The initial release did not implement RAM/VSS providers. Current source now
 implements external DumpIt, paired pagefiles, owned VSS and SFTP delivery;
 see the feature guides and [later benchmark conditions](benchmarks/index.md).
-Cloud upload remains unimplemented. Broader platform qualification is still required.
+Run `python scripts/test_s3_hybrid.py --binary target/debug/kumade` for the hybrid end-to-end test. It starts the executable without an S3 mode flag, checks workspace placement and rejection of staging inside an evidence tree, and tests staging footprint, interrupted transfers, a killed collector, restore after removal of the source, and NTFS alternate streams on Windows. It also drops chunk acknowledgements, denies a write and shortens an open source file, then checks the restored partial bytes and digest. The phase suite also recovers synthetic RAM, pagefiles and process tables from a hybrid workspace.
+
+Direct S3 delivery tests exercise multipart part replay, lost acknowledgements at each publication stage, aborted uploads, conflicting objects, invalid checksums, recovery after a lost final response, and verified restore with synthetic evidence. Run `python scripts/test_s3.py --binary target/debug/kumade` (append `.exe` on Windows). Broader platform qualification is still required.
 
 Rust also reports a future-compatibility warning for transitive dependency
 `binrw 0.11.3` through `ntfs 0.4`; current checks and builds succeed.
@@ -212,3 +214,5 @@ deferred entropy after core payloads, collected-copy analysis after live-source
 deletion, and same-drive output exclusions. Windows tests check fast process
 state before hot disk files and HostInfo afterward, plus expansion of a newly
 owned dynamic VHDX with payload hash preservation.
+
+Run `python scripts/test_s3_phases.py --binary target/debug/kumade` to exercise phase verification and restart recovery. It uses synthetic RAM, pagefile, live inventory and disk evidence.

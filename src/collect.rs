@@ -135,19 +135,19 @@ impl Write for Transfer<'_> {
     }
 }
 
-fn source_fingerprint(file: &File, native_ntfs: bool) -> Result<Fingerprint> {
+fn source_fingerprint(file: &File, capture_identity: bool) -> Result<Fingerprint> {
     let value = fingerprint(&file.metadata()?);
     #[cfg(windows)]
     {
         let mut value = value;
-        if native_ntfs {
+        if capture_identity {
             value.identity = Some(metadata::file_identity(file)?);
         }
         Ok(value)
     }
     #[cfg(not(windows))]
     {
-        let _ = native_ntfs;
+        let _ = capture_identity;
         Ok(value)
     }
 }
@@ -173,6 +173,8 @@ pub fn acquire_one(
 struct DestinationPolicy<'a> {
     remote: Option<&'a Arc<crate::sftp::Target>>,
     native_ntfs: bool,
+    phased_s3: bool,
+    hybrid: Option<&'a crate::s3_phases::hybrid::Disk>,
     source_sparse: bool,
     host_reserve: Option<&'a HostReserve>,
 }
@@ -246,11 +248,16 @@ fn acquire_one_inner(
         record.finished_utc = utc_now();
         return record;
     }
+    if let Some(disk) = destination.hybrid {
+        return disk.acquire(record, source, item, raw_cache);
+    }
     if let Some(target) = destination.remote {
         return crate::sftp::acquire(record, source, item, raw_cache, target);
     }
     let outcome = (|| -> Result<()> {
-        let relative = if native_ntfs {
+        let relative = if destination.phased_s3 {
+            PathBuf::from(crate::sftp::relative_payload(item)?)
+        } else if native_ntfs {
             metadata::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
         } else {
             paths::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
@@ -307,7 +314,7 @@ fn acquire_one_inner(
             source,
             item,
             raw_cache,
-            native_ntfs,
+            native_ntfs || destination.phased_s3,
             &mut record.method,
             &mut transfer,
             |attributes, writer| {
@@ -429,7 +436,7 @@ pub(crate) fn copy_source<W: Write>(
     source: &Source,
     item: &PlannedFile,
     raw_cache: &mut HashMap<PathBuf, RawVolume>,
-    native_ntfs: bool,
+    capture_identity: bool,
     method: &mut String,
     writer: &mut W,
     mut attributes: impl FnMut(u32, &mut W) -> Result<()>,
@@ -442,7 +449,7 @@ pub(crate) fn copy_source<W: Write>(
     match platform::open_source(&native_path) {
         Ok(mut input) => {
             platform::validate_open_file(&input, &source.root)?;
-            let before = source_fingerprint(&input, native_ntfs)?;
+            let before = source_fingerprint(&input, capture_identity)?;
             #[cfg(windows)]
             {
                 use std::os::windows::fs::MetadataExt;
@@ -452,7 +459,7 @@ pub(crate) fn copy_source<W: Write>(
             attributes(0, writer)?;
             let limit = before.size.checked_add(1).context("Source size overflow")?;
             let copied = io::copy(&mut Read::by_ref(&mut input).take(limit), &mut *writer)?;
-            let after = source_fingerprint(&input, native_ntfs)?;
+            let after = source_fingerprint(&input, capture_identity)?;
             ensure!(
                 copied == before.size,
                 "Source changed size or ended early during acquisition"
@@ -505,11 +512,11 @@ impl Journal {
             self.errors.serialize(r)?;
             self.errors.flush()?;
         }
+        // Preserve the local observation even if its remote checkpoint fails.
+        self.json.get_ref().sync_data()?;
         if let Some(target) = &self.remote {
             target.checkpoint(r)?;
         }
-        // The append is durable before this task is considered journaled.
-        self.json.get_ref().sync_data()?;
         Ok(())
     }
     fn finish(&mut self) -> Result<()> {
@@ -534,11 +541,28 @@ pub fn collect_with_capacity(
     initial: &Plan,
     parent: &Path,
     options: &Options,
+    capacity: Option<&mut CapacityHook<'_>>,
+) -> Result<(PathBuf, Summary)> {
+    collect_inner(initial, parent, options, capacity, None)
+}
+pub fn collect_phased(
+    plan: &Plan,
+    parent: &Path,
+    options: &Options,
+    phases: &crate::s3_phases::Run,
+) -> Result<(PathBuf, Summary)> {
+    collect_inner(plan, parent, options, None, Some(phases))
+}
+fn collect_inner(
+    initial: &Plan,
+    parent: &Path,
+    options: &Options,
     mut capacity: Option<&mut CapacityHook<'_>>,
+    phases: Option<&crate::s3_phases::Run>,
 ) -> Result<(PathBuf, Summary)> {
     ensure!(
         options.remote.is_none() || !options.ntfs_metadata,
-        "SFTP exports streams and metadata separately; native container output is incompatible"
+        "Remote delivery exports streams and metadata separately; native container output is incompatible"
     );
     let mut owned_plan = initial.clone();
     let plan = &mut owned_plan;
@@ -581,11 +605,9 @@ pub fn collect_with_capacity(
         "Native NTFS metadata output requires Windows"
     );
     fs::create_dir_all(&parent)?;
-    let required_payload = if options.remote.is_some() {
-        0
-    } else {
-        plan.known_bytes
-    };
+    let hybrid = phases.and_then(|p| p.disk.as_ref());
+    let streaming = options.remote.is_some() || hybrid.is_some();
+    let required_payload = if streaming { 0 } else { plan.known_bytes };
     let available = fs2::available_space(&parent)?;
     ensure!(
         available
@@ -678,10 +700,11 @@ pub fn collect_with_capacity(
             "hostname": computer, "Collector": "Kumade", "CollectionStartedUtc": plan.created_utc
         }),
     )?;
-    write_json_new(
-        &root.join("Run.json"),
-        &serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"ExistingVssEnabled":plan.sources.iter().any(|s|s.snapshot.as_ref().is_some_and(|v|v.owned_by_collector==Some(false))),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && options.remote.is_some()) {Some(metadata::FILES)}else{None},"Limitations":["New VSS snapshots are crash-consistent without application writers; historical writer consistency is unknown; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]}),
-    )?;
+    let mut run_metadata = serde_json::json!({"SchemaVersion":1,"RunId":run_id,"Version":env!("CARGO_PKG_VERSION"),"StartedUTC":plan.created_utc,"DirectoryTimestampTimezone":"UTC","FinalStateFile":"Summary.json","DestinationAccessControl":destination_acl,"DestinationOnLiveSource":plan.sources.iter().any(|s|s.live && (parent.starts_with(s.live_root()) || options.host_reserve.as_ref().is_some_and(|h| h.path.starts_with(s.live_root())))),"PhysicalHostDestination":options.host_reserve.as_ref().map(|h|h.path.display().to_string()),"EvidenceLayout":"DriveRoots","NativeNTFSStreams":options.ntfs_metadata,"LiveInfoEnabled":options.live_info.is_some(),"ProcessScanEnabled":options.process_scan.is_some(),"VolatilityOrdered":true,"CollectionOrder":["RAM request","Volatile process and network state","USN journal","NTFS transaction log","MFT","Event logs","Registry and active databases","Optional process YARA and remaining inventory","Other artifacts","Entropy analysis and extra binaries","Final metadata, seals and container encoding"],"RemoteDelivery":options.remote.as_ref().map(|r|r.id()),"EntropyDeferred":options.entropy.is_some(),"EntropyPreplanned":plan.entropy_scan.is_some() && options.entropy.is_none(),"VssEnabled":plan.sources.iter().any(|s|s.snapshot.is_some()),"ExistingVssEnabled":plan.sources.iter().any(|s|s.snapshot.as_ref().is_some_and(|v|v.owned_by_collector==Some(false))),"NTFSMetadataInventory":if options.ntfs_metadata || (cfg!(windows) && (options.remote.is_some() || phases.is_some())) {Some(metadata::FILES)}else{None},"Limitations":["New VSS snapshots are crash-consistent without application writers; historical writer consistency is unknown; live-response inventory is not snapshotted","Structural artifact validation is not implemented; Verified refers to stored-byte hashing","Acquisition is not an atomic machine snapshot"]});
+    if hybrid.is_some() {
+        run_metadata["HybridS3"] = true.into();
+    }
+    write_json_new(&root.join("Run.json"), &run_metadata)?;
     let mut prior_live = early
         .as_ref()
         .map(|e| e.import(&root))
@@ -708,7 +731,8 @@ pub fn collect_with_capacity(
         ui::status("Collecting evidence…");
         println!();
     }
-    let capture_metadata = options.ntfs_metadata || (cfg!(windows) && options.remote.is_some());
+    let capture_metadata =
+        options.ntfs_metadata || (cfg!(windows) && (options.remote.is_some() || phases.is_some()));
     let mut ntfs_metadata = capture_metadata.then(Vec::<metadata::Snapshot>::new);
     let mut snapshot_keys = std::collections::HashSet::new();
     let mut sparse_sources = std::collections::HashSet::new();
@@ -820,7 +844,7 @@ pub fn collect_with_capacity(
                 &copies,
             )?;
             #[cfg(windows)]
-            if options.ntfs_metadata || options.remote.is_some() {
+            if options.ntfs_metadata || options.remote.is_some() || phases.is_some() {
                 metadata::augment_streams(plan)?;
             }
             if let Some(hook) = capacity.as_mut() {
@@ -894,6 +918,8 @@ pub fn collect_with_capacity(
                             DestinationPolicy {
                                 remote: options.remote.as_ref(),
                                 native_ntfs: options.ntfs_metadata,
+                                phased_s3: phases.is_some(),
+                                hybrid,
                                 source_sparse: sparse_sources.contains(&(
                                     source.id.clone(),
                                     item.source_path.display().to_string(),
@@ -906,7 +932,7 @@ pub fn collect_with_capacity(
                                 if let Err(e) = j.append(&record)
                                     && let Ok(mut v) = journal_errors.lock()
                                 {
-                                    v.push(e.to_string());
+                                    v.push(format!("{e:#}"));
                                 }
                             }
                             Err(e) => {
@@ -921,6 +947,18 @@ pub fn collect_with_capacity(
                         progress.inc(1);
                     })
             });
+        }
+        if section == 0
+            && let Some(phases) = phases
+        {
+            let rows = records
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Record state poisoned"))?;
+            let discovery_failed = plan
+                .issues
+                .iter()
+                .any(|issue| matches!(issue.status.as_str(), "Failed" | "Unsupported"));
+            phases.hot_disk(&root, &rows, discovery_failed)?;
         }
     }
     progress.finish_and_clear();
@@ -991,7 +1029,7 @@ pub fn collect_with_capacity(
     if options.remote.is_some() {
         summary.completeness = "PendingServerReadbackVerification".into();
     }
-    let entropy_version_mismatches = if options.remote.is_some() {
+    let entropy_version_mismatches = if streaming {
         let expected: HashMap<_, _> = plan
             .files
             .iter()
@@ -1067,13 +1105,8 @@ pub fn collect_with_capacity(
                 family.status = "Partial".into();
                 family.reason="Acquisition or discovery was incomplete; consult the manifest and discovery issues".into();
             } else if family.acquired > 0 {
-                family.status = if options.remote.is_some() {
-                    "Transferred"
-                } else {
-                    "Acquired"
-                }
-                .into();
-                family.reason = if options.remote.is_some() { "All discovered members streamed; server readback remains pending" } else { "All discovered members were copied and hash-verified; format/atomic consistency is not established" }.into();
+                family.status = if streaming { "Transferred" } else { "Acquired" }.into();
+                family.reason = if streaming { "All discovered members streamed; server readback remains pending" } else { "All discovered members were copied and hash-verified; format/atomic consistency is not established" }.into();
             } else if family.not_present > 0 {
                 family.status = "NotPresent".into();
                 family.reason = "Raw candidates were not present".into();
@@ -1128,13 +1161,13 @@ pub fn collect_with_capacity(
         .finish()?;
     if let Some(snapshots) = ntfs_metadata.as_mut() {
         if !options.quiet {
-            ui::status(if options.remote.is_some() {
+            ui::status(if options.remote.is_some() || phases.is_some() {
                 "Sealing NTFS metadata inventory (no server-side restoration)…"
             } else {
                 "Restoring NTFS metadata and original permissions…"
             });
         }
-        if options.remote.is_some() {
+        if options.remote.is_some() || phases.is_some() {
             summary.metadata_errors = metadata::remote_inventory(snapshots, &records) as u64;
         } else {
             summary.metadata_errors = metadata::restore(&root, snapshots, &records) as u64;
@@ -1365,7 +1398,18 @@ pub(crate) fn commit_payload(from: &Path, to: &Path) -> Result<()> {
         );
         Ok(())
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        // SAFETY: both paths are NUL-terminated; RENAME_EXCL refuses existing destinations.
+        if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } != 0 {
+            return Err(io::Error::last_os_error()).context("Cannot exclusively commit payload");
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         fs::hard_link(from, to)
             .context("Destination must support exclusive hard-link commits on this platform")?;

@@ -27,6 +27,7 @@ use std::{
 pub enum Output {
     Directory,
     Sftp,
+    S3,
     Vhdx,
     E01,
 }
@@ -276,7 +277,9 @@ pub fn run<R: BufRead, W: Write>(
     writeln!(
         prompt.output,
         "{}",
-        if choices.output == Output::Sftp {
+        if choices.output == Output::S3 {
+            "Raw locked-file fallback and SHA-256: enabled. Verify the S3 collection with verify-s3."
+        } else if choices.output == Output::Sftp {
             "Raw locked-file fallback and SHA-256: enabled. SFTP delivery requires separate trusted server readback verification."
         } else {
             "Raw locked-file fallback, SHA-256 and copied-file verification: enabled (required)."

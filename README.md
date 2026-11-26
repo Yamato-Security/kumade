@@ -300,7 +300,7 @@ uses hashes, not an authenticated signing identity.
 ## Not implemented yet
 
 Application-writer-coordinated VSS backups, external processing,
-image-source CLI support, ZIP archive packaging, cloud upload, resuming after process restart,
+image-source CLI support, ZIP archive packaging, resuming after process restart,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.
 
@@ -364,6 +364,22 @@ Updates save versioned ZIP files beside the executable by default; use `-o` to
 choose another directory. Use the ZIP path printed by the command;
 the bundled executable is not rewritten. See the [YARA guide](docs/yara-process-scan.md)
 for offline use, provenance, build variants and rule licensing.
+
+## Amazon S3 delivery
+
+Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --yes` with
+temporary AWS credentials. Hybrid delivery is the default. Requested RAM, paired
+pagefiles, live tables and upload receipts stay in a protected workspace beside
+the executable. Ordinary disk evidence streams directly to S3. For live collection,
+run Kumade from a separate evidence volume or use `--s3-hybrid-dir E:\Evidence`.
+
+After an interruption, `resume-s3` recovers the original volatile data and
+identifies which disk files reached S3. Use `verify-s3` on the analyst workstation
+for SHA-256 readback and optional restoration. [S3 permissions and setup](docs/S3.md)
+
+Choose `--s3-recovery-dir E:\Evidence` to stage the full collection, or
+`--s3-direct` for direct streaming without a restartable workspace.
+[Compare the three S3 modes](docs/S3.md#hybrid-collection)
 
 ## Remote SFTP delivery
 

@@ -113,13 +113,62 @@ fn open(root: &Path, name: &str) -> Result<File> {
     }
     Ok(file)
 }
-fn read_metadata(root: &Path, object: &Object) -> Result<Vec<u8>> {
+enum Source<'a> {
+    Local(&'a Path),
+    S3(&'a crate::s3::Bucket),
+}
+impl Source<'_> {
+    fn open(&self, name: &str) -> Result<Box<dyn Read>> {
+        match self {
+            Self::Local(root) => Ok(Box::new(open(root, name)?)),
+            Self::S3(bucket) => bucket.open(name),
+        }
+    }
+}
+/// Hash and bound the stored stream while decoding it, so readback of a
+/// multi-gigabyte payload needs one GET and no temporary copy.
+struct HashedReader<R> {
+    inner: R,
+    hash: Sha256,
+    bytes: u64,
+    limit: u64,
+}
+impl<R: Read> HashedReader<R> {
+    fn new(inner: R, limit: u64) -> Self {
+        Self {
+            inner,
+            limit,
+            hash: Sha256::new(),
+            bytes: 0,
+        }
+    }
+    fn check(self, expected: &str) -> Result<()> {
+        ensure!(
+            self.bytes == self.limit && hex(&self.hash.finalize()) == expected,
+            "Object size or SHA-256 mismatch"
+        );
+        Ok(())
+    }
+}
+impl<R: Read> Read for HashedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.bytes = self
+            .bytes
+            .checked_add(n as u64)
+            .filter(|n| *n <= self.limit)
+            .ok_or_else(|| std::io::Error::other("Object exceeds declared size"))?;
+        self.hash.update(&buf[..n]);
+        Ok(n)
+    }
+}
+fn read_metadata(source: &Source<'_>, object: &Object) -> Result<Vec<u8>> {
     ensure!(
         object.logical_bytes <= MAX_METADATA,
         "Metadata exceeds 128 MiB: {}",
         object.relative_path
     );
-    let mut reader = decoded(open(root, &object.name)?, &object.encoding)?;
+    let mut reader = decoded(source.open(&object.name)?, &object.encoding)?;
     let mut bytes = Vec::new();
     reader
         .by_ref()
@@ -132,7 +181,7 @@ fn read_metadata(root: &Path, object: &Object) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
-fn decoded(file: File, encoding: &str) -> Result<Box<dyn Read>> {
+fn decoded<'a>(file: impl Read + 'a, encoding: &str) -> Result<Box<dyn Read + 'a>> {
     match encoding {
         "none" => Ok(Box::new(file)),
         "gzip" => Ok(Box::new(flate2::read::MultiGzDecoder::new(file))),
@@ -165,30 +214,61 @@ pub fn run(options: &Options) -> Result<u8> {
         options.uploader_revoked,
         "Revoke the uploader before readback verification"
     );
-    let receipt_path = crate::paths::resolve_future(&options.receipt)?;
-    let incoming = platform::canonicalize(&options.incoming)?;
-    ensure!(
-        !receipt_path.starts_with(&incoming) && !receipt_path.exists(),
-        "Receipt must be new and outside incoming"
-    );
-    if let Some(restore) = &options.restore {
+    let root = platform::canonicalize(&options.incoming)?;
+    verify_to_receipt(
+        Source::Local(&root),
+        &options.delivery,
+        &options.sha256,
+        options.max_decoded_gib,
+        options.restore.as_deref(),
+        &options.receipt,
+    )
+}
+pub(crate) fn run_s3(
+    options: &crate::s3::VerifyArgs,
+    bucket: &crate::s3::Bucket,
+    name: &str,
+) -> Result<u8> {
+    verify_to_receipt(
+        Source::S3(bucket),
+        name,
+        &options.sha256,
+        options.max_decoded_gib,
+        options.restore.as_deref(),
+        &options.receipt,
+    )
+}
+fn verify_to_receipt(
+    source: Source<'_>,
+    delivery: &str,
+    sha256: &str,
+    max_gib: u64,
+    restore: Option<&Path>,
+    receipt_path: &Path,
+) -> Result<u8> {
+    let receipt_path = crate::paths::resolve_future(receipt_path)?;
+    ensure!(!receipt_path.exists(), "Receipt path must be new");
+    if let Source::Local(root) = &source {
+        ensure!(
+            !receipt_path.starts_with(root),
+            "Receipt must be outside incoming"
+        );
+    }
+    if let Some(restore) = restore {
         let path = crate::paths::resolve_future(restore)?;
         ensure!(
             !receipt_path.starts_with(&path) && !path.starts_with(&receipt_path),
             "Receipt and restore output must be separate"
         );
     }
-    let receipt = verify(
-        &Inputs {
-            incoming,
-            delivery: options.delivery.clone(),
-            sha256: options.sha256.clone(),
-            max_decoded_bytes: options
-                .max_decoded_gib
-                .checked_mul(1 << 30)
-                .context("Decoded quota overflow")?,
-            restore: options.restore.clone(),
-        },
+    let receipt = verify_objects(
+        &source,
+        delivery,
+        sha256,
+        max_gib
+            .checked_mul(1 << 30)
+            .context("Decoded quota overflow")?,
+        restore,
         None,
     )?;
     collect::write_json_new(&receipt_path, &receipt)?;
@@ -206,27 +286,50 @@ pub(crate) fn verify(
     closed: Option<&BTreeMap<String, crate::sftp_receive::Closed>>,
 ) -> Result<Receipt> {
     let root = platform::canonicalize(&inputs.incoming)?;
+    verify_objects(
+        &Source::Local(&root),
+        &inputs.delivery,
+        &inputs.sha256,
+        inputs.max_decoded_bytes,
+        inputs.restore.as_deref(),
+        closed,
+    )
+}
+fn verify_objects(
+    source: &Source<'_>,
+    delivery_name: &str,
+    expected_hash: &str,
+    max_decoded_bytes: u64,
+    restore: Option<&Path>,
+    closed: Option<&BTreeMap<String, crate::sftp_receive::Closed>>,
+) -> Result<Receipt> {
     let deadline = Instant::now() + Duration::from_secs(3600);
     ensure!(
-        digest_valid(&inputs.sha256),
+        digest_valid(expected_hash),
         "Expected a 64-character lowercase Delivery SHA256"
     );
     let mut data = Vec::new();
-    open(&root, &inputs.delivery)?
+    source
+        .open(delivery_name)?
         .take(MAX_METADATA + 1)
         .read_to_end(&mut data)?;
     ensure!(
-        data.len() as u64 <= MAX_METADATA && crate::model::sha256(&data) == inputs.sha256,
+        data.len() as u64 <= MAX_METADATA && crate::model::sha256(&data) == expected_hash,
         "Delivery SHA256 mismatch"
     );
     let delivery: Delivery = serde_json::from_slice(&data)?;
     ensure!(
-        delivery.schema_version == 1 && delivery.kind == "KumadeSftpDelivery",
+        delivery.schema_version == 1
+            && delivery.kind
+                == match source {
+                    Source::Local(_) => "KumadeSftpDelivery",
+                    Source::S3(_) => "KumadeS3Delivery",
+                },
         "Unsupported delivery schema"
     );
     let id = uuid::Uuid::parse_str(&delivery.delivery_id)?;
     ensure!(
-        id.to_string() == delivery.delivery_id && inputs.delivery == format!("{id}-delivery.json"),
+        id.to_string() == delivery.delivery_id && delivery_name == format!("{id}-delivery.json"),
         "Delivery ID/name mismatch"
     );
     ensure!(
@@ -242,7 +345,7 @@ pub(crate) fn verify(
         crate::sftp::validate_object_name(&object.name)?;
         ensure!(
             object.name.starts_with(&format!("{id}-"))
-                && object.name != inputs.delivery
+                && object.name != delivery_name
                 && names.insert(object.name.clone()),
             "Foreign/duplicate object name"
         );
@@ -267,10 +370,7 @@ pub(crate) fn verify(
         logical_bytes = logical_bytes
             .checked_add(object.logical_bytes)
             .context("Decoded size overflow")?;
-        ensure!(
-            logical_bytes <= inputs.max_decoded_bytes,
-            "Decoded quota exceeded"
-        );
+        ensure!(logical_bytes <= max_decoded_bytes, "Decoded quota exceeded");
         if let Some(closed) = closed {
             let info = closed
                 .get(&object.name)
@@ -287,24 +387,28 @@ pub(crate) fn verify(
         ensure!(
             closed
                 .keys()
-                .filter(|name| !name.starts_with("probe-") && *name != &inputs.delivery)
+                .filter(|name| !name.starts_with("probe-") && name.as_str() != delivery_name)
                 .count()
                 == names.len(),
             "Unlisted completed upload objects"
         );
     }
-    let restore = if let Some(path) = &inputs.restore {
+    let restore = if let Some(path) = restore {
         let path = crate::paths::resolve_future(path)?;
         ensure!(
-            !path.exists() && !path.starts_with(&root) && !root.starts_with(&path),
+            !path.exists()
+                && !matches!(source, Source::Local(root) if path.starts_with(root) || root.starts_with(&path)),
             "Restore directory must be new and outside incoming"
         );
-        fs::create_dir(&path)?;
+        let parent = path.parent().context("Missing restore parent")?;
+        let staged = tempfile::Builder::new()
+            .prefix(".kumade-unverified-")
+            .tempdir_in(parent)?;
         ensure!(
-            platform::protect_output_root(&path)? != "FilesystemHasNoPersistentACLs",
+            platform::protect_output_root(staged.path())? != "FilesystemHasNoPersistentACLs",
             "Restore requires access controls"
         );
-        Some(platform::canonicalize(&path)?)
+        Some((staged, path))
     } else {
         None
     };
@@ -313,30 +417,13 @@ pub(crate) fn verify(
             Instant::now() < deadline,
             "Readback verification exceeded one hour"
         );
-        let mut file = open(&root, &object.name)?;
-        let mut hash = Sha256::new();
+        let mut stored = HashedReader::new(source.open(&object.name)?, object.stored_bytes);
+        let mut reader = decoded(&mut stored, &object.encoding)?;
         let mut buffer = vec![0u8; 1024 * 1024];
-        let mut total = 0u64;
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
-            }
-            ensure!(Instant::now() < deadline, "Verification timeout");
-            total = total.checked_add(n as u64).context("Size overflow")?;
-            ensure!(total <= object.stored_bytes, "Stored object too large");
-            hash.update(&buffer[..n]);
-        }
-        ensure!(
-            total == object.stored_bytes && hex(&hash.finalize()) == object.stored_sha256,
-            "Stored hash mismatch: {}",
-            object.name
-        );
-        file.rewind()?;
-        let mut reader = decoded(file, &object.encoding)?;
         let mut hash = Sha256::new();
         let mut total = 0u64;
-        let mut output = if let Some(root) = &restore {
+        let mut output = if let Some((staged, _)) = &restore {
+            let root = staged.path();
             let path =
                 root.join(relative(&object.relative_path)?.join(std::path::MAIN_SEPARATOR_STR));
             let parent = path.parent().context("Missing output parent")?;
@@ -386,6 +473,10 @@ pub(crate) fn verify(
             "Logical hash mismatch: {}",
             object.relative_path
         );
+        drop(reader);
+        stored
+            .check(&object.stored_sha256)
+            .with_context(|| format!("Stored hash mismatch: {}", object.name))?;
         if let Some((file, _)) = output {
             file.set_len(total)?;
             file.sync_all()?;
@@ -409,7 +500,7 @@ pub(crate) fn verify(
         );
     }
     let metadata = |name: &str| -> Result<Vec<u8>> {
-        read_metadata(&root, objects.get(name).context("Missing metadata")?)
+        read_metadata(source, objects.get(name).context("Missing metadata")?)
     };
     let summary: Summary = serde_json::from_slice(&metadata("Summary.json")?)?;
     ensure!(
@@ -473,7 +564,11 @@ pub(crate) fn verify(
     let (mut count, mut acquired, mut partial, mut failed, mut bytes) =
         (0usize, 0u64, 0u64, 0u64, 0u64);
     let manifest = objects["Manifest.jsonl"];
-    let mut reader = BufReader::new(decoded(open(&root, &manifest.name)?, &manifest.encoding)?);
+    let mut manifest_bytes = HashedReader::new(
+        decoded(source.open(&manifest.name)?, &manifest.encoding)?,
+        manifest.logical_bytes,
+    );
+    let mut reader = BufReader::new(&mut manifest_bytes);
     loop {
         let mut line = Vec::new();
         let n = (&mut reader)
@@ -536,6 +631,9 @@ pub(crate) fn verify(
             .checked_add(record.bytes_read)
             .context("Record byte overflow")?;
     }
+    manifest_bytes
+        .check(&manifest.logical_sha256)
+        .context("Manifest changed during readback")?;
     ensure!(
         expected.is_empty() && expected_pagefiles.is_empty() && memory == plan.memory_requested,
         "Incomplete acquisition manifest"
@@ -547,7 +645,34 @@ pub(crate) fn verify(
             && summary.bytes_acquired == bytes,
         "Summary counters differ from records"
     );
-    Ok(Receipt{schema_version:1,kind:"KumadeTrustedSftpReadback".into(),version:env!("CARGO_PKG_VERSION").into(),verified_utc:utc_now(),delivery_id:delivery.delivery_id,delivery_sha256:inputs.sha256.clone(),collection_name:delivery.collection_name,objects_verified:delivery.objects.len(),payload_records_verified:count,stored_bytes,logical_bytes,payload_hashes_verified:true,acquisition_state:if summary.completeness=="PendingServerReadbackVerification"{"CompleteWithinSelectedPrototypeScope".into()}else{"Partial".into()},collector_acquisition_state:summary.completeness,limitations:vec!["Readback integrity does not establish source authenticity or acquisition completeness. Compare DeliverySHA256 with the collector over a trusted channel.".into(),"Source timestamps/ACLs and named streams remain inventories/exports, not native metadata restoration.".into()]})
+    if let Some((staged, destination)) = restore {
+        publish_restore(staged, &destination)?;
+    }
+    Ok(Receipt{schema_version:1,kind:match source { Source::Local(_) => "KumadeTrustedSftpReadback", Source::S3(_) => "KumadeTrustedS3Readback" }.into(),version:env!("CARGO_PKG_VERSION").into(),verified_utc:utc_now(),delivery_id:delivery.delivery_id,delivery_sha256:expected_hash.into(),collection_name:delivery.collection_name,objects_verified:delivery.objects.len(),payload_records_verified:count,stored_bytes,logical_bytes,payload_hashes_verified:true,acquisition_state:if summary.completeness=="PendingServerReadbackVerification"{"CompleteWithinSelectedPrototypeScope".into()}else{"Partial".into()},collector_acquisition_state:summary.completeness,limitations:vec!["Readback integrity does not establish source authenticity or acquisition completeness. Compare DeliverySHA256 with the collector over a trusted channel.".into(),"Source timestamps/ACLs and named streams remain inventories/exports, not native metadata restoration.".into()]})
+}
+
+pub(crate) fn publish_restore(staged: tempfile::TempDir, destination: &Path) -> Result<()> {
+    // Publish only after every object, the manifest and the summary have verified.
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    {
+        collect::commit_payload(staged.path(), destination)
+            .context("Cannot publish verified restore directory")?;
+        let _ = staged.keep();
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        // Directory hard links cannot implement the exclusive-rename fallback.
+        fs::create_dir(destination)?;
+        ensure!(
+            platform::protect_output_root(destination)? != "FilesystemHasNoPersistentACLs",
+            "Restore requires access controls"
+        );
+        for entry in fs::read_dir(staged.path())? {
+            let entry = entry?;
+            fs::rename(entry.path(), destination.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

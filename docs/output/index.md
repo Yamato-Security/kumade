@@ -8,6 +8,7 @@ keep provenance, but the modes have different storage and fidelity behavior.
 | Directory | `-o E:\Evidence` | Straightforward parser input and browsing | Payloads plus separate provenance; generic ADS discovery/fidelity is limited |
 | NTFS VHDX | `--vhdx E:\Evidence` | Native NTFS streams and metadata in one image | Dynamic NTFS container; needs creation, finalization and headroom |
 | E01 | `--e01 E:\Evidence` | Compressed segmented container | Same selected NTFS collection model, with compression and readback work |
+| Amazon S3 | `--s3 s3://BUCKET/PREFIX/` | Hybrid collection into a separate prefix per host | Retains volatile evidence and streams disk files. Use `resume-s3` for recovery and `verify-s3` for readback |
 | SFTP | `--sftp SERVER ...` | Stream to remote evidence storage | Gzip objects, metadata staging and trusted receiver verification; no VHDX upload |
 
 These are alternative destinations. A VHDX/E01 artifact collection is not a

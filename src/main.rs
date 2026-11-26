@@ -65,8 +65,12 @@ enum Command {
     Plan(CollectionArgs),
     /// Receive evidence through a temporary upload-only SFTP account
     Receive(kumade::sftp_receive::Options),
+    /// Resume phased S3 uploads from a protected workspace without reading original sources
+    ResumeS3(kumade::s3_phases::ResumeArgs),
     /// Verify an SFTP delivery locally and optionally reconstruct files
     VerifyDelivery(kumade::sftp_verify::Options),
+    /// Verify an S3 collection against its delivery hash and optionally restore it
+    VerifyS3(kumade::s3::VerifyArgs),
     /// Scan running Windows processes with YARA Forge or local YARA rules
     ScanProcesses(kumade::yara_scan::Options),
     /// Verify the seal and every stored payload; never reads original sources
@@ -173,6 +177,8 @@ struct CollectionArgs {
     entropy: kumade::entropy::EntropyArgs,
     #[command(flatten)]
     sftp: kumade::sftp::Args,
+    #[command(flatten)]
+    s3: kumade::s3::S3Args,
     /// List each file being copied instead of displaying a progress bar
     #[arg(short = 'v', long, conflicts_with = "quiet")]
     verbose: bool,
@@ -254,13 +260,19 @@ fn rules(path: Option<&Path>) -> Result<Rules> {
     }
 }
 
+impl CollectionArgs {
+    fn remote(&self) -> bool {
+        self.sftp.sftp.is_some() || self.s3.s3.is_some()
+    }
+}
+
 fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscovery> {
     if options.sources.is_empty() {
         ensure!(
             options.computer.is_none(),
             "--computer applies to offline --source inputs"
         );
-        return platform::live_sources(if options.sftp.sftp.is_some() {
+        return platform::live_sources(if options.remote() && !options.s3.phased() {
             None
         } else {
             Some(destination)
@@ -350,6 +362,8 @@ fn run() -> Result<u8> {
     };
     let (mut options, plan_only) = match cli.command {
         Some(Command::Receive(args)) => return kumade::sftp_receive::run(&args),
+        Some(Command::ResumeS3(args)) => return kumade::s3_phases::resume(&args),
+        Some(Command::VerifyS3(args)) => return kumade::s3::verify(&args),
         Some(Command::VerifyDelivery(args)) => return kumade::sftp_verify::run(&args),
         Some(Command::ScanProcesses(args)) => return kumade::yara_scan::run(&args),
         Some(Command::ForensicCopy(args)) => {
@@ -444,7 +458,7 @@ fn run() -> Result<u8> {
             );
             ui::field(
                 "Remote transport",
-                "--sftp; pinned host key and hardened upload-only account required",
+                "--sftp (pinned host key) or --s3 (temporary upload credentials)",
             );
             ui::field(
                 "VHDX output",
@@ -504,8 +518,8 @@ fn run() -> Result<u8> {
     };
     options.sftp.validate()?;
     ensure!(
-        !plan_only || options.sftp.sftp.is_none(),
-        "SFTP is a collect destination; plan uses -o DIR"
+        !plan_only || !options.remote(),
+        "Remote uploads are a collect destination; plan uses -o DIR"
     );
     ensure!(
         !plan_only || !options.vss,
@@ -544,7 +558,11 @@ fn run() -> Result<u8> {
     let rules = rules(options.catalog.as_deref())?;
     // The destination is resolved before discovery so that live discovery can
     // leave the volume holding it out of scope.
-    let destination = if options.sftp.sftp.is_some() {
+    let destination = if options.s3.s3.is_some() {
+        options
+            .s3
+            .staging_parent(options.memory_options.memory_staging_dir.as_deref())?
+    } else if options.sftp.sftp.is_some() {
         options
             .sftp
             .sftp_staging_dir
@@ -648,7 +666,9 @@ fn run() -> Result<u8> {
                 && cfg!(windows)
                 && kumade::yara_scan::check_host().is_ok(),
             yara_ruleset: options.yara_ruleset.unwrap_or_default(),
-            output: if options.sftp.sftp.is_some() {
+            output: if options.s3.s3.is_some() {
+                kumade::wizard::Output::S3
+            } else if options.sftp.sftp.is_some() {
                 kumade::wizard::Output::Sftp
             } else if options.e01.is_some() {
                 kumade::wizard::Output::E01
@@ -657,9 +677,7 @@ fn run() -> Result<u8> {
             } else {
                 kumade::wizard::Output::Directory
             },
-            output_explicit: options.sftp.sftp.is_some()
-                || options.e01.is_some()
-                || options.vhdx.is_some(),
+            output_explicit: options.remote() || options.e01.is_some() || options.vhdx.is_some(),
             threads: options.threads,
             image_source: None,
         };
@@ -707,9 +725,11 @@ fn run() -> Result<u8> {
         options.scan_processes = choices.yara;
         options.yara_ruleset = Some(choices.yara_ruleset);
         options.threads = choices.threads;
-        if options.sftp.sftp.is_none() && options.e01.is_none() && options.vhdx.is_none() {
+        if !options.remote() && options.e01.is_none() && options.vhdx.is_none() {
             match choices.output {
-                kumade::wizard::Output::Directory | kumade::wizard::Output::Sftp => {}
+                kumade::wizard::Output::Directory
+                | kumade::wizard::Output::Sftp
+                | kumade::wizard::Output::S3 => {}
                 kumade::wizard::Output::Vhdx => {
                     options.output = None;
                     options.vhdx = Some(Some(destination.clone()));
@@ -733,13 +753,37 @@ fn run() -> Result<u8> {
     ensure!(
         !options.memory
             || !options.sources.is_empty()
-            || options.sftp.sftp.is_none()
+            || !options.remote()
+            || options.s3.phased()
             || options.memory_options.memory_staging_dir.is_some()
             || plan_only,
-        "DumpIt needs a staged RAM file for SFTP; specify --memory-staging-dir <external-directory>"
+        "DumpIt needs a staged RAM file for remote delivery; specify --memory-staging-dir <external-directory>"
     );
     // Authenticate and verify the upload-only policy before collecting evidence.
-    let remote = if options.sftp.sftp.is_some() {
+    let mut phases = if options.s3.phased() {
+        Some(kumade::s3_phases::Run::start(
+            &options.s3,
+            &destination,
+            &discovered.sources,
+            &started_utc,
+        )?)
+    } else {
+        None
+    };
+    let mut s3_delivery = None;
+    let remote = if phases.is_some() {
+        None
+    } else if options.s3.s3.is_some() {
+        let computer = discovered
+            .sources
+            .first()
+            .map(|s| s.computer.as_str())
+            .unwrap_or("UnknownComputer");
+        let (target, uri) = kumade::s3::connect(&options.s3, computer, &started_utc)?;
+        ui::field("S3 delivery URI", &uri);
+        s3_delivery = Some(uri);
+        Some(target)
+    } else if options.sftp.sftp.is_some() {
         let password = options.sftp.password()?;
         if !options.quiet {
             ui::status("Verifying the pinned SFTP server and upload-only protections…");
@@ -753,13 +797,20 @@ fn run() -> Result<u8> {
     } else {
         None
     };
+    let destination = phases
+        .as_ref()
+        .map_or(destination, |p| p.workspace().to_owned());
     let destination = staging
         .as_ref()
         .map_or(destination, |s| s.path().to_owned());
     if remote.is_some() && !options.quiet {
         ui::field(
             "Delivery",
-            "SFTP direct streaming; trusted server readback required",
+            if s3_delivery.is_some() {
+                "S3 direct streaming; independent readback required"
+            } else {
+                "SFTP direct streaming; trusted server readback required"
+            },
         );
         ui::field("Metadata staging", destination.display());
         ui::field(
@@ -805,7 +856,9 @@ fn run() -> Result<u8> {
     };
     // A sibling image may share the source's parent. Validate the actual output,
     // rather than rejecting its parent: fresh UUID staging remains a sibling.
-    let early_parent = if let Some(parent) = &options.memory_options.memory_staging_dir {
+    let early_parent = if phases.is_some() {
+        early_output.clone()
+    } else if let Some(parent) = &options.memory_options.memory_staging_dir {
         paths::resolve_future(parent)?
     } else if options.vhdx.is_some() || options.e01.is_some() {
         early_output
@@ -843,6 +896,9 @@ fn run() -> Result<u8> {
             }),
         )?
     };
+    if let (Some(phases), Some(capture)) = (&phases, &early) {
+        phases.volatile(capture)?;
+    }
     if let (Some(target), Some(capture)) = (&remote, &early) {
         target.upload_early(capture)?;
     }
@@ -922,7 +978,7 @@ fn run() -> Result<u8> {
         )?;
     }
     #[cfg(windows)]
-    if remote.is_some() || options.vhdx.is_some() || options.e01.is_some() {
+    if options.remote() || options.vhdx.is_some() || options.e01.is_some() {
         kumade::metadata::enable_privileges()?;
         kumade::metadata::augment_streams(&mut plan)?;
     }
@@ -996,6 +1052,11 @@ fn run() -> Result<u8> {
         e01::collect(&plan, &output, options.e01_size_gib, &collect_options)
     } else if options.vhdx.is_some() {
         vhdx::collect(&plan, &output, options.vhdx_size_gib, &collect_options)
+    } else if let Some(phases) = &phases {
+        collect::collect_phased(&plan, &output, &collect_options, phases).map(|(root, summary)| {
+            remote_root = Some(root);
+            summary
+        })
     } else {
         collect::collect(&plan, &output, &collect_options).map(|(root, summary)| {
             remote_root = Some(root);
@@ -1018,17 +1079,35 @@ fn run() -> Result<u8> {
     if options.vss && !options.quiet {
         ui::field("VSS cleanup", "Owned snapshot set released");
     }
+    if let Some(phases) = phases.take() {
+        phases.complete(
+            remote_root
+                .as_deref()
+                .context("Missing staged collection")?,
+            &summary,
+        )?;
+        // Volatile capture and disk evidence remain available until trusted readback.
+        return Ok(if summary.completeness == "Partial" {
+            3
+        } else {
+            0
+        });
+    }
     if let Some(target) = &remote {
         let (name, digest) = target.publish(
             remote_root.as_deref().context("Missing metadata root")?,
             &summary,
         )?;
         // Print the receipt even in quiet mode: it is the operator's trust anchor.
-        ui::field("Remote delivery", name);
+        ui::field("Remote delivery", s3_delivery.as_deref().unwrap_or(&name));
         ui::field("Delivery SHA256", digest);
         ui::field(
             "Integrity",
-            "PENDING — revoke the account, then run the trusted server verifier",
+            if s3_delivery.is_some() {
+                "PENDING — run verify-s3 with separate read credentials and the printed SHA-256"
+            } else {
+                "PENDING — revoke the account, then run the trusted server verifier"
+            },
         );
     }
     // A remote publication failure retains the original RAM stage, not just metadata.
@@ -1059,6 +1138,75 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    #[test]
+    fn hybrid_requires_s3_and_a_single_staging_destination() {
+        assert!(Cli::try_parse_from(["kumade", "collect", "--s3-hybrid-dir", "stage"]).is_err());
+        for other in [
+            "--s3-recovery-dir",
+            "--s3-staging-dir",
+            "--memory-staging-dir",
+            "-o",
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "kumade",
+                    "collect",
+                    "--s3",
+                    "s3://evidence-test/case/",
+                    "--s3-hybrid-dir",
+                    "stage",
+                    other,
+                    "second"
+                ])
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn s3_defaults_to_hybrid_and_direct_requires_explicit_selection() {
+        let parse = |extra: &[&str]| {
+            let cli = Cli::try_parse_from(
+                ["kumade", "--s3", "s3://test/case"]
+                    .into_iter()
+                    .chain(extra.iter().copied()),
+            )
+            .unwrap();
+            cli.options
+        };
+        let default = parse(&[]);
+        assert!(default.s3.phased());
+        assert!(default.s3.s3_recovery_dir.is_none());
+        assert_eq!(
+            default.s3.staging_parent(None).unwrap(),
+            std::env::current_exe().unwrap().parent().unwrap()
+        );
+        let dir = Path::new("stage");
+        assert_eq!(default.s3.staging_parent(Some(dir)).unwrap(), dir);
+        let staged = parse(&["--s3-staging-dir", "stage"]);
+        assert!(staged.s3.phased());
+        assert_eq!(staged.s3.staging_parent(None).unwrap(), dir);
+        assert!(staged.s3.staging_parent(Some(dir)).is_err());
+        let direct = parse(&["--s3-direct", "--s3-staging-dir", "stage"]);
+        assert!(!direct.s3.phased());
+        assert_eq!(
+            direct.s3.staging_parent(Some(Path::new("ram"))).unwrap(),
+            dir
+        );
+        assert!(Cli::try_parse_from(["kumade", "--s3-direct"]).is_err());
+        for flag in ["--s3-hybrid-dir", "--s3-recovery-dir"] {
+            assert!(
+                Cli::try_parse_from([
+                    "kumade",
+                    "--s3",
+                    "s3://test/case",
+                    "--s3-direct",
+                    flag,
+                    "stage"
+                ])
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn sftp_options_require_explicit_pin_and_refuse_ambiguous_outputs() {
         for args in [

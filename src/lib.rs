@@ -40,6 +40,7 @@ pub mod wizard;
 pub mod early;
 pub mod ordering;
 
+pub mod s3;
 pub mod sftp;
 
 pub mod sftp_receive;
@@ -48,3 +49,5 @@ pub mod sftp_verify;
 pub mod memory;
 
 pub mod pagefile;
+
+pub mod s3_phases;

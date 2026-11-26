@@ -28,7 +28,7 @@ pub struct Args {
     /// RAM capture deadline in seconds
     #[arg(long, default_value_t=1800, value_parser=clap::value_parser!(u64).range(1..=86400))]
     pub memory_timeout: u64,
-    /// Explicit RAM staging parent (required with --memory and SFTP; prefer external storage)
+    /// Explicit RAM staging parent (required with --memory and remote delivery; prefer external storage)
     #[arg(long, value_name = "DIR")]
     pub memory_staging_dir: Option<PathBuf>,
 }
@@ -634,7 +634,7 @@ pub fn acquire(
     row.finished_utc = utc_now();
     collect::write_json_new(
         &directory.join("Acquisition.json"),
-        &serde_json::json!({"SchemaVersion":1,"Provider":"DumpIt","ProviderStartedUTC":provider_started,"ProviderFinishedUTC":provider_finished,"PagefilesEnabled":!args.no_memory_pagefile,"ToolSHA256":tool_hash,"ExitCode":exit_code,"InaccessiblePages":inaccessible_pages,"NtStatus":nt_status,"DumpLayout":layout,"Record":row,"Arguments":["/QUIET","/TYPE","DMP","/NOCOMPRESS","/NOLYTICS","/NOJSON","/OUTPUT","Memory.dmp"],"LogRetentionBytesPerStream":LOG_LIMIT,"Limitations":["Live RAM is non-atomic; integrity hashes are not proof of semantic completeness","Driver load/unload changes the live host; platform security can block acquisition","DumpIt requires a staged file even for SFTP delivery"]}),
+        &serde_json::json!({"SchemaVersion":1,"Provider":"DumpIt","ProviderStartedUTC":provider_started,"ProviderFinishedUTC":provider_finished,"PagefilesEnabled":!args.no_memory_pagefile,"ToolSHA256":tool_hash,"ExitCode":exit_code,"InaccessiblePages":inaccessible_pages,"NtStatus":nt_status,"DumpLayout":layout,"Record":row,"Arguments":["/QUIET","/TYPE","DMP","/NOCOMPRESS","/NOLYTICS","/NOJSON","/OUTPUT","Memory.dmp"],"LogRetentionBytesPerStream":LOG_LIMIT,"Limitations":["Live RAM is non-atomic; integrity hashes are not proof of semantic completeness","Driver load/unload changes the live host; platform security can block acquisition","DumpIt requires a staged file even for remote delivery"]}),
     )?;
     Ok(row)
 }

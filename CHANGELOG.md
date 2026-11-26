@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Default S3 collection to hybrid delivery with protected volatile staging beside
+  the executable, direct disk streaming,
+  per-file acknowledgements and recovery of completed files after a collector interruption.
+  Retry an unconfirmed S3 chunk once under a fresh key. Hybrid delivery preserves
+  readable prefixes of interrupted source reads as independently verifiable partial files.
+  Use `--s3-direct` to opt into direct-only delivery.
+
+- Add external S3 recovery workspaces, independently verifiable live, memory and
+  hot-disk phases, and chunk-level `resume-s3` delivery of the original evidence.
+
+- Add direct Amazon S3 collection with short-lived credentials, conditional
+  writes, multipart retries and per-host evidence prefixes. Add `verify-s3`
+  for independent SHA-256 readback and restoration. Unconfirmed writes retain
+  staging and return an error. Restored evidence is published after verification.
+
 - Accept concurrent SFTP collections on one listener with `receive --sources N`.
   Each computer gets its own expiring credentials, inbox and readback receipt.
   A running collector can reconnect to a running Kumade receiver and continue

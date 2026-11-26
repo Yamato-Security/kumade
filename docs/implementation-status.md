@@ -21,6 +21,7 @@ verification. Splitting the stable modules into workspace crates remains possibl
 | `live-info` | Capture structured current host state without ordinary artifact acquisition |
 | `scan-processes` | Scan readable live process memory with YARA Forge or local rules |
 | `receive` | Run a temporary upload-only SFTP receiver with automatic trusted readback |
+| `verify-s3` | Verify an S3 collection independently and optionally restore its files |
 | `verify-delivery` | Verify a revoked SFTP delivery and optionally restore a working copy |
 
 `collect` also accepts `--vhdx FILE` and optional `--vhdx-size-gib GIB` on

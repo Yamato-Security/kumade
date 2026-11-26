@@ -17,7 +17,7 @@ Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 ```
 
 `--yes` selects feature defaults plus explicit flags. It does not enable RAM,
-paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01 and SFTP are
+paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01, SFTP and S3 are
 alternative outputs. Read [the wizard](../collection-wizard.md),
 [collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
 [hibernation](../hibernation-acquisition.md)
@@ -182,6 +182,12 @@ prove source authenticity or atomic acquisition.
 
 See [SFTP receiver verification/restoration](../SFTP-Receiver.md#independent-readback-and-restoration)
 and [remote output](../SFTP.md).
+'''),
+    'resume-s3': ('Resume a phased S3 delivery', r'''Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
+'''),
+    'verify-s3': ('Verify or restore an S3 delivery', r'''Use a separate read role to verify the full delivery or an individual phase using its URI and SHA-256 printed
+by the collector. Choose a new local receipt path. Add `--restore DIR` to
+reconstruct the collection. See [S3 setup and verification](../S3.md).
 '''),
 }
 
