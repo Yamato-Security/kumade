@@ -5,6 +5,8 @@
 - Default S3 collection to hybrid delivery with protected volatile staging beside
   the executable, direct disk streaming,
   per-file acknowledgements and recovery of completed files after a collector interruption.
+  Retry an unconfirmed S3 chunk once under a fresh key. Hybrid delivery preserves
+  readable prefixes of interrupted source reads as independently verifiable partial files.
   Use `--s3-direct` to opt into direct-only delivery.
 
 - Add external S3 recovery workspaces, independently verifiable live, memory and

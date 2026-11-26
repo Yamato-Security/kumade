@@ -62,6 +62,9 @@ class Store(BaseHTTPRequestHandler):
             self.connection.shutdown(socket.SHUT_RDWR)
             return
         s.objects[key] = data
+        self.acknowledge(key, data)
+
+    def acknowledge(self, key, data):
         self.reply(200, ETag='"stored"')
 
 

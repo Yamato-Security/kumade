@@ -842,8 +842,20 @@ fn store_chunk(
     digest: String,
 ) -> Result<Chunk> {
     let bytes = data.len() as u64;
-    let key = format!("{id}-data-{}", Uuid::new_v4());
-    bucket.put(&location.key(&key)?, data)?;
+    let data = bytes::Bytes::from(data);
+    // A cloned Bytes handle shares the original chunk allocation. Only the key
+    // whose write was positively acknowledged may enter the file receipt.
+    let write = || -> Result<String> {
+        let key = format!("{id}-data-{}", Uuid::new_v4());
+        bucket.put(&location.key(&key)?, data.clone())?;
+        Ok(key)
+    };
+    let key = match write() {
+        Err(first) if crate::s3::ambiguous_put(&first) => write().with_context(|| {
+            format!("Fresh-key replay failed after an unconfirmed chunk: {first:#}")
+        })?,
+        result => result?,
+    };
     Ok(Chunk {
         sha256: digest,
         bytes,

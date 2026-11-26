@@ -106,13 +106,14 @@ impl Disk {
         raw_cache: &mut HashMap<PathBuf, RawVolume>,
     ) -> Record {
         let result = (|| -> Result<()> {
-            let path = sftp::relative_payload(item)?;
+            let mut path = sftp::relative_payload(item)?;
             let mut upload = Stream {
                 disk: self,
                 buffer: Vec::new(),
                 chunks: vec![],
                 hash: Sha256::new(),
                 bytes: 0,
+                write_failed: false,
             };
             let copied = collect::copy_source(
                 source,
@@ -123,8 +124,9 @@ impl Disk {
                 &mut upload,
                 |_, _| Ok(()),
             );
-            let (before, after) = match copied {
-                Ok(times) => times,
+            let times = match copied {
+                Ok(times) => Some(times),
+                Err(e) if upload.write_failed => return Err(e),
                 Err(e)
                     if item.before.is_none()
                         && raw::is_missing(&e)
@@ -139,7 +141,25 @@ impl Disk {
                     row.reason = format!("{e:#}");
                     return Ok(());
                 }
-                Err(e) => return Err(e),
+                Err(e) if upload.bytes > 0 => {
+                    // The reader stopped after supplying a prefix. Seal only those bytes
+                    // and keep the original output path free for a complete observation.
+                    path = format!(
+                        "_KumadePartial/{}.partial",
+                        paths::encode_component(&item.id)
+                    );
+                    row.status = "Partial".into();
+                    row.reason = format!(
+                        "Source read incomplete: {e:#}; {} bytes retained",
+                        upload.bytes
+                    );
+                    None
+                }
+                Err(e) => {
+                    row.status = "Failed".into();
+                    row.reason = format!("Source read failed before returning any bytes: {e:#}");
+                    return Ok(());
+                }
             };
             if !upload.buffer.is_empty() || upload.chunks.is_empty() {
                 upload.send()?;
@@ -149,7 +169,9 @@ impl Disk {
                 bytes: upload.bytes,
                 sha256: hex(&upload.hash.finalize()),
             };
-            crate::sftp::mark_transferred(&mut row, item, before, after, &file.sha256);
+            if let Some((before, after)) = times {
+                sftp::mark_transferred(&mut row, item, before, after, &file.sha256);
+            }
             row.relative_output_path = Some(file.path.clone());
             row.bytes_read = file.bytes;
             row.sha256 = Some(file.sha256.clone());
@@ -187,6 +209,7 @@ struct Stream<'a> {
     chunks: Vec<Chunk>,
     hash: Sha256,
     bytes: u64,
+    write_failed: bool,
 }
 impl Stream<'_> {
     fn send(&mut self) -> Result<()> {
@@ -206,9 +229,11 @@ impl Write for Stream<'_> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         let n = data.len().min(self.disk.part_size - self.buffer.len());
         self.buffer.extend_from_slice(&data[..n]);
-        if self.buffer.len() == self.disk.part_size {
-            self.send()
-                .map_err(|e| io::Error::other(format!("{e:#}")))?;
+        if self.buffer.len() == self.disk.part_size
+            && let Err(e) = self.send()
+        {
+            self.write_failed = true;
+            return Err(io::Error::other(e));
         }
         self.hash.update(&data[..n]);
         self.bytes += n as u64;

@@ -12,11 +12,14 @@ use anyhow::{Context, Result, ensure};
 use aws_sdk_s3::{
     Client,
     config::{BehaviorVersion, Credentials, Region, retry::RetryConfig, timeout::TimeoutConfig},
+    error::SdkError,
+    operation::put_object::PutObjectError,
     primitives::ByteStream,
     types::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart},
 };
 use aws_smithy_http_client::{Builder as HttpBuilder, tls};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::{
     env,
@@ -192,6 +195,30 @@ impl Location {
     }
 }
 
+#[derive(Debug)]
+struct MissingETag;
+
+impl std::fmt::Display for MissingETag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Missing S3 ETag")
+    }
+}
+
+pub(crate) fn ambiguous_put(error: &anyhow::Error) -> bool {
+    if error.is::<MissingETag>() {
+        return true;
+    }
+    let Some(sdk) = error.downcast_ref::<SdkError<PutObjectError>>() else {
+        return false;
+    };
+    match sdk {
+        SdkError::TimeoutError(_) | SdkError::DispatchFailure(_) => true,
+        _ => sdk.raw_response().is_some_and(
+            |r| matches!(r.status().as_u16(), 200..=299 | 408 | 409 | 412 | 500..=599),
+        ),
+    }
+}
+
 // A create-only conflict cannot identify which bytes won the write. Only a
 // positive acknowledgement can advance an upload-only collection.
 fn confirm_write(
@@ -200,10 +227,6 @@ fn confirm_write(
     expected: &str,
     parts: Option<usize>,
 ) -> Result<()> {
-    ensure!(
-        etag.is_some_and(|tag| !tag.trim().trim_matches('"').is_empty()),
-        "Missing S3 ETag"
-    );
     if let Some(actual) = checksum {
         // S3 composite SHA-256 values may carry a suffix with the part count.
         ensure!(
@@ -211,6 +234,8 @@ fn confirm_write(
             "S3 acknowledged a different SHA-256"
         );
     }
+    etag.filter(|tag| !tag.trim().trim_matches('"').is_empty())
+        .context(MissingETag)?;
     Ok(())
 }
 
@@ -306,7 +331,8 @@ impl Bucket {
         }
         Ok(())
     }
-    pub(crate) fn put(&self, key: &str, data: Vec<u8>) -> Result<()> {
+    pub(crate) fn put(&self, key: &str, data: impl Into<Bytes>) -> Result<()> {
+        let data = data.into();
         let checksum = STANDARD.encode(Sha256::digest(&data));
         let unconfirmed = || {
             format!(
@@ -611,6 +637,15 @@ pub fn verify(args: &VerifyArgs) -> Result<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn missing_etag_can_be_replayed_but_a_mismatched_checksum_cannot() {
+        let lost = confirm_write(None, Some("expected"), "expected", None).unwrap_err();
+        assert!(ambiguous_put(&lost.context("test PUT")));
+        for etag in [None, Some("ack")] {
+            let corrupt = confirm_write(etag, Some("different"), "expected", None).unwrap_err();
+            assert!(!ambiguous_put(&corrupt));
+        }
+    }
     #[test]
     fn destination_and_endpoint_validation_preserves_the_requested_scope() {
         for invalid in [

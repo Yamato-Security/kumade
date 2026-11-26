@@ -1993,6 +1993,7 @@ dependencies = [
  "aws-smithy-http-client",
  "base64 0.22.1",
  "boreal",
+ "bytes",
  "cc",
  "chrono",
  "clap",
