@@ -17,7 +17,27 @@ or `0.0.0.0` to accept remote connections, and allow the chosen port through you
 firewall. Use `--allow-ip 192.0.2.20` to restrict the exact collector IP; repeat the
 option for several addresses. On dual-stack listeners such as `[::]:2222`, IPv4
 addresses and their IPv4-mapped IPv6 representations match the same allowlist entry;
-native IPv6 addresses remain distinct. This accepts a single collection per invocation.
+native IPv6 addresses remain distinct. The default is one collection.
+
+### Collect from several computers
+
+```powershell
+.\kumade.exe receive --listen 0.0.0.0:2222 --output D:\Evidence --sources 6 --expires 4h
+```
+
+The receiver prints six numbered credential pairs. Distribute one pair per
+computer along with the common server address, port and fingerprint. Each
+collector uses the standard command below. Sources can start and finish in
+any order. Under the receiver directory, `source-01` through `source-06` each
+contain their own `Receiver.json`, `incoming` directory and verification result.
+The single-source default retains the existing directory layout.
+
+Each source's credentials expire when it finishes or reaches the deadline.
+Another source can still upload while a completed collection is being verified.
+Choose the expected number of sources (1–64). The receiver waits for all
+requested sources until completion, expiry or Ctrl+C. An unused source is
+recorded as incomplete. If more than eight collectors will connect at once,
+raise `--max-connections` to accommodate them (maximum 64).
 
 Kumade displays a temporary username, a cryptographically random password, an SSH
 host-key fingerprint and the new evidence directory. Transfer those details to
@@ -39,15 +59,36 @@ Create the metadata staging parent first. The password prompt does not echo.
 The same streaming, source-change checks, raw NTFS locked-file reads and
 metadata-only local staging described in [SFTP delivery](SFTP.md) apply.
 
+## If the connection drops
+
+With updated Kumade binaries at both ends, the collector reconnects automatically.
+The default is three attempts in total across the running collection. Set
+`collect --sftp-retries 10` for a less reliable link, or `--sftp-retries 0` to
+disable retries. The collector checks the pinned host key again on reconnect.
+The receiver reports how many bytes it already accepted for each interrupted
+object. The collector can send the remaining bytes from its buffered writes
+and continue reading the same stream, including compressed or raw NTFS data.
+
+Both processes must stay running and the credential must still be valid.
+Restarting either program requires a fresh acquisition. Plain OpenSSH and older
+Kumade receivers support the existing one-connection transfer. If the network
+fails just as the final delivery closes, the receiver may already have revoked
+the credential. The collector reports the expected delivery name and SHA-256 if
+it lost the final acknowledgement. Compare them with that source's
+`ReadbackReceipt.json` before starting over. An incomplete source has no
+successful receipt.
+
 ## What the receiver permits
 
 The SFTP endpoint is a small virtual namespace, `/incoming`. Remote names must be
 flat, bounded ASCII object IDs belonging to the first collection ID. Remote paths
 are never used as arbitrary local filesystem paths. Files are created exclusively.
-The only permitted file operations are creating new objects, writing **at the next
-sequential offset**, fsync and closing handles. A remote client cannot read, list,
-reopen, truncate, overwrite previously written bytes, delete, rename, chmod or
-create links. SSH shells, commands and forwarding are unavailable. Local files
+The receiver accepts new objects, writes **at the next sequential offset**,
+fsync and close. Reattaching to an in-progress object also requires its random
+per-object secret, held in collector memory. Reattachment invalidates the old
+write handle. A sealed object stays immutable. The receiver denies reading,
+listing, truncating, overwriting earlier bytes, deleting, renaming, chmod and
+link creation. SSH shells, commands and forwarding are unavailable. Local files
 remain readable by the trusted receiver for independent hash verification; this
 does not grant network clients read access.
 
@@ -72,15 +113,15 @@ protection.
 ## Limits and server resource use
 
 - `--expires 2h`: seconds or an `s`, `m` or `h` suffix; maximum seven days.
-- `--max-gib 100`: maximum aggregate stored/compressed upload bytes.
-- `--max-files 100000`: maximum objects, including journals and probes.
+- `--max-gib 100`: maximum stored/compressed upload bytes per source.
+- `--max-files 100000`: maximum objects per source, including journals and probes.
 - `--reserve-mib 2048`: keep this much destination disk space free.
 - `--max-connections 8`: bound SSH connections, including unauthenticated ones.
-- `--max-decoded-gib 1024`: bound logical data processed during verification.
+- `--max-decoded-gib 1024`: bound logical data processed during verification of each source.
 
 There are also bounded protocol packets and open handles, a handshake deadline,
-three authentication attempts per connection, and a shared ten-failures-per-minute
-authentication throttle. Failed authentications do not log passwords. Large files
+three authentication attempts per connection, and a ten-failures-per-minute
+authentication throttle per known credential. Failed authentications do not log passwords. Large files
 stream through bounded buffers, but manifests/inventories use memory proportional
 to object count. Individual JSON metadata documents are limited to 128 MiB; each
 acquisition-manifest record to 1 MiB. Readback has a one-hour deadline. Choose limits

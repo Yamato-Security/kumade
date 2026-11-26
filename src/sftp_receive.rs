@@ -49,16 +49,19 @@ pub struct Options {
     /// Evidence parent; creates a new protected session directory
     #[arg(short, long)]
     pub output: PathBuf,
+    /// Number of independent collectors to issue temporary credentials to
+    #[arg(long, default_value_t=1, value_parser=clap::value_parser!(u32).range(1..=64))]
+    pub sources: u32,
     /// Credential lifetime: seconds, or a suffix s/m/h (maximum: 7 days)
     #[arg(long, default_value="2h", value_parser=parse_duration)]
     pub expires: Duration,
-    /// Maximum stored upload bytes in GiB (compressed bytes)
+    /// Maximum stored upload bytes per source in GiB (compressed bytes)
     #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u64).range(1..=65536))]
     pub max_gib: u64,
-    /// Maximum total decoded bytes during readback in GiB
+    /// Maximum decoded bytes per source during readback in GiB
     #[arg(long, default_value_t=1024, value_parser=clap::value_parser!(u64).range(1..=1048576))]
     pub max_decoded_gib: u64,
-    /// Maximum number of upload objects, including journals and probes
+    /// Maximum upload objects per source, including journals and probes
     #[arg(long, default_value_t=100000, value_parser=clap::value_parser!(u32).range(1..=1000000))]
     pub max_files: u32,
     /// Maximum simultaneous SSH connections (authenticated or not)
@@ -101,10 +104,12 @@ struct State {
     delivery_id: Option<String>,
     used: u64,
     files: u32,
-    open: u32,
+    uploads: HashMap<Vec<u8>, Upload>,
+    resumable: HashMap<String, Capability>,
     max_bytes: u64,
     max_files: u32,
     reserve: u64,
+    pending_bytes: Arc<Mutex<u64>>,
     closed: BTreeMap<String, Closed>,
     sessions: HashMap<uuid::Uuid, server::Handle>,
     failures: VecDeque<Instant>,
@@ -138,21 +143,39 @@ impl State {
         accepted
     }
 }
+// Routing uses the generated credential, never an address or a collector-supplied hostname.
+type Accounts = Arc<HashMap<[u8; 32], Shared>>;
+
 struct SshSession {
-    state: Shared,
+    accounts: Accounts,
+    authenticated: Option<Shared>,
+    connection_id: uuid::Uuid,
     channel: Option<Channel<Msg>>,
-    accepted: bool,
     opened: bool,
+}
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        if let Some(account) = &self.authenticated
+            && let Ok(mut state) = account.lock()
+        {
+            state.sessions.remove(&self.connection_id);
+        }
+    }
 }
 impl server::Handler for SshSession {
     type Error = anyhow::Error;
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth> {
-        self.accepted = self
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?
-            .authorize(user, password);
-        Ok(if self.accepted {
+        let username_hash: [u8; 32] = Sha256::digest(user.as_bytes()).into();
+        self.authenticated = None;
+        if let Some(account) = self.accounts.get(&username_hash) {
+            let mut state = account
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?;
+            if state.authorize(user, password) {
+                self.authenticated = Some(account.clone());
+            }
+        }
+        Ok(if self.authenticated.is_some() {
             Auth::Accept
         } else {
             Auth::reject()
@@ -162,16 +185,20 @@ impl server::Handler for SshSession {
         &mut self,
         channel: Channel<Msg>,
         reply: ChannelOpenHandle,
-        _: &mut Session,
+        session: &mut Session,
     ) -> Result<()> {
-        if self.accepted
+        if let Some(account) = &self.authenticated
             && !self.opened
-            && self
-                .state
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?
-                .live()
         {
+            {
+                let mut state = account
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?;
+                if !state.live() {
+                    return Ok(());
+                }
+                state.sessions.insert(self.connection_id, session.handle());
+            }
             self.opened = true;
             self.channel = Some(channel);
             reply.accept().await;
@@ -185,9 +212,8 @@ impl server::Handler for SshSession {
         session: &mut Session,
     ) -> Result<()> {
         if name == "sftp"
-            && self.accepted
-            && self
-                .state
+            && let Some(account) = &self.authenticated
+            && account
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?
                 .live()
@@ -197,8 +223,8 @@ impl server::Handler for SshSession {
             russh_sftp::server::run(
                 channel.into_stream(),
                 Files {
-                    state: self.state.clone(),
-                    handles: HashMap::new(),
+                    state: account.clone(),
+                    owner: uuid::Uuid::new_v4(),
                     initialized: false,
                 },
             )
@@ -243,6 +269,7 @@ impl server::Handler for SshSession {
     }
 }
 struct Upload {
+    owner: uuid::Uuid,
     file: File,
     name: String,
     bytes: u64,
@@ -251,7 +278,7 @@ struct Upload {
 }
 struct Files {
     state: Shared,
-    handles: HashMap<Vec<u8>, Upload>,
+    owner: uuid::Uuid,
     initialized: bool,
 }
 fn ok(id: u32) -> Status {
@@ -289,6 +316,126 @@ fn object_name(path: &SftpString) -> std::result::Result<&str, StatusCode> {
     }
     Ok(name)
 }
+struct Capability {
+    secret_hash: [u8; 32],
+    // None after CLOSE. Retain the digest so an ambiguous CLOSE can be confirmed.
+    handle: Option<Vec<u8>>,
+}
+
+fn create_upload(state: &mut State, name: &str, owner: uuid::Uuid) -> Result<Vec<u8>, StatusCode> {
+    if !state.live() || state.files >= state.max_files || state.uploads.len() >= 256 {
+        return Err(StatusCode::PermissionDenied);
+    }
+    if !name.starts_with("probe-") {
+        let delivery = &name[..36];
+        if state.delivery_id.as_ref().is_some_and(|id| id != delivery) {
+            return Err(StatusCode::PermissionDenied);
+        }
+        state.delivery_id = Some(delivery.into());
+    } else if state.delivery_id.is_some() || state.files >= 16 {
+        return Err(StatusCode::PermissionDenied);
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(state.incoming.join(name)).map_err(|e| {
+        if e.kind() == io::ErrorKind::AlreadyExists {
+            StatusCode::PermissionDenied
+        } else {
+            StatusCode::Failure
+        }
+    })?;
+    state.files += 1;
+    let handle = uuid::Uuid::new_v4().to_string().into_bytes();
+    state.uploads.insert(
+        handle.clone(),
+        Upload {
+            owner,
+            file,
+            name: name.to_owned(),
+            bytes: 0,
+            hash: Sha256::new(),
+            broken: false,
+        },
+    );
+    Ok(handle)
+}
+
+impl Files {
+    fn attach(&mut self, id: u32, data: Vec<u8>) -> Result<Packet, StatusCode> {
+        let data = Zeroizing::new(data);
+        if !self.initialized || data.len() > 32 + "/incoming/".len() + 200 {
+            return Err(StatusCode::BadMessage);
+        }
+        let (secret, path) = data.split_at_checked(32).ok_or(StatusCode::BadMessage)?;
+        let path = std::str::from_utf8(path)
+            .map_err(|_| StatusCode::BadMessage)?
+            .to_owned();
+        let name = object_name(&path)?;
+        if name.starts_with("probe-") {
+            return Err(StatusCode::PermissionDenied);
+        }
+        let secret_hash: [u8; 32] = Sha256::digest(secret).into();
+        let mut state = self.state.lock().map_err(|_| StatusCode::Failure)?;
+        if !state.live() {
+            return Err(StatusCode::PermissionDenied);
+        }
+        let (bytes, handle) = if let Some(cap) = state.resumable.get(name) {
+            if !bool::from(secret_hash.ct_eq(&cap.secret_hash)) {
+                return Err(StatusCode::PermissionDenied);
+            }
+            if let Some(previous) = cap.handle.clone() {
+                // Transfer ownership under the same lock as WRITE. Any later packets
+                // from the old connection are rejected, even during a half-open TCP session.
+                let prior = state.uploads.get(&previous).ok_or(StatusCode::Failure)?;
+                if prior.broken {
+                    return Err(StatusCode::Failure);
+                }
+                let bytes = prior.bytes;
+                let mut upload = state.uploads.remove(&previous).ok_or(StatusCode::Failure)?;
+                upload.owner = self.owner;
+                let fresh = uuid::Uuid::new_v4().to_string().into_bytes();
+                state.uploads.insert(fresh.clone(), upload);
+                state
+                    .resumable
+                    .get_mut(name)
+                    .ok_or(StatusCode::Failure)?
+                    .handle = Some(fresh.clone());
+                (bytes, Some(fresh))
+            } else {
+                (
+                    state.closed.get(name).ok_or(StatusCode::Failure)?.bytes,
+                    None,
+                )
+            }
+        } else {
+            let fresh = create_upload(&mut state, name, self.owner)?;
+            state.resumable.insert(
+                name.to_owned(),
+                Capability {
+                    secret_hash,
+                    handle: Some(fresh.clone()),
+                },
+            );
+            (0, Some(fresh))
+        };
+        let mut reply = Vec::with_capacity(45);
+        reply.push(u8::from(handle.is_none()));
+        reply.extend_from_slice(&bytes.to_be_bytes());
+        if let Some(handle) = handle {
+            reply.extend_from_slice(&handle);
+        }
+        Ok(Packet::ExtendedReply(russh_sftp::protocol::ExtendedReply {
+            id,
+            data: reply,
+        }))
+    }
+}
+
 impl russh_sftp::server::Handler for Files {
     type Error = StatusCode;
     fn unimplemented(&self) -> StatusCode {
@@ -307,6 +454,9 @@ impl russh_sftp::server::Handler for Files {
         version
             .extensions
             .insert("fsync@openssh.com".into(), "1".into());
+        version
+            .extensions
+            .insert(crate::sftp::STREAM_OPEN.into(), "1".into());
         Ok(version)
     }
     async fn realpath(
@@ -334,47 +484,9 @@ impl russh_sftp::server::Handler for Files {
         {
             return Err(StatusCode::PermissionDenied);
         }
-        let name = object_name(&path)?.to_owned();
+        let name = object_name(&path)?;
         let mut state = self.state.lock().map_err(|_| StatusCode::Failure)?;
-        if !state.live() || state.files >= state.max_files || state.open >= 256 {
-            return Err(StatusCode::PermissionDenied);
-        }
-        if !name.starts_with("probe-") {
-            let delivery = &name[..36];
-            if state.delivery_id.as_ref().is_some_and(|id| id != delivery) {
-                return Err(StatusCode::PermissionDenied);
-            }
-            state.delivery_id = Some(delivery.into());
-        } else if state.delivery_id.is_some() || state.files >= 16 {
-            return Err(StatusCode::PermissionDenied);
-        }
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options.open(state.incoming.join(&name)).map_err(|e| {
-            if e.kind() == io::ErrorKind::AlreadyExists {
-                StatusCode::PermissionDenied
-            } else {
-                StatusCode::Failure
-            }
-        })?;
-        state.files += 1;
-        state.open += 1;
-        let handle = uuid::Uuid::new_v4().to_string().into_bytes();
-        self.handles.insert(
-            handle.clone(),
-            Upload {
-                file,
-                name,
-                bytes: 0,
-                hash: Sha256::new(),
-                broken: false,
-            },
-        );
+        let handle = create_upload(&mut state, name, self.owner)?;
         Ok(Handle {
             id,
             handle: handle.into(),
@@ -391,9 +503,11 @@ impl russh_sftp::server::Handler for Files {
         if !state.live() {
             return Err(StatusCode::PermissionDenied);
         }
-        let upload = self
-            .handles
+        let state = &mut *state;
+        let upload = state
+            .uploads
             .get_mut(handle.as_bytes())
+            .filter(|u| u.owner == self.owner)
             .ok_or(StatusCode::PermissionDenied)?;
         if upload.broken || offset != upload.bytes || data.len() > 128 * 1024 {
             return Err(StatusCode::PermissionDenied);
@@ -408,13 +522,31 @@ impl russh_sftp::server::Handler for Files {
             .ok_or(StatusCode::Failure)?;
         if total > state.max_bytes
             || (upload.name.ends_with("-delivery.json") && end > crate::sftp_verify::MAX_METADATA)
-            || fs2::available_space(&state.incoming).map_err(|_| StatusCode::Failure)?
-                < state.reserve.saturating_add(data.len() as u64)
         {
             return Err(StatusCode::Failure);
         }
-        state.used = total; // Conservatively retain the reservation on a partial OS write.
-        if upload.file.write_all(&data).is_err() {
+        let size = data.len() as u64;
+        // Count concurrent writes against the shared disk reserve while allowing
+        // the writes themselves to proceed independently on each source.
+        {
+            let mut pending = state
+                .pending_bytes
+                .lock()
+                .map_err(|_| StatusCode::Failure)?;
+            let with_upload = pending.checked_add(size).ok_or(StatusCode::Failure)?;
+            let free = fs2::available_space(&state.incoming).map_err(|_| StatusCode::Failure)?;
+            if free.saturating_sub(state.reserve) < with_upload {
+                return Err(StatusCode::Failure);
+            }
+            *pending = with_upload;
+        }
+        state.used = total; // Conservatively retain source quota on a partial OS write.
+        let written = upload.file.write_all(&data);
+        *state
+            .pending_bytes
+            .lock()
+            .map_err(|_| StatusCode::Failure)? -= size;
+        if written.is_err() {
             upload.broken = true;
             state.io_failed = true;
             return Err(StatusCode::Failure);
@@ -429,6 +561,9 @@ impl russh_sftp::server::Handler for Files {
         request: String,
         data: Vec<u8>,
     ) -> std::result::Result<Packet, StatusCode> {
+        if request == crate::sftp::STREAM_OPEN {
+            return self.attach(id, data);
+        }
         if request != "fsync@openssh.com" || data.len() < 4 {
             return Err(StatusCode::PermissionDenied);
         }
@@ -441,9 +576,10 @@ impl russh_sftp::server::Handler for Files {
         if !state.live() {
             return Err(StatusCode::PermissionDenied);
         }
-        let upload = self
-            .handles
+        let upload = state
+            .uploads
             .get(&data[4..])
+            .filter(|u| u.owner == self.owner)
             .ok_or(StatusCode::PermissionDenied)?;
         if upload.broken {
             return Err(StatusCode::Failure);
@@ -460,19 +596,20 @@ impl russh_sftp::server::Handler for Files {
         if !state.live() {
             return Err(StatusCode::PermissionDenied);
         }
-        let upload = self
-            .handles
+        let upload = state
+            .uploads
             .get(handle.as_bytes())
+            .filter(|u| u.owner == self.owner)
             .ok_or(StatusCode::PermissionDenied)?;
         // A delivery descriptor cannot finalize while another writer remains open.
-        if upload.name.ends_with("-delivery.json") && (state.open != 1 || state.io_failed) {
+        if upload.name.ends_with("-delivery.json") && (state.uploads.len() != 1 || state.io_failed)
+        {
             return Err(StatusCode::Failure);
         }
-        let upload = self
-            .handles
+        let upload = state
+            .uploads
             .remove(handle.as_bytes())
             .ok_or(StatusCode::PermissionDenied)?;
-        state.open -= 1;
         if upload.broken || upload.file.sync_all().is_err() {
             state.io_failed = true;
             return Err(StatusCode::Failure);
@@ -484,6 +621,9 @@ impl russh_sftp::server::Handler for Files {
         let name = upload.name.clone();
         drop(upload.file);
         state.closed.insert(name.clone(), completed.clone());
+        if let Some(capability) = state.resumable.get_mut(&name) {
+            capability.handle = None;
+        }
         if name.ends_with("-delivery.json") {
             state.final_object = Some((name, completed.hash));
             state.revoked = true;
@@ -494,7 +634,10 @@ impl russh_sftp::server::Handler for Files {
 impl Drop for Files {
     fn drop(&mut self) {
         if let Ok(mut state) = self.state.lock() {
-            state.open = state.open.saturating_sub(self.handles.len() as u32);
+            let state = &mut *state;
+            state.uploads.retain(|_, upload| {
+                upload.owner != self.owner || state.resumable.contains_key(&upload.name)
+            });
         }
     }
 }
@@ -514,6 +657,10 @@ pub fn run(options: &Options) -> Result<u8> {
         .block_on(serve(options))
 }
 async fn serve(options: &Options) -> Result<u8> {
+    ensure!(
+        (1..=64).contains(&options.sources),
+        "Use 1 through 64 sources"
+    );
     let parent = paths::resolve_future(&options.output)?;
     fs::create_dir_all(&parent)?;
     let root = parent.join(format!(
@@ -527,65 +674,97 @@ async fn serve(options: &Options) -> Result<u8> {
         "Receiver storage requires persistent access controls"
     );
     let root = platform::canonicalize(&root)?;
-    let incoming = root.join("incoming");
-    fs::create_dir(&incoming)?;
     let listener = tokio::net::TcpListener::bind(options.listen).await?;
+    let addr = listener.local_addr()?;
     let key = russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)?;
     let pin = key
         .public_key()
         .fingerprint(russh::keys::HashAlg::Sha256)
         .to_string();
-    let username = format!("ku{}", uuid::Uuid::new_v4().simple());
-    let password = Zeroizing::new(URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()));
-    let started = Instant::now();
+    let deadline = Instant::now()
+        .checked_add(options.expires)
+        .context("Expiry overflow")?;
     let expires_utc = chrono::Utc::now() + chrono::Duration::from_std(options.expires)?;
-    let state = Arc::new(Mutex::new(State {
-        incoming: incoming.clone(),
-        username_hash: Sha256::digest(username.as_bytes()).into(),
-        password_hash: Sha256::digest(password.as_bytes()).into(),
-        deadline: started
-            .checked_add(options.expires)
-            .context("Expiry overflow")?,
-        revoked: false,
-        final_object: None,
-        delivery_id: None,
-        used: 0,
-        files: 0,
-        open: 0,
-        max_bytes: options
-            .max_gib
-            .checked_mul(1 << 30)
-            .context("Quota overflow")?,
-        max_files: options.max_files,
-        reserve: options
-            .reserve_mib
-            .checked_mul(1 << 20)
-            .context("Reserve overflow")?,
-        closed: BTreeMap::new(),
-        sessions: HashMap::new(),
-        failures: VecDeque::new(),
-        io_failed: false,
-    }));
-    collect::write_json_new(
-        &root.join("Receiver.json"),
-        &serde_json::json!({"SchemaVersion":1,"StartedUtc":utc_now(),"ExpiresUtc":expires_utc.to_rfc3339(),"Username":username,"HostKeyFingerprint":pin,"Listen":listener.local_addr()?.to_string(),"MaxStoredGiB":options.max_gib,"MaxDecodedGiB":options.max_decoded_gib,"MaxFiles":options.max_files,"AllowIPs":options.allow_ips}),
-    )?;
+    let max_bytes = options
+        .max_gib
+        .checked_mul(1 << 30)
+        .context("Quota overflow")?;
+    let max_decoded_bytes = options
+        .max_decoded_gib
+        .checked_mul(1 << 30)
+        .context("Decoded quota overflow")?;
+    let reserve = options
+        .reserve_mib
+        .checked_mul(1 << 20)
+        .context("Reserve overflow")?;
+    let mut accounts = HashMap::new();
+    let mut pending = Vec::new();
+    let mut credentials = Vec::new();
+    let pending_bytes = Arc::new(Mutex::new(0));
+    for number in 1..=options.sources {
+        let label = format!("source-{number:02}");
+        let source_root = if options.sources == 1 {
+            root.clone()
+        } else {
+            let path = root.join(&label);
+            fs::create_dir(&path)?;
+            path
+        };
+        let incoming = source_root.join("incoming");
+        fs::create_dir(&incoming)?;
+        let username = format!("ku{}", uuid::Uuid::new_v4().simple());
+        let password = Zeroizing::new(URL_SAFE_NO_PAD.encode(rand::random::<[u8; 32]>()));
+        let username_hash = Sha256::digest(username.as_bytes()).into();
+        let account = Arc::new(Mutex::new(State {
+            incoming,
+            username_hash,
+            password_hash: Sha256::digest(password.as_bytes()).into(),
+            deadline,
+            revoked: false,
+            final_object: None,
+            delivery_id: None,
+            used: 0,
+            files: 0,
+            uploads: HashMap::new(),
+            resumable: HashMap::new(),
+            max_bytes,
+            max_files: options.max_files,
+            reserve,
+            pending_bytes: pending_bytes.clone(),
+            closed: BTreeMap::new(),
+            sessions: HashMap::new(),
+            failures: VecDeque::new(),
+            io_failed: false,
+        }));
+        collect::write_json_new(
+            &source_root.join("Receiver.json"),
+            &serde_json::json!({"SchemaVersion":1,"StartedUtc":utc_now(),"ExpiresUtc":expires_utc.to_rfc3339(),"Username":username,"HostKeyFingerprint":pin,"Listen":addr.to_string(),"MaxStoredGiB":options.max_gib,"MaxDecodedGiB":options.max_decoded_gib,"MaxFiles":options.max_files,"AllowIPs":options.allow_ips}),
+        )?;
+        accounts.insert(username_hash, account.clone());
+        pending.push((source_root, account));
+        credentials.push((label, username, password));
+    }
+    let accounts = Arc::new(accounts);
     ui::banner();
-    ui::field("SFTP receiver", listener.local_addr()?);
+    ui::field("SFTP receiver", addr);
     ui::field("Evidence directory", root.display());
-    ui::field("Temporary username", &username);
-    ui::field("Temporary password", password.as_str());
     ui::field("SSH fingerprint", &pin);
     ui::field("Expires UTC", expires_utc.to_rfc3339());
     ui::field(
-        "Stored quota",
+        "Stored quota per source",
         format!("{} GiB / {} objects", options.max_gib, options.max_files),
     );
+    for (label, username, password) in credentials {
+        if options.sources > 1 {
+            ui::field("Source", label);
+        }
+        ui::field("Temporary username", username);
+        ui::field("Temporary password", password.as_str());
+    }
     ui::status(
-        "Upload-only access. Credentials are revoked after the final delivery, expiry or Ctrl+C.",
+        "Upload-only access. Each credential is revoked after its final delivery, expiry or Ctrl+C.",
     );
     io::stdout().flush()?;
-    drop(password);
     let config = Arc::new(server::Config {
         keys: vec![key],
         max_auth_attempts: 3,
@@ -597,40 +776,103 @@ async fn serve(options: &Options) -> Result<u8> {
         window_size: 1024 * 1024,
         ..Default::default()
     });
-    let mut tasks = tokio::task::JoinSet::new();
+    let mut connections = tokio::task::JoinSet::new();
+    let mut finalizers = tokio::task::JoinSet::new();
+    // Verification can decode large manifests; keep only one readback active.
+    let readback = Arc::new(tokio::sync::Semaphore::new(1));
     let mut tick = tokio::time::interval(Duration::from_millis(100));
-    let reason = loop {
-        tokio::select! {
-            _=tick.tick()=>{let state=state.lock().map_err(|_|anyhow::anyhow!("Receiver state poisoned"))?;if state.final_object.is_some(){break "FinalDelivery";} else if !state.live(){break "Expired";}},
-            signal=tokio::signal::ctrl_c()=>{signal?;break "Interrupted";},
-            Some(_)=tasks.join_next(),if !tasks.is_empty()=>{},
-            accept=listener.accept()=>{let (stream,peer)=accept?;
-                if tasks.len()>=options.max_connections as usize || !peer_allowed(peer.ip(), &options.allow_ips){continue;}
-                let config=config.clone();let state=state.clone();
-                tasks.spawn(async move {
-                    let id=uuid::Uuid::new_v4();
-                    let session=tokio::time::timeout(Duration::from_secs(15),server::run_stream(config,stream,SshSession{state:state.clone(),channel:None,accepted:false,opened:false})).await;
-                    if let Ok(Ok(session))=session {
-                        if let Ok(mut guard)=state.lock(){guard.sessions.insert(id,session.handle());}
-                        let _=session.await;
-                        if let Ok(mut guard)=state.lock(){guard.sessions.remove(&id);}
-                    }
-                });
+    while !pending.is_empty() {
+        let interrupted = tokio::select! {
+            _ = tick.tick() => false,
+            signal = tokio::signal::ctrl_c() => { signal?; true },
+            Some(_) = connections.join_next(), if !connections.is_empty() => continue,
+            accepted = listener.accept() => {
+                let (stream, peer) = accepted?;
+                if connections.len() < options.max_connections as usize && peer_allowed(peer.ip(), &options.allow_ips) {
+                    let config = config.clone();
+                    let handler = SshSession {
+                        accounts: accounts.clone(),
+                        authenticated: None,
+                        connection_id: uuid::Uuid::new_v4(),
+                        channel: None,
+                        opened: false,
+                    };
+                    connections.spawn(async move {
+                        if let Ok(Ok(session)) = tokio::time::timeout(Duration::from_secs(15),
+                            server::run_stream(config, stream, handler)).await {
+                            let _ = session.await;
+                        }
+                    });
+                }
+                continue
+            }
+        };
+        for index in (0..pending.len()).rev() {
+            let (source_root, account) = &pending[index];
+            let mut state = account
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?;
+            let reason = if state.final_object.is_some() {
+                "FinalDelivery"
+            } else if interrupted {
+                "Interrupted"
+            } else if !state.live() {
+                "Expired"
+            } else {
+                continue;
+            };
+            state.revoked = true;
+            // Retain partial evidence on disk, release its handles as soon as this slot closes.
+            state.uploads.clear();
+            state.resumable.clear();
+            let final_object = state.final_object.take();
+            let closed = std::mem::take(&mut state.closed);
+            let handles = state.sessions.drain().map(|(_, handle)| handle).collect();
+            drop(state);
+            finalizers.spawn(finish_source(
+                source_root.clone(),
+                reason,
+                final_object,
+                closed,
+                handles,
+                max_decoded_bytes,
+                readback.clone(),
+            ));
+            pending.swap_remove(index);
+        }
+    }
+    drop(listener);
+    let mut code = 0;
+    let mut first_error = None;
+    while let Some(result) = finalizers.join_next().await {
+        match result
+            .context("Receiver readback task failed")
+            .and_then(|r| r)
+        {
+            Ok(source_code) => code = code.max(source_code),
+            Err(error) => {
+                eprintln!("{error:#}");
+                first_error.get_or_insert(error);
             }
         }
-    };
-    drop(listener);
-    let (final_object, closed, handles) = {
-        let mut guard = state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Receiver state poisoned"))?;
-        guard.revoked = true;
-        (
-            guard.final_object.clone(),
-            guard.closed.clone(),
-            guard.sessions.values().cloned().collect::<Vec<_>>(),
-        )
-    };
+    }
+    connections.abort_all();
+    while connections.join_next().await.is_some() {}
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(code),
+    }
+}
+
+async fn finish_source(
+    root: PathBuf,
+    reason: &'static str,
+    final_object: Option<(String, String)>,
+    closed: BTreeMap<String, Closed>,
+    handles: Vec<server::Handle>,
+    max_decoded_bytes: u64,
+    readback: Arc<tokio::sync::Semaphore>,
+) -> Result<u8> {
     // No further writes/authentication can pass the state lock. Let the final
     // CLOSE acknowledgement reach the collector before disconnecting idle peers.
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -645,19 +887,16 @@ async fn serve(options: &Options) -> Result<u8> {
         )
         .await;
     }
-    tasks.abort_all();
-    while tasks.join_next().await.is_some() {}
+    ui::field("Receiver directory", root.display());
     ui::field("Credentials", "Revoked");
     if let Some((name, digest)) = final_object {
         ui::status("Reading back received objects and verifying hashes…");
+        let _permit = readback.acquire().await?;
         let inputs = crate::sftp_verify::Inputs {
-            incoming,
+            incoming: root.join("incoming"),
             delivery: name.clone(),
             sha256: digest.clone(),
-            max_decoded_bytes: options
-                .max_decoded_gib
-                .checked_mul(1 << 30)
-                .context("Decoded quota overflow")?,
+            max_decoded_bytes,
             restore: None,
         };
         let result =
@@ -682,7 +921,12 @@ async fn serve(options: &Options) -> Result<u8> {
                     &root.join("VerificationFailure.json"),
                     &serde_json::json!({"FinishedUtc":utc_now(),"Status":"Failed","Reason":format!("{error:#}")}),
                 )?;
-                Err(error).context("Server readback failed; all received evidence was retained")
+                Err(error).with_context(|| {
+                    format!(
+                        "Server readback failed; evidence retained in {}",
+                        root.display()
+                    )
+                })
             }
         }
     } else {
@@ -719,10 +963,12 @@ mod tests {
             delivery_id: None,
             used: 0,
             files: 0,
-            open: 0,
+            uploads: HashMap::new(),
+            resumable: HashMap::new(),
             max_bytes: 1024 * 1024,
             max_files: 100,
             reserve: 0,
+            pending_bytes: Arc::default(),
             closed: BTreeMap::new(),
             sessions: HashMap::new(),
             failures: VecDeque::new(),
@@ -732,7 +978,7 @@ mod tests {
             root,
             Files {
                 state,
-                handles: HashMap::new(),
+                owner: uuid::Uuid::new_v4(),
                 initialized: false,
             },
         )
@@ -758,6 +1004,94 @@ mod tests {
         assert!(peer_allowed(native, &[native]));
         assert!(!peer_allowed(ipv4, &[native]));
     }
+    #[tokio::test]
+    async fn credentials_namespaces_and_resource_limits_are_independent_per_source() {
+        use russh::server::Handler as _;
+        let (first_dir, mut first) = fixture();
+        let (second_dir, mut second) = fixture();
+        let first_key: [u8; 32] = Sha256::digest(b"user").into();
+        let second_key: [u8; 32] = Sha256::digest(b"second").into();
+        {
+            let mut state = second.state.lock().unwrap();
+            state.username_hash = second_key;
+            state.password_hash = Sha256::digest(b"second password").into();
+        }
+        let pending_bytes = first.state.lock().unwrap().pending_bytes.clone();
+        second.state.lock().unwrap().pending_bytes = pending_bytes.clone();
+        first.state.lock().unwrap().max_bytes = 3;
+        let mut session = SshSession {
+            accounts: Arc::new(HashMap::from([
+                (first_key, first.state.clone()),
+                (second_key, second.state.clone()),
+            ])),
+            authenticated: None,
+            connection_id: uuid::Uuid::new_v4(),
+            channel: None,
+            opened: false,
+        };
+        session.auth_password("second", "secret").await.unwrap();
+        assert!(session.authenticated.is_none());
+        session
+            .auth_password("second", "second password")
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            session.authenticated.as_ref().unwrap(),
+            &second.state
+        ));
+
+        let delivery = uuid::Uuid::new_v4();
+        let name = format!("{delivery}-payload-test");
+        let path = format!("/incoming/{name}");
+        let flags = OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE;
+        first.init(3, HashMap::new()).await.unwrap();
+        second.init(3, HashMap::new()).await.unwrap();
+        let a = first
+            .open(1, path.clone(), flags, FileAttributes::default())
+            .await
+            .unwrap()
+            .handle;
+        let b = second
+            .open(1, path, flags, FileAttributes::default())
+            .await
+            .unwrap()
+            .handle;
+        assert!(
+            first
+                .write(2, a.clone(), 0, b"over quota".to_vec())
+                .await
+                .is_err()
+        );
+        first.write(3, a.clone(), 0, b"one".to_vec()).await.unwrap();
+        first.close(4, a).await.unwrap();
+        let descriptor = first
+            .open(
+                5,
+                format!("/incoming/{delivery}-delivery.json"),
+                flags,
+                FileAttributes::default(),
+            )
+            .await
+            .unwrap()
+            .handle;
+        first.close(6, descriptor).await.unwrap();
+        assert!(!first.state.lock().unwrap().live());
+        // An outstanding reservation on the same disk affects both collectors.
+        *pending_bytes.lock().unwrap() = u64::MAX - 1;
+        assert!(second.write(2, b.clone(), 0, vec![42]).await.is_err());
+        *pending_bytes.lock().unwrap() = 0;
+        second
+            .write(2, b.clone(), 0, b"second payload".to_vec())
+            .await
+            .unwrap();
+        second.close(3, b).await.unwrap();
+        assert_eq!(fs::read(first_dir.path().join(&name)).unwrap(), b"one");
+        assert_eq!(
+            fs::read(second_dir.path().join(&name)).unwrap(),
+            b"second payload"
+        );
+    }
+
     #[tokio::test]
     async fn upload_is_create_only_and_append_only_even_with_an_open_handle() {
         let (root, mut files) = fixture();
@@ -833,6 +1167,110 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fs::read(root.path().join(name)).unwrap(), b"first");
+    }
+    fn attach_result(
+        files: &mut Files,
+        name: &str,
+        secret: u8,
+    ) -> Result<(bool, u64, SftpHandle), StatusCode> {
+        let mut request = vec![secret; 32];
+        request.extend_from_slice(format!("/incoming/{name}").as_bytes());
+        let Packet::ExtendedReply(reply) = files.attach(1, request)? else {
+            panic!("unexpected reply")
+        };
+        Ok((
+            reply.data[0] == 1,
+            u64::from_be_bytes(reply.data[1..9].try_into().unwrap()),
+            reply.data[9..].to_vec().into(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn resume_transfers_only_append_authority_and_preserves_sealed_objects() {
+        let (root, mut first) = fixture();
+        let name = format!("{}-payload-test", uuid::Uuid::new_v4());
+        first.init(3, HashMap::new()).await.unwrap();
+        let (sealed, bytes, old_handle) = attach_result(&mut first, &name, 24).unwrap();
+        assert!(!sealed);
+        assert_eq!(bytes, 0);
+        first
+            .write(2, old_handle.clone(), 0, b"first".to_vec())
+            .await
+            .unwrap();
+
+        let mut second = Files {
+            state: first.state.clone(),
+            owner: uuid::Uuid::new_v4(),
+            initialized: true,
+        };
+        assert!(
+            second
+                .write(3, old_handle.clone(), 5, vec![42])
+                .await
+                .is_err()
+        );
+        assert!(second.close(3, old_handle.clone()).await.is_err());
+        let mut fsync_request = (old_handle.as_bytes().len() as u32).to_be_bytes().to_vec();
+        fsync_request.extend_from_slice(old_handle.as_bytes());
+        assert!(
+            second
+                .extended(3, "fsync@openssh.com".into(), fsync_request)
+                .await
+                .is_err()
+        );
+        assert!(attach_result(&mut second, &name, 25).is_err());
+        let (sealed, bytes, fresh) = attach_result(&mut second, &name, 24).unwrap();
+        assert!(!sealed);
+        assert_eq!(bytes, 5);
+        assert!(
+            first
+                .write(4, old_handle.clone(), 5, vec![42])
+                .await
+                .is_err()
+        );
+        assert!(first.close(5, old_handle).await.is_err());
+        drop(first);
+        assert!(second.write(6, fresh.clone(), 0, vec![42]).await.is_err());
+        assert!(second.write(7, fresh.clone(), 6, vec![42]).await.is_err());
+        second
+            .write(8, fresh.clone(), 5, b"-last".to_vec())
+            .await
+            .unwrap();
+        second.close(9, fresh.clone()).await.unwrap();
+        assert!(second.write(10, fresh, 10, vec![42]).await.is_err());
+        let (sealed, bytes, no_handle) = attach_result(&mut second, &name, 24).unwrap();
+        assert!(sealed && no_handle.as_bytes().is_empty());
+        assert_eq!(bytes, 10);
+        assert!(attach_result(&mut second, &name, 25).is_err());
+        assert_eq!(fs::read(root.path().join(&name)).unwrap(), b"first-last");
+        let state = second.state.lock().unwrap();
+        assert_eq!((state.used, state.files), (10, 1));
+        assert_eq!(
+            state.closed[&name].hash,
+            crate::model::sha256(b"first-last")
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnected_stream_blocks_finalization_until_reattached_and_closed() {
+        let (_root, mut first) = fixture();
+        let id = uuid::Uuid::new_v4();
+        let payload = format!("{id}-payload-test");
+        let delivery = format!("{id}-delivery.json");
+        first.init(3, HashMap::new()).await.unwrap();
+        attach_result(&mut first, &payload, 42).unwrap();
+        let mut second = Files {
+            state: first.state.clone(),
+            owner: uuid::Uuid::new_v4(),
+            initialized: true,
+        };
+        drop(first);
+        let (_, _, handle) = attach_result(&mut second, &delivery, 43).unwrap();
+        assert!(second.close(2, handle.clone()).await.is_err());
+        let (_, _, pending) = attach_result(&mut second, &payload, 42).unwrap();
+        second.close(3, pending).await.unwrap();
+        second.close(4, handle).await.unwrap();
+        assert!(attach_result(&mut second, &payload, 42).is_err());
     }
     #[tokio::test]
     async fn expiry_revokes_existing_handles_and_quotas_are_not_bypassed() {

@@ -29,11 +29,13 @@ use std::{
 struct MemoryStore {
     objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     fail_after: Option<usize>,
+    fail_delivery_close: bool,
 }
 struct MemoryFile {
     name: String,
     objects: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     fail_after: Option<usize>,
+    fail_delivery_close: bool,
 }
 impl Write for MemoryFile {
     fn write(&mut self, b: &[u8]) -> io::Result<usize> {
@@ -51,6 +53,10 @@ impl Write for MemoryFile {
 }
 impl RemoteWrite for MemoryFile {
     fn finish(self: Box<Self>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !(self.fail_delivery_close && self.name.ends_with("-delivery.json")),
+            "lost final close acknowledgement"
+        );
         Ok(())
     }
 }
@@ -63,6 +69,7 @@ impl Store for MemoryStore {
             name: name.into(),
             objects: self.objects.clone(),
             fail_after: self.fail_after,
+            fail_delivery_close: self.fail_delivery_close,
         }))
     }
 }
@@ -178,6 +185,39 @@ fn direct_streaming_roundtrip_seals_and_server_restorer() {
     );
     assert!(target.publish(&root, &summary).is_err());
 }
+#[test]
+fn lost_final_close_returns_the_receiver_receipt_identity_for_manual_comparison() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir_all(source.join("Windows/Prefetch")).unwrap();
+    fs::write(source.join("Windows/Prefetch/APP.pf"), b"evidence").unwrap();
+    let rules = Rules::load(DEFAULT_CATALOG).unwrap();
+    let plan = discovery::build_plan(
+        vec![discovery::directory_source(&source, "C", "HOST").unwrap()],
+        &rules,
+        &["windows.prefetch".into()],
+        false,
+    )
+    .unwrap();
+    let store = Arc::new(MemoryStore {
+        fail_delivery_close: true,
+        ..Default::default()
+    });
+    let target = Target::from_store(store.clone(), false).unwrap();
+    let (root, summary) = collect::collect(
+        &plan,
+        &temp.path().join("staging"),
+        &options(target.clone()),
+    )
+    .unwrap();
+    let error = target.publish(&root, &summary).unwrap_err().to_string();
+    let name = format!("{}-delivery.json", target.id());
+    let bytes = &store.objects.lock().unwrap()[&name];
+    assert!(error.contains(&name));
+    assert!(error.contains(&sha256(bytes)));
+    assert!(error.contains("receiver receipt"));
+}
+
 #[test]
 fn failed_stream_never_creates_local_payload_or_completion_marker() {
     let t = tempfile::tempdir().unwrap();

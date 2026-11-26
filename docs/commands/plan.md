@@ -143,6 +143,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Parent for private metadata-only staging (default: system temporary directory)
           --sftp-timeout <SFTP_TIMEOUT>
               Per-operation network deadline in seconds (default: 60)
+          --sftp-retries <SFTP_RETRIES>
+              Maximum reconnect attempts per collection with a resume-capable receiver (default: 3)
           --sftp-no-compression
               Disable gzip payload compression (sparse zero ranges will use network bandwidth)
       -v, --verbose
