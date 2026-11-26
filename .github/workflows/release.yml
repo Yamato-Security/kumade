@@ -8,6 +8,16 @@ on:
         required: false
         type: string
 
+      bundle_rules:
+        description: 'Also build offline Core/Extended/Full YARA Forge variants'
+        required: true
+        default: true
+        type: boolean
+      yara_forge_release:
+        description: 'YARA Forge date tag or latest (resolved once for all platforms)'
+        default: 'latest'
+        type: string
+
 # Building never publishes a release or receives a write token. Packages are
 # reviewed before attachment to the release page.
 permissions:
@@ -19,7 +29,28 @@ env:
   CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
 
 jobs:
+  forge:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve one immutable Forge release
+        id: resolve
+        env:
+          FORGE_RELEASE: ${{ inputs.yara_forge_release }}
+          BUNDLE_RULES: ${{ inputs.bundle_rules }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$BUNDLE_RULES" != true ]]; then exit 0; fi
+          requested="${FORGE_RELEASE:-latest}"
+          if [[ "$requested" != latest && ! "$requested" =~ ^[0-9]{8}$ ]]; then exit 1; fi
+          endpoint=latest
+          if [[ "$requested" != latest ]]; then endpoint="tags/$requested"; fi
+          tag=$(gh api "repos/YARAHQ/yara-forge/releases/$endpoint" --jq .tag_name)
+          if [[ ! "$tag" =~ ^[0-9]{8}$ ]]; then exit 1; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
   build:
+    needs: forge
     name: Build (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -37,7 +68,10 @@ jobs:
           persist-credentials: false
       - name: Preserve release packager
         shell: bash
-        run: cp scripts/package_release.py "$RUNNER_TEMP/kumade-package-release.py"
+        run: |
+          mkdir -p "$RUNNER_TEMP/yara-release-codex"
+          cp scripts/package_release.py "$RUNNER_TEMP/kumade-package-release.py"
+          cp scripts/package_release.py scripts/prepare_yara_bundle.py scripts/build_yara_packages.py "$RUNNER_TEMP/yara-release-codex/"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_ref || github.sha }}
@@ -92,20 +126,33 @@ jobs:
       - name: Package ZIP and standalone executable
         shell: bash
         run: python3 "$RUNNER_TEMP/kumade-package-release.py" --target ${{ matrix.target }} --platform ${{ matrix.platform }}
+      - name: Build and package offline YARA Forge variants
+        if: inputs.bundle_rules
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          FORGE_TAG: ${{ needs.forge.outputs.tag }}
+          NATIVE_TESTS: ${{ matrix.native }}
+        run: |
+          extra=()
+          if [[ "$NATIVE_TESTS" == true ]]; then extra+=(--native-tests); fi
+          python3 "$RUNNER_TEMP/yara-release-codex/build_yara_packages.py" --target "$BUILD_TARGET" --platform "$BUILD_PLATFORM" --release "$FORGE_TAG" --work-directory "$RUNNER_TEMP/yara-bundles-codex" "${extra[@]}"
       - name: Verify download layout
         shell: bash
         run: |
           python3 - <<'PY'
           import hashlib, pathlib, zipfile
           output = pathlib.Path('dist')
-          archives = list(output.glob('*.zip'))
+          archives = list(output.glob('kumade-*.zip'))
           executables = list(output.glob('*.exe'))
-          assert len(archives) == len(executables) == 1
-          executable = executables[0]
-          with zipfile.ZipFile(archives[0]) as archive:
-              assert archive.namelist() == [executable.name], 'ZIP must contain only the executable'
-              assert archive.testzip() is None
-              assert hashlib.sha256(archive.read(executable.name)).digest() == hashlib.sha256(executable.read_bytes()).digest()
+          assert len(archives) == len(executables) and len(archives) in (1, 4)
+          for path in archives:
+              executable = path.with_suffix('.exe')
+              with zipfile.ZipFile(path) as archive:
+                  assert archive.namelist() == [executable.name], 'ZIP must contain only the executable'
+                  assert archive.testzip() is None
+                  assert hashlib.sha256(archive.read(executable.name)).digest() == hashlib.sha256(executable.read_bytes()).digest()
           assert (output / 'LICENSES.txt').is_file()
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -126,7 +173,12 @@ jobs:
           path: dist
       - name: Create checksums
         working-directory: dist
-        run: sha256sum *.zip *.exe LICENSES.txt > SHA256SUMS.txt
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib
+          files = sorted(p for p in pathlib.Path('.').iterdir() if p.is_file() and p.name != 'SHA256SUMS.txt')
+          pathlib.Path('SHA256SUMS.txt').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in files))
+          PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-packages

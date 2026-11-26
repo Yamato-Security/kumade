@@ -55,9 +55,9 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --scan-processes
               Scan live process memory after hot disk artifacts (default: off)
           --yara-ruleset <YARA_RULESET>
-              YARA Forge package for the optional process scan (default: core) [possible values: core, extended, full]
+              YARA Forge package (bundled selection by default, otherwise core) [possible values: core, extended, full]
           --yara-rules <YARA_RULES>
-              Use local YARA rules instead of downloading YARA Forge
+              Use a local Forge ZIP or YARA source for the process scan
           --yara-release <YARA_RELEASE>
               YARA Forge release for the process scan (default: latest)
       -d, --source <DIR>

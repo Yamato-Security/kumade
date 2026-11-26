@@ -1,0 +1,20 @@
+┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
+┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
+┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
+┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
+┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    by Yamato Security
+
+Version: 0.1.0
+
+Download or update a compressed YARA Forge rule package
+
+Usage: kumade update-rules [OPTIONS]
+
+Options:
+      --ruleset <RULESET>              YARA Forge ruleset to download [default: core] [possible values: core, extended, full]
+      --rules-release <RULES_RELEASE>  Forge release tag YYYYMMDD or latest [default: latest]
+  -o, --output <DIR>                   Destination for versioned ZIP files (default: same directory as this executable)
+  -q, --quiet                          Suppress routine messages
+  -h, --help                           Print help

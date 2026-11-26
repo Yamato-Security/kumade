@@ -128,7 +128,7 @@ scan, not disk-file scanning or an offline RAM-image parser.
 .\kumade.exe scan-processes --rules .\local.yar --pid 1234 -t jsonl -o E:\Yara-Selected
 ```
 
-Core is the default download. Pin a release or provide local rules for
+Matching bundled packs load offline; standard binaries download Core. Pin a release or provide local ZIP/source rules for
 repeatability. Protected/inaccessible processes, read gaps, exits and timeouts
 remain visible. A match is a lead; no match is not a clean bill of health.
 See [process-memory scanning](../yara-process-scan.md) for evaluator semantics,
@@ -136,6 +136,20 @@ chunk boundaries and rule-selection limitations.
 
 Integrated collection uses `--scan-processes --yara-ruleset full`, not the
 standalone `--ruleset` spelling. Its result files are sealed with the collection.
+'''),
+    'update-rules': ('Download compressed YARA Forge rules', r'''Download one versioned Core, Extended or Full ZIP and validate its release-asset
+SHA-256 and compilation before saving it. Existing different contents are refused.
+
+```powershell
+.\kumade.exe update-rules --ruleset core
+.\kumade.exe update-rules --ruleset extended
+.\kumade.exe update-rules --ruleset full
+```
+
+Use the ZIP path printed by the command with `scan-processes --rules <ZIP>` or
+`collect --scan-processes --yara-rules <ZIP>`. Without `-o`, download beside the
+executable, without creating a subdirectory. Updating does not rewrite the embedded executable.
+See [compressed/offline rules](../yara-process-scan.md#compressedoffline-rule-inputs-and-updates).
 '''),
     'verify': ('Check a retained local collection', r'''Read the saved collection, validate seals/accounting and compare retained
 payload hashes without reading original source evidence.

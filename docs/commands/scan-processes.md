@@ -11,7 +11,7 @@ scan, not disk-file scanning or an offline RAM-image parser.
 .\kumade.exe scan-processes --rules .\local.yar --pid 1234 -t jsonl -o E:\Yara-Selected
 ```
 
-Core is the default download. Pin a release or provide local rules for
+Matching bundled packs load offline; standard binaries download Core. Pin a release or provide local ZIP/source rules for
 repeatability. Protected/inaccessible processes, read gaps, exits and timeouts
 remain visible. A match is a lead; no match is not a clean bill of health.
 See [process-memory scanning](../yara-process-scan.md) for evaluator semantics,
@@ -43,9 +43,9 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Options:
       -o, --output <DIR>                   New result directory (existing directories are refused)
-          --ruleset <RULESET>              YARA Forge package to download (default: core) [default: core] [possible values: core, extended, full]
+          --ruleset <RULESET>              YARA Forge package (bundled selection by default, otherwise core) [default: core] [possible values: core, extended, full]
           --rules-release <RULES_RELEASE>  Forge release tag YYYYMMDD, or latest [default: latest]
-          --rules <FILE>                   Local UTF-8 YARA source, used without network access (includes disabled)
+          --rules <FILE>                   Local Forge ZIP or UTF-8 YARA source (offline; includes disabled)
       -t, --format <FORMAT>                Result table format [default: csv] [possible values: csv, jsonl]
           --pid <PID>                      Limit scanning to a PID; repeat (default: all except this collector)
       -T, --threads <THREADS>              Concurrent processes (default: 2 to limit live-system pressure) [default: 2]

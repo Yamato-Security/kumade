@@ -9,8 +9,15 @@ description = "Windows forensic evidence collector by Yamato Security"
 repository = "https://github.com/Yamato-Security/kumade"
 readme = "README.md"
 
+[features]
+default = []
+bundled-yara-core = []
+bundled-yara-extended = []
+bundled-yara-full = []
+
 [build-dependencies]
 cc = "1"
+sha2 = "0.11"
 
 [dependencies]
 anyhow = "1.0"

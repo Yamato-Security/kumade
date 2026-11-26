@@ -27,7 +27,11 @@ def main():
     parser.add_argument("--target", required=True)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--output", default="dist")
+    parser.add_argument("--ruleset", choices=["core", "extended", "full"])
+    parser.add_argument("--bundle-manifest", type=pathlib.Path)
     args = parser.parse_args()
+    if bool(args.ruleset) != bool(args.bundle_manifest):
+        parser.error("--ruleset and --bundle-manifest are required together")
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"],
         text=True,
@@ -39,10 +43,21 @@ def main():
         if not label or any(not (c.isascii() and (c.isalnum() or c in ".-+_")) for c in label):
             raise ValueError("Unsafe package label")
     name = f"kumade-{version}-{args.platform}"
+    if args.ruleset:
+        name += f"-yara-{args.ruleset}"
     suffix = ".exe" if "windows" in args.target else ""
     binary = pathlib.Path(metadata["target_directory"]) / args.target / "release" / ("kumade" + suffix)
     if not binary.is_file():
         raise FileNotFoundError(binary)
+    bundle = None
+    if args.bundle_manifest:
+        import hashlib
+        bundle = json.loads(args.bundle_manifest.read_text(encoding="utf-8"))
+        archive_bytes = pathlib.Path(bundle["ZIP"]).read_bytes()
+        if bundle["RuleSet"] != args.ruleset or hashlib.sha256(archive_bytes).hexdigest() != bundle["ArchiveSHA256"]:
+            raise ValueError("Bundle manifest/hash mismatch")
+        if archive_bytes not in binary.read_bytes():
+            raise ValueError("Executable does not contain the exact compressed bundle")
     # Notices accompany all downloads as one separate release asset. Keeping
     # their text normalized also makes the file identical across matrix jobs.
     sections = [
@@ -79,6 +94,17 @@ def main():
         info.compress_type = zipfile.ZIP_DEFLATED
         with executable.open("rb") as source, z.open(info, "w") as target:
             shutil.copyfileobj(source, target, length=1024 * 1024)
+    if bundle:
+        # Supply original compressed rule source and metadata as separate assets.
+        # Executable ZIPs still contain only one .exe.
+        rules_source = output / f"YARA-FORGE-{args.ruleset}-{bundle['Release']}.zip"
+        if rules_source.exists() and rules_source.read_bytes() != archive_bytes:
+            raise FileExistsError(rules_source)
+        if not rules_source.exists():
+            rules_source.write_bytes(archive_bytes)
+        record = {key: value for key, value in bundle.items() if key != "ZIP"}
+        (output / f"YARA-FORGE-{args.ruleset}-NOTICES.json").write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(executable)
     print(archive)
     print(license_file)
