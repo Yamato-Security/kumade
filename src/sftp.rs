@@ -23,7 +23,7 @@ use russh::{
 };
 use russh_sftp::{
     client::{RawSftpSession, error::Error as SftpError, rawsession::PendingWrite},
-    protocol::{FileAttributes, OpenFlags, SftpHandle, StatusCode},
+    protocol::{FileAttributes, OpenFlags, Packet, SftpHandle, StatusCode},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -65,6 +65,9 @@ pub struct Args {
     /// Per-operation network deadline in seconds (default: 60)
     #[arg(long, requires="sftp", value_parser=clap::value_parser!(u64).range(1..=3600))]
     pub sftp_timeout: Option<u64>,
+    /// Maximum reconnect attempts per collection with a resume-capable receiver (default: 3)
+    #[arg(long, requires="sftp", value_parser=clap::value_parser!(u8).range(0..=30))]
+    pub sftp_retries: Option<u8>,
     /// Disable gzip payload compression (sparse zero ranges will use network bandwidth)
     #[arg(long, requires = "sftp")]
     pub sftp_no_compression: bool,
@@ -170,159 +173,487 @@ impl client::Handler for HostPin {
             && key.public_key().fingerprint(HashAlg::Sha256).to_string() == self.0)
     }
 }
+pub(crate) const STREAM_OPEN: &str = "stream-open@kumade";
+
 struct Network {
     runtime: Arc<tokio::runtime::Runtime>,
     raw: Arc<RawSftpSession>,
-    _session: Mutex<client::Handle<HostPin>>,
+    session: Mutex<Option<client::Handle<HostPin>>>,
     timeout: Duration,
     broken: AtomicBool,
+    resumable: bool,
 }
 impl Network {
+    fn connect(
+        runtime: &Arc<tokio::runtime::Runtime>,
+        args: &Args,
+        password: &str,
+        timeout: Duration,
+        reconnect: bool,
+    ) -> Result<Arc<Self>> {
+        let (session, raw, resumable) = runtime.block_on(async {
+            tokio::time::timeout(timeout, async {
+                let config = client::Config {
+                    keepalive_interval: Some(Duration::from_secs(15)),
+                    keepalive_max: 3,
+                    // russh leaves Nagle's algorithm on by default. Every SFTP
+                    // request is a small trailing segment after its payload, so
+                    // the delayed-ACK interaction costs tens of milliseconds per
+                    // request; OpenSSH's own clients disable it as well.
+                    nodelay: true,
+                    ..Default::default()
+                };
+                let mut session = client::connect(
+                    Arc::new(config),
+                    (
+                        args.sftp.as_deref().context("Missing SFTP host")?,
+                        args.sftp_port.unwrap_or(22),
+                    ),
+                    HostPin(args.sftp_host_key.clone().context("Missing host pin")?),
+                )
+                .await
+                .context("SSH connection/host-key verification failed")?;
+                ensure!(
+                    session
+                        .authenticate_password(
+                            args.sftp_user.as_deref().context("Missing SFTP user")?,
+                            password
+                        )
+                        .await?
+                        .success(),
+                    "SFTP password authentication failed"
+                );
+                let mut channel = session.channel_open_session().await?;
+                channel.request_subsystem(true, "sftp").await?;
+                loop {
+                    match channel.wait().await {
+                        Some(russh::ChannelMsg::Success) => break,
+                        Some(russh::ChannelMsg::Failure) | None => {
+                            bail!("Server refused the SFTP subsystem")
+                        }
+                        _ => {}
+                    }
+                }
+                let raw = RawSftpSession::new_with_config(
+                    channel.into_stream(),
+                    russh_sftp::client::Config {
+                        request_timeout_secs: timeout.as_secs(),
+                        ..Default::default()
+                    },
+                );
+                let version = raw.init().await?;
+                ensure!(
+                    version.version == 3 && version.extensions.contains_key("fsync@openssh.com"),
+                    "SFTP v3 with fsync@openssh.com is required"
+                );
+                let resumable = version
+                    .extensions
+                    .get(STREAM_OPEN)
+                    .is_some_and(|v| v == "1");
+                if reconnect {
+                    ensure!(
+                        resumable,
+                        "Receiver no longer advertises the negotiated resume extension"
+                    );
+                } else {
+                    protection_probe(&raw, args.directory()).await?;
+                }
+                Ok::<_, anyhow::Error>((session, Arc::new(raw), resumable))
+            })
+            .await
+            .context("SFTP connection/protection probe timed out")?
+        })?;
+        Ok(Arc::new(Self {
+            runtime: runtime.clone(),
+            raw,
+            session: Mutex::new(Some(session)),
+            timeout,
+            broken: AtomicBool::new(false),
+            resumable,
+        }))
+    }
+
     fn wait<T>(
         &self,
         future: impl std::future::Future<Output = std::result::Result<T, SftpError>>,
-    ) -> Result<T> {
-        ensure!(
-            !self.broken.load(Ordering::Relaxed),
-            "SFTP connection failed; no retry or local payload fallback"
-        );
+    ) -> std::result::Result<T, SftpError> {
+        if self.broken.load(Ordering::Acquire) {
+            return Err(SftpError::IO("SFTP connection closed".into()));
+        }
         let result = self.runtime.block_on(async {
             tokio::time::timeout(self.timeout, future)
                 .await
-                .context("SFTP operation timed out")?
-                .map_err(anyhow::Error::from)
+                .unwrap_or(Err(SftpError::Timeout))
         });
-        if result.is_err() {
-            self.broken.store(true, Ordering::Relaxed);
+        if result.as_ref().is_err_and(transport_error) {
+            self.mark_broken();
         }
         result
     }
-}
-/// Each write request carries 32 KiB, the size OpenSSH's own client uses. The
-/// gzip encoder hands over much smaller pieces (a median of 79 bytes on an
-/// incompressible input), so they are coalesced into full requests first.
-const REQUEST_BYTES: usize = 32 * 1024;
-/// Requests in flight per open object before the oldest acknowledgement is
-/// awaited. A bounded sliding window keeps every worker streaming without
-/// the bursts that make other workers' control and journal requests wait.
-const IN_FLIGHT: usize = 16;
-struct NetworkFile {
-    connection: Arc<Network>,
-    handle: SftpHandle,
-    offset: u64,
-    buffer: Vec<u8>,
-    in_flight: VecDeque<PendingWrite>,
-}
-impl NetworkFile {
-    fn broken<T>(&mut self, error: anyhow::Error) -> io::Result<T> {
-        self.connection.broken.store(true, Ordering::Relaxed);
-        self.in_flight.clear();
-        Err(io::Error::other(format!("{error:#}")))
-    }
-    /// Sends the coalesced piece at the next sequential offset.
-    fn send_piece(&mut self) -> io::Result<()> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-        if self.connection.broken.load(Ordering::Relaxed) {
-            return self.broken(anyhow::anyhow!("SFTP connection is unusable"));
-        }
-        let pending = match self.connection.raw.write_nowait(
-            self.handle.as_bytes(),
-            self.offset,
-            &self.buffer,
-        ) {
-            Ok(pending) => pending,
-            Err(error) => return self.broken(error.into()),
-        };
-        self.offset = match self.offset.checked_add(self.buffer.len() as u64) {
-            Some(offset) => offset,
-            None => return self.broken(anyhow::anyhow!("SFTP offset overflow")),
-        };
-        self.buffer.clear();
-        self.in_flight.push_back(pending);
-        if self.in_flight.len() >= IN_FLIGHT {
-            self.drain(IN_FLIGHT - 1)?;
-        }
-        Ok(())
-    }
-    /// Waits for acknowledgements, oldest first, until at most `keep` requests
-    /// remain in flight. A request that makes no progress within the operation
-    /// deadline fails the connection; nothing is retried or rewritten.
-    fn drain(&mut self, keep: usize) -> io::Result<()> {
-        while self.in_flight.len() > keep {
-            let pending = self.in_flight.pop_front().expect("in-flight request");
-            let c = &self.connection;
-            let result = c.runtime.block_on(async {
-                tokio::time::timeout(c.timeout, pending)
-                    .await
-                    .context("SFTP write timed out")?
-                    .map_err(anyhow::Error::from)
-            });
-            if let Err(error) = result {
-                return self.broken(error);
+    fn mark_broken(&self) {
+        if !self.broken.swap(true, Ordering::AcqRel) {
+            let _ = self.raw.close_session();
+            if let Ok(mut session) = self.session.lock()
+                && let Some(session) = session.take()
+            {
+                self.runtime.spawn(async move {
+                    let _ = session
+                        .disconnect(
+                            russh::Disconnect::ByApplication,
+                            "SFTP connection lost",
+                            "en",
+                        )
+                        .await;
+                });
             }
         }
+    }
+}
+fn transport_error(error: &SftpError) -> bool {
+    match error {
+        SftpError::IO(_) | SftpError::Timeout => true,
+        SftpError::UnexpectedBehavior(message) => {
+            matches!(message.as_str(), "session closed" | "sender dropped")
+                || message.starts_with("RecvError:")
+                || message.starts_with("SendError:")
+        }
+        SftpError::Status(s) => matches!(
+            s.status_code,
+            StatusCode::NoConnection | StatusCode::ConnectionLost
+        ),
+        _ => false,
+    }
+}
+
+struct Link {
+    network: Arc<Network>,
+    attempts: u8,
+}
+struct ConnectionPool {
+    state: Mutex<Link>,
+    runtime: Arc<tokio::runtime::Runtime>,
+    args: Args,
+    password: Option<Zeroizing<String>>,
+    timeout: Duration,
+    retries: u8,
+}
+impl ConnectionPool {
+    /// Only one worker reconnects. Other open streams attach to that same new connection.
+    fn connection(&self) -> Result<Arc<Network>> {
+        let mut link = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("SFTP connection lock"))?;
+        if !link.network.broken.load(Ordering::Acquire) {
+            return Ok(link.network.clone());
+        }
+        let password = self
+            .password
+            .as_ref()
+            .context("Receiver resume is unavailable or disabled")?;
+        let mut last = anyhow::anyhow!("SFTP connection lost");
+        let mut delay = 1;
+        while link.attempts < self.retries {
+            link.attempts += 1;
+            eprintln!(
+                "SFTP connection lost. Reconnecting (attempt {}/{})...",
+                link.attempts, self.retries
+            );
+            std::thread::sleep(Duration::from_secs(delay));
+            match Network::connect(&self.runtime, &self.args, password, self.timeout, true) {
+                Ok(network) => {
+                    link.network = network.clone();
+                    return Ok(network);
+                }
+                Err(e) => last = e,
+            }
+            delay = (delay * 2).min(8);
+        }
+        Err(last.context("SFTP reconnect budget exhausted; check the receiver receipt before starting another collection"))
+    }
+    fn attach(&self, key: &StreamKey) -> Result<(Arc<Network>, Option<SftpHandle>, u64)> {
+        loop {
+            let network = self.connection()?;
+            match key.attach(&network) {
+                Ok((handle, offset)) => return Ok((network, handle, offset)),
+                Err(e) if e.downcast_ref::<SftpError>().is_some_and(transport_error) => {
+                    network.mark_broken()
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+struct StreamKey {
+    path: String,
+    secret: Zeroizing<[u8; 32]>,
+}
+impl StreamKey {
+    /// The receiver atomically revokes the old handle on attachment. It never permits
+    /// truncation, reads, or writes below the accepted offset.
+    fn attach(&self, network: &Network) -> Result<(Option<SftpHandle>, u64)> {
+        let mut request = self.secret.to_vec();
+        request.extend_from_slice(self.path.as_bytes());
+        let reply = match network.wait(network.raw.extended(STREAM_OPEN, request))? {
+            Packet::ExtendedReply(reply) => reply,
+            Packet::Status(status) => return Err(SftpError::Status(status).into()),
+            _ => bail!("Unexpected reply to SFTP stream attachment"),
+        };
+        ensure!(
+            reply.data.len() >= 9,
+            "Truncated SFTP stream attachment reply"
+        );
+        let offset = u64::from_be_bytes(reply.data[1..9].try_into()?);
+        let handle = match (reply.data[0], &reply.data[9..]) {
+            (0, h) if (1..=64).contains(&h.len()) => Some(h.to_vec().into()),
+            (1, []) => None,
+            _ => bail!("Invalid SFTP stream attachment reply"),
+        };
+        Ok((handle, offset))
+    }
+}
+
+/// Each 32 KiB piece stays in memory until the oldest pending write is acknowledged.
+/// At most 16 pieces per open object can need replay, including ambiguous writes.
+const REQUEST_BYTES: usize = 32 * 1024;
+const IN_FLIGHT: usize = 16;
+struct Piece {
+    offset: u64,
+    data: Vec<u8>,
+    ack: Option<PendingWrite>,
+}
+struct NetworkFile {
+    pool: Arc<ConnectionPool>,
+    connection: Arc<Network>,
+    key: Option<StreamKey>,
+    handle: SftpHandle,
+    confirmed: u64,
+    end: u64,
+    buffer: Vec<u8>,
+    pieces: VecDeque<Piece>,
+    failed: bool,
+}
+/// Verify that the peer still holds every acknowledged byte and only discard
+/// bytes it confirms. The remaining pieces belong to the new SFTP session.
+fn resume_window(
+    pieces: &mut VecDeque<Piece>,
+    confirmed: u64,
+    end: u64,
+    accepted: u64,
+) -> Result<()> {
+    ensure!(
+        (confirmed..=end).contains(&accepted),
+        "Receiver offset {accepted} outside retained SFTP window {confirmed}..={end}"
+    );
+    while pieces
+        .front()
+        .is_some_and(|p| p.offset + p.data.len() as u64 <= accepted)
+    {
+        pieces.pop_front();
+    }
+    if let Some(piece) = pieces.front_mut()
+        && piece.offset < accepted
+    {
+        piece.data.drain(..(accepted - piece.offset) as usize);
+        piece.offset = accepted;
+    }
+    for piece in pieces {
+        piece.ack = None;
+    }
+    Ok(())
+}
+impl NetworkFile {
+    /// Reattach after a transport failure. A sealed object only acknowledges an
+    /// ambiguous CLOSE; a peer must never seal an object while it is being written.
+    fn recover(&mut self, closing: bool) -> Result<bool> {
+        let key = self
+            .key
+            .as_ref()
+            .context("SFTP connection lost; automatic resume is unavailable")?;
+        let (next, handle, offset) = self.pool.attach(key)?;
+        resume_window(&mut self.pieces, self.confirmed, self.end, offset)?;
+        self.confirmed = offset;
+        self.connection = next;
+        if let Some(handle) = handle {
+            self.handle = handle;
+            return Ok(false);
+        }
+        ensure!(
+            closing && self.end == offset,
+            "Unexpected sealed SFTP stream"
+        );
+        Ok(true)
+    }
+    fn recover_error(&mut self, error: SftpError, closing: bool) -> Result<bool> {
+        if !self.connection.broken.load(Ordering::Acquire) && !transport_error(&error) {
+            return Err(error.into());
+        }
+        self.connection.mark_broken();
+        self.recover(closing)
+    }
+    /// Send missing pieces, then release acknowledgements from the front. A dropped
+    /// acknowledgement may already have reached disk, so ask before retransmitting.
+    fn pump(&mut self, keep: usize) -> Result<()> {
+        loop {
+            let mut error = None;
+            for piece in &mut self.pieces {
+                if piece.ack.is_none() {
+                    match self.connection.raw.write_nowait(
+                        self.handle.as_bytes(),
+                        piece.offset,
+                        &piece.data,
+                    ) {
+                        Ok(ack) => piece.ack = Some(ack),
+                        Err(e) => {
+                            error = Some(e);
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(e) = error {
+                self.recover_error(e, false)?;
+                continue;
+            }
+            if self.pieces.len() <= keep {
+                return Ok(());
+            }
+            let first = self.pieces.front_mut().expect("pending write");
+            let ack = first.ack.take().expect("write submitted");
+            match self.connection.wait(ack) {
+                Ok(_) => {
+                    self.confirmed = first.offset + first.data.len() as u64;
+                    self.pieces.pop_front();
+                }
+                Err(e) => {
+                    self.recover_error(e, false)?;
+                }
+            }
+        }
+    }
+    fn send_piece(&mut self, keep: usize) -> Result<()> {
+        if !self.buffer.is_empty() {
+            let data = std::mem::replace(&mut self.buffer, Vec::with_capacity(REQUEST_BYTES));
+            let offset = self.end;
+            self.end = offset
+                .checked_add(data.len() as u64)
+                .context("SFTP offset overflow")?;
+            self.pieces.push_back(Piece {
+                offset,
+                data,
+                ack: None,
+            });
+        }
+        self.pump(keep)
+    }
+    fn sync(&mut self) -> Result<()> {
+        self.send_piece(0)?;
+        loop {
+            match self
+                .connection
+                .wait(self.connection.raw.fsync(&self.handle))
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    self.recover_error(e, false)?;
+                }
+            }
+        }
+    }
+    fn check(&self) -> io::Result<()> {
+        if self.failed {
+            return Err(io::Error::other("Previous SFTP write failed"));
+        }
         Ok(())
+    }
+    fn checked<T>(&mut self, result: Result<T>) -> io::Result<T> {
+        result.map_err(|e| {
+            self.failed = true;
+            io::Error::other(format!("{e:#}"))
+        })
     }
 }
 impl Write for NetworkFile {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        if data.is_empty() {
-            return Ok(0);
-        }
-        if self.connection.broken.load(Ordering::Relaxed) {
-            return Err(io::Error::other("SFTP connection is unusable"));
-        }
+        self.check()?;
         let n = data.len().min(REQUEST_BYTES - self.buffer.len());
         self.buffer.extend_from_slice(&data[..n]);
-        if self.buffer.len() >= REQUEST_BYTES {
-            self.send_piece()?;
+        if self.buffer.len() == REQUEST_BYTES {
+            let result = self.send_piece(IN_FLIGHT - 1);
+            self.checked(result)?;
         }
         Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.send_piece()?;
-        self.drain(0)?;
-        self.connection
-            .wait(self.connection.raw.fsync(&self.handle))
-            .map(|_| ())
-            .map_err(|e| io::Error::other(format!("{e:#}")))
+        self.check()?;
+        let result = self.sync();
+        self.checked(result)
     }
 }
 impl RemoteWrite for NetworkFile {
     fn finish(mut self: Box<Self>) -> Result<()> {
         self.flush()?;
-        self.connection
-            .wait(self.connection.raw.close(&self.handle))?;
-        Ok(())
+        loop {
+            match self
+                .connection
+                .wait(self.connection.raw.close(&self.handle))
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    if self.recover_error(e, true)? {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 }
 struct NetworkStore {
-    connection: Arc<Network>,
-    directory: String,
+    pool: Arc<ConnectionPool>,
 }
 impl Store for NetworkStore {
     fn create(&self, name: &str, mode: u32) -> Result<Box<dyn RemoteWrite>> {
         validate_object_name(name)?;
-        let path = format!("{}/{}", self.directory, name);
-        let handle = self
-            .connection
-            .wait(self.connection.raw.open(
+        let path = format!("{}/{}", self.pool.args.directory(), name);
+        let (connection, key, handle) = if self.pool.retries > 0 {
+            let key = StreamKey {
                 path,
-                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
-                FileAttributes {
-                    permissions: Some(mode),
-                    ..Default::default()
-                },
-            ))?
-            .handle;
+                secret: Zeroizing::new(rand::random()),
+            };
+            let (connection, handle, offset) = self.pool.attach(&key)?;
+            ensure!(
+                offset == 0,
+                "Receiver returned an existing stream for a new upload"
+            );
+            (
+                connection,
+                Some(key),
+                handle.context("Receiver returned a sealed stream for a new upload")?,
+            )
+        } else {
+            let connection = self.pool.connection()?;
+            let handle = connection
+                .wait(connection.raw.open(
+                    path,
+                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+                    FileAttributes {
+                        permissions: Some(mode),
+                        ..Default::default()
+                    },
+                ))?
+                .handle;
+            (connection, None, handle)
+        };
         Ok(Box::new(NetworkFile {
-            connection: self.connection.clone(),
+            pool: self.pool.clone(),
+            connection,
+            key,
             handle,
-            offset: 0,
+            confirmed: 0,
+            end: 0,
             buffer: Vec::with_capacity(REQUEST_BYTES),
-            in_flight: VecDeque::new(),
+            pieces: VecDeque::new(),
+            failed: false,
         }))
     }
 }
@@ -557,79 +888,27 @@ impl Target {
                 .build()?,
         );
         let timeout = Duration::from_secs(args.sftp_timeout.unwrap_or(60));
-        let (session, raw) = runtime.block_on(async {
-            tokio::time::timeout(timeout, async {
-                let config = client::Config {
-                    keepalive_interval: Some(Duration::from_secs(15)),
-                    keepalive_max: 3,
-                    // russh leaves Nagle's algorithm on by default. Every SFTP
-                    // request is a small trailing segment after its payload, so
-                    // the delayed-ACK interaction costs tens of milliseconds per
-                    // request; OpenSSH's own clients disable it as well.
-                    nodelay: true,
-                    ..Default::default()
-                };
-                let mut session = client::connect(
-                    Arc::new(config),
-                    (
-                        args.sftp.as_deref().context("Missing SFTP host")?,
-                        args.sftp_port.unwrap_or(22),
-                    ),
-                    HostPin(args.sftp_host_key.clone().context("Missing host pin")?),
-                )
-                .await
-                .context("SSH connection/host-key verification failed")?;
-                ensure!(
-                    session
-                        .authenticate_password(
-                            args.sftp_user.as_deref().context("Missing SFTP user")?,
-                            password.as_str()
-                        )
-                        .await?
-                        .success(),
-                    "SFTP password authentication failed"
-                );
-                let mut channel = session.channel_open_session().await?;
-                channel.request_subsystem(true, "sftp").await?;
-                loop {
-                    match channel.wait().await {
-                        Some(russh::ChannelMsg::Success) => break,
-                        Some(russh::ChannelMsg::Failure) | None => {
-                            bail!("Server refused the SFTP subsystem")
-                        }
-                        _ => {}
-                    }
-                }
-                let raw = RawSftpSession::new_with_config(
-                    channel.into_stream(),
-                    russh_sftp::client::Config {
-                        request_timeout_secs: timeout.as_secs(),
-                        ..Default::default()
-                    },
-                );
-                let version = raw.init().await?;
-                ensure!(
-                    version.version == 3 && version.extensions.contains_key("fsync@openssh.com"),
-                    "SFTP v3 with fsync@openssh.com is required"
-                );
-                protection_probe(&raw, args.directory()).await?;
-                Ok::<_, anyhow::Error>((session, Arc::new(raw)))
-            })
-            .await
-            .context("SFTP connection/protection probe timed out")?
-        })?;
-        drop(password);
-        let store = Arc::new(NetworkStore {
-            connection: Arc::new(Network {
-                runtime,
-                raw,
-                _session: Mutex::new(session),
-                timeout,
-                broken: AtomicBool::new(false),
+        let network = Network::connect(&runtime, args, &password, timeout, false)?;
+        let retries = if network.resumable {
+            args.sftp_retries.unwrap_or(3)
+        } else {
+            0
+        };
+        if retries == 0 {
+            eprintln!("SFTP automatic resume is disabled or unavailable on this receiver.");
+        }
+        let pool = Arc::new(ConnectionPool {
+            state: Mutex::new(Link {
+                network,
+                attempts: 0,
             }),
-            directory: args.directory().into(),
+            password: (retries > 0).then_some(password),
+            runtime,
+            args: args.clone(),
+            timeout,
+            retries,
         });
-        Self::from_store(store, !args.sftp_no_compression)
+        Self::from_store(Arc::new(NetworkStore { pool }), !args.sftp_no_compression)
     }
     fn begin(&self, suffix: String, relative: String, gzip: bool) -> Result<Upload> {
         let name = format!("{}-{suffix}", self.id);
@@ -767,7 +1046,11 @@ impl Target {
             &mut delivery,
             &serde_json::json!({"SchemaVersion":1,"Kind":"KumadeSftpDelivery","DeliveryId":self.id,"CollectionName":root.file_name().context("Missing collection name")?.to_string_lossy(),"Objects":objects,"Summary":summary,"ReadbackVerification":"PendingTrustedServerVerification","FinishedUtc":utc_now()}),
         )?;
-        let object = delivery.finish()?;
+        let name = delivery.name.clone();
+        let expected = hex(&delivery.logical.clone().finalize());
+        let object = delivery.finish().with_context(|| format!(
+            "Delivery acknowledgement unavailable for {name} (expected SHA-256 {expected}). Compare these values with the trusted receiver receipt"
+        ))?;
         Ok((object.name, object.logical_sha256))
     }
 }
@@ -939,5 +1222,54 @@ impl Drop for Staging {
                 directory.keep().display()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+
+    fn window() -> VecDeque<Piece> {
+        [(4, b"efgh"), (8, b"ijkl"), (12, b"mnop")]
+            .into_iter()
+            .map(|(offset, data)| Piece {
+                offset,
+                data: data.to_vec(),
+                ack: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn replays_only_bytes_the_receiver_did_not_accept() {
+        for offset in 4..=16 {
+            let mut pieces = window();
+            resume_window(&mut pieces, 4, 16, offset).unwrap();
+            let content: Vec<_> = pieces.iter().flat_map(|p| p.data.iter().copied()).collect();
+            assert_eq!(content, &b"abcdefghijklmnop"[offset as usize..]);
+            assert_eq!(pieces.front().map(|p| p.offset).unwrap_or(16), offset);
+        }
+    }
+
+    #[test]
+    fn rejects_offsets_outside_retained_window_without_dropping_data() {
+        for offset in [0, 3, 17, u64::MAX] {
+            let mut pieces = window();
+            assert!(resume_window(&mut pieces, 4, 16, offset).is_err());
+            assert_eq!(pieces.len(), 3);
+            assert_eq!(pieces[0].data, b"efgh");
+        }
+    }
+
+    #[test]
+    fn reconnects_only_for_transport_failures() {
+        for message in ["session closed", "sender dropped"] {
+            assert!(transport_error(&SftpError::UnexpectedBehavior(
+                message.into()
+            )));
+        }
+        assert!(transport_error(&SftpError::Timeout));
+        assert!(!transport_error(&SftpError::UnexpectedPacket));
+        assert!(!transport_error(&SftpError::Limited("quota".into())));
     }
 }

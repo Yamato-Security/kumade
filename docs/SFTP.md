@@ -1,7 +1,7 @@
 # Direct SFTP evidence delivery
 
 Kumade can stream collected files and raw NTFS streams directly to a dedicated
-Linux OpenSSH evidence server. No local evidence-payload copy or container is
+Kumade receiver or hardened Linux OpenSSH evidence server. No local evidence-payload copy or container is
 created. Compression is streaming gzip (fast level); sparse logical zero ranges
 compress in transit. Memory is bounded per worker, rather than proportional to
 file size. This mode is separate from VHDX/E01 output.
@@ -27,7 +27,7 @@ in shell history, scripts, transcripts or collection catalogs. Password memory i
 cleared on a best-effort basis, not guaranteed against a compromised OS.
 
 Options: `--sftp-port` (22), `--sftp-directory` (`/incoming`),
-`--sftp-timeout` (60 seconds per operation), `--sftp-no-compression`, and
+`--sftp-timeout` (60 seconds per operation), `--sftp-retries` (3 reconnect attempts with a compatible Kumade receiver), `--sftp-no-compression`, and
 `--sftp-staging-dir` (system temporary directory). Set `-T` for upload workers;
 start with the conservative default, particularly on slow disks/networks.
 All normal selection, VSS and live-info options still apply. `plan` does not upload.
@@ -94,8 +94,10 @@ from the collector in your case notes over an independent trusted channel.
 ## Object layout, integrity and recovery
 
 Remote object names are random case IDs plus opaque object IDs, not source paths.
-Exclusive create is required; no retries that overwrite, resume or remote deletion
-are attempted. An incremental fsynced journal maps source observations to objects.
+The built-in receiver can continue a running transfer after a dropped connection.
+See [reconnect behavior and limits](SFTP-Receiver.md#if-the-connection-drops).
+With standalone OpenSSH, a dropped connection ends the transfer. Both modes
+require exclusive creation and preserve previously written bytes. An incremental fsynced journal maps source observations to objects.
 The final `UUID-delivery.json` is written **last**, after all payload acknowledgements
 and metadata sealing. A missing final delivery descriptor means an interrupted
 transfer, even if some blobs exist. Retain those objects and the journal for manual

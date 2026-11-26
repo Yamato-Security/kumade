@@ -28,6 +28,7 @@ jobs:
       - run: python3 scripts/test_sftp_restore.py
       - run: cargo build --locked
       - run: python3 scripts/test_sftp_receiver.py --binary target/debug/kumade
+      - run: python3 scripts/test_sftp_resume.py --binary target/debug/kumade
       # An isolated localhost sshd and random account, removed by the test.
       # Does not edit or reload the runner's system sshd configuration.
       - run: sudo python3 scripts/test_sftp_openssh.py --binary target/debug/kumade
@@ -75,6 +76,8 @@ jobs:
         run: cargo test --locked --test ordering
       - name: Built-in receiver and native readback (x64)
         run: python scripts/test_sftp_receiver.py --binary target/debug/kumade.exe
+      - name: Concurrent SFTP collectors and interrupted transfer (x64)
+        run: python scripts/test_sftp_resume.py --binary target/debug/kumade.exe
       - name: Isolated VSS acquisition
         run: cargo test --locked --test vss_windows
       - name: Remaining regression tests

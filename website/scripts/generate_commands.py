@@ -102,9 +102,10 @@ Logical estimates can overlap by family. Locked/raw-only sizes may be unknown
 or require metadata reads; planning does not hash every payload to estimate it.
 Read [size estimation](../collection-wizard.md#size-estimation).
 '''),
-    'receive': ('Receive upload-only SFTP evidence', r'''Run a fresh receiver per acquisition. It creates temporary credentials and a
-host-key fingerprint, accepts append-only object uploads, revokes the
-credential, and verifies received objects in place.
+    'receive': ('Receive upload-only SFTP evidence', r'''Start one listener for a single collector or add `--sources N` for multiple
+computers. Each source gets a temporary upload-only credential, separate storage
+and independent readback verification. The receiver prints one host-key
+fingerprint shared by all sources.
 
 ```powershell
 .\kumade.exe receive --listen 0.0.0.0:2222 --allow-ip 192.0.2.20 --output D:\Evidence --expires 2h
@@ -117,7 +118,7 @@ interface is required for remote collection.
 
 The receiver can also be built from source on Linux. Follow the complete
 [receiver guide](../SFTP-Receiver.md) for quotas, expiry, receipts and recovery.
-It accepts one collection per invocation and does not create an OS login account.
+Keep both the collector and receiver running for automatic reconnect after a network interruption.
 '''),
     'scan-processes': ('Hunt in live process memory', r'''Run a native Windows build with suitable privileges. This is a live memory
 scan, not disk-file scanning or an offline RAM-image parser.

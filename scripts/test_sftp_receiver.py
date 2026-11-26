@@ -22,7 +22,9 @@ import threading
 import time
 
 
-def receiver(binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=()):
+def receiver(
+    binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=(), sources=1
+):
     arguments = [
         str(binary),
         "receive",
@@ -37,6 +39,8 @@ def receiver(binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=()):
         "--max-decoded-gib",
         "1",
     ]
+    if sources > 1:
+        arguments.extend(["--sources", str(sources)])
     for address in allow_ips:
         arguments.extend(["--allow-ip", address])
     process = subprocess.Popen(
@@ -57,6 +61,8 @@ def receiver(binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=()):
 
     threading.Thread(target=read, daemon=True).start()
     fields = {}
+    accounts = {}
+    source = None
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         line = events.get(timeout=20)
@@ -64,6 +70,9 @@ def receiver(binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=()):
             raise AssertionError(
                 "Receiver exited before publishing connection information"
             )
+        if line.startswith("Source:"):
+            source = line.split(":", 1)[1].strip()
+            accounts[source] = {}
         for key in (
             "SFTP receiver",
             "Evidence directory",
@@ -72,8 +81,19 @@ def receiver(binary, parent, expires="60s", listen="127.0.0.1:0", allow_ips=()):
             "SSH fingerprint",
         ):
             if line.startswith(key + ":"):
-                fields[key] = line.split(":", 1)[1].strip()
-        if len(fields) == 5:
+                target = (
+                    accounts[source] if source and key.startswith("Temporary ") else fields
+                )
+                target[key] = line.split(":", 1)[1].strip()
+        if (
+            sources > 1
+            and len(accounts) == sources
+            and all(len(account) == 2 for account in accounts.values())
+            and {"SFTP receiver", "Evidence directory", "SSH fingerprint"} <= fields.keys()
+        ):
+            fields["Sources"] = accounts
+            return process, fields, lines
+        if sources == 1 and len(fields) == 5:
             return process, fields, lines
     raise AssertionError("Receiver startup timed out")
 

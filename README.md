@@ -300,7 +300,7 @@ uses hashes, not an authenticated signing identity.
 ## Not implemented yet
 
 Application-writer-coordinated VSS backups, external processing,
-image-source CLI support, ZIP archive packaging, cloud upload, resume,
+image-source CLI support, ZIP archive packaging, cloud upload, resuming after process restart,
 general directory-mode ADS discovery and structural artifact validators are pending.
 VHDX mode inventories named data streams on selected files.
 
@@ -367,6 +367,6 @@ for offline use, provenance, build variants and rule licensing.
 
 ## Remote SFTP delivery
 
-Start a built-in receiver with `kumade receive --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. It generates temporary upload-only credentials and verifies received evidence automatically. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).
+Start a built-in receiver with `kumade receive --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. Add `--sources 6` to collect from six computers on the same port. Give each computer its own temporary credentials. Each gets a separate inbox and verified receipt. If the network drops while both Kumade processes are running, the collector automatically tries to reconnect and continues from the last byte the receiver accepted. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).
 
 Use `collect --sftp HOST --sftp-user USER --sftp-host-key "SHA256:..."` to stream payloads without local copies. A hardened temporary upload-only account and trusted server readback are required. See [setup, integrity verification and forensic footprint](docs/SFTP.md).

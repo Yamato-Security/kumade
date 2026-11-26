@@ -12,7 +12,7 @@
 | YARA | Readable live Windows process memory | Protected pages, exits, timeouts and rule semantics limit coverage |
 | Entropy | Readable on-disk PE content | A high-entropy binary is a candidate, not a malware verdict |
 | VHDX / E01 | Windows NTFS evidence containers | Additional space/finalization work; fidelity has explicit limits |
-| SFTP | Streaming payloads to a hardened receiver | Needs trusted receiver readback; RAM still needs staging |
+| SFTP | Concurrent collectors and automatic reconnect with the built-in receiver | Needs trusted receiver readback; RAM still needs staging |
 | Partition imaging | Logical partition to `.dd` on a separate physical disk | Not a physical whole-disk image or an atomic live acquisition |
 
 Use `kumade doctor` with the binary and architecture you intend to run.
@@ -35,7 +35,7 @@ and [verification reports](../output/verification.md).
 ## Current development limits
 
 General raw enumeration of inaccessible directories, structural validation by
-artifact parsers, application-writer VSS coordination, resume and cloud upload
+artifact parsers, application-writer VSS coordination, resume after a process restart and cloud upload
 are not implemented. Standard catalogue paths may miss custom application
 stores. Raw compressed/encrypted/reparse-backed content is refused rather than
 reported as correct logical content. See [implementation status](../implementation-status.md).

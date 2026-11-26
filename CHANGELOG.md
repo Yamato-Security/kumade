@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Accept concurrent SFTP collections on one listener with `receive --sources N`.
+  Each computer gets its own expiring credentials, inbox and readback receipt.
+  A running collector can reconnect to a running Kumade receiver and continue
+  at the receiver's accepted byte offset. Set the reconnect budget with
+  `--sftp-retries` (default 3).
+
 - Load local or bundled YARA Forge ZIPs directly into memory without expanded
   rule files on the target. Add `update-rules` with Core/Extended/Full selection,
   pinned release metadata/hash validation and versioned non-clobbering ZIPs.
