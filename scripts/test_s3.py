@@ -207,7 +207,7 @@ def main(binary):
             (path.parent / "Empty.pf").touch()
             stage = root / host / "stage"
             stage.mkdir()
-            result = run(["collect", "--s3", "s3://evidence-test/case/", "--source", source,
+            result = run(["collect", "--s3-direct", "--s3", "s3://evidence-test/case/", "--source", source,
                           "--computer", host, "--artifact", "windows.prefetch", "--yes",
                           "--s3-staging-dir", stage, "--s3-part-mib", "5", "--reserve-mib", "0"], expected_code, host=host)
             if expected_code == 0:

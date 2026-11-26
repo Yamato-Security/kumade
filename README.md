@@ -367,21 +367,19 @@ for offline use, provenance, build variants and rule licensing.
 
 ## Amazon S3 delivery
 
-When staging space is limited, use `--s3-hybrid-dir E:\Evidence`. It preserves
-requested RAM, paired pagefiles and live tables while disk artifacts stream
-directly to S3. `resume-s3` recovers the original volatile evidence and identifies
-which disk files were acknowledged. [Compare the three S3 modes](docs/S3.md#hybrid-collection)
+Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --yes` with
+temporary AWS credentials. Hybrid delivery is the default. Requested RAM, paired
+pagefiles, live tables and upload receipts stay in a protected workspace beside
+the executable. Ordinary disk evidence streams directly to S3. For live collection,
+run Kumade from a separate evidence volume or use `--s3-hybrid-dir E:\Evidence`.
 
-For interrupted networks, add `--s3-recovery-dir E:\Evidence` on external
-storage. Analysts can verify volatile evidence before the full case finishes.
-`resume-s3` sends outstanding staged data without acquiring RAM or querying
-the host again. [Phased collection and recovery](docs/S3.md#recoverable-phased-collection)
+After an interruption, `resume-s3` recovers the original volatile data and
+identifies which disk files reached S3. Use `verify-s3` on the analyst workstation
+for SHA-256 readback and optional restoration. [S3 permissions and setup](docs/S3.md)
 
-
-Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --s3-region ap-northeast-1 --yes`
-with temporary AWS credentials. Each host streams to its own prefix. The collector
-retries interrupted parts. Use `kumade verify-s3` on an analyst workstation to check
-the recorded SHA-256 and optionally restore the evidence. [S3 permissions and setup](docs/S3.md)
+Choose `--s3-recovery-dir E:\Evidence` to stage the full collection, or
+`--s3-direct` for direct streaming without a restartable workspace.
+[Compare the three S3 modes](docs/S3.md#hybrid-collection)
 
 ## Remote SFTP delivery
 

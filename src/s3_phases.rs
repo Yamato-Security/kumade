@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Shirofune Security Co., Ltd.
 // SPDX-License-Identifier: RPL-1.5
 
-//! Acquire onto explicitly selected protected storage. Uploaders only read sealed
+//! Stage evidence in a protected S3 workspace. Uploaders only read sealed
 //! phase plans; resuming a delivery never calls a live acquisition provider.
 use crate::{
     collect,
@@ -372,9 +372,8 @@ impl Run {
         );
         for source in sources {
             ensure!(
-                !parent.starts_with(&source.root)
-                    && (source.live || !source.root.starts_with(parent)),
-                "Recovery storage must be outside the evidence source"
+                !parent.starts_with(&source.root),
+                "Recovery storage must be outside the evidence source. Use --s3-hybrid-dir or --s3-recovery-dir on a separate destination, or select --s3-direct."
             );
             #[cfg(windows)]
             if source.live
@@ -382,14 +381,19 @@ impl Run {
             {
                 ensure!(
                     Some(vol) != platform::volume_identity(&source.root)?,
-                    "Choose a recovery volume separate from the acquired volume"
+                    "Use --s3-hybrid-dir or --s3-recovery-dir on a separate volume, or select --s3-direct."
                 );
             }
         }
         let dest = args.s3.as_ref().context("Missing S3 destination")?.clone();
         let id = Uuid::new_v4();
         let root = parent.join(format!("kumade-recovery-{id}"));
-        fs::create_dir(&root)?;
+        fs::create_dir(&root).with_context(|| {
+            format!(
+                "Cannot create S3 workspace in {}. Choose a writable evidence directory.",
+                parent.display()
+            )
+        })?;
         ensure!(
             platform::protect_output_root(&root)? != "FilesystemHasNoPersistentACLs",
             "Recovery storage must support access controls"
@@ -413,7 +417,7 @@ impl Run {
                 .map(ToString::to_string),
             region,
             part_mib: args.s3_part_mib.unwrap_or(8),
-            hybrid: args.s3_hybrid_dir.is_some(),
+            hybrid: args.s3_recovery_dir.is_none(),
         };
         save(&root.join("Session.json"), &session)?;
         ui::field("S3 recovery workspace", root.display());

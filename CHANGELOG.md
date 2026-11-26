@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- Add hybrid S3 collection with protected volatile staging, direct disk streaming,
+- Default S3 collection to hybrid delivery with protected volatile staging beside
+  the executable, direct disk streaming,
   per-file acknowledgements and recovery of completed files after a collector interruption.
+  Use `--s3-direct` to opt into direct-only delivery.
 
 - Add external S3 recovery workspaces, independently verifiable live, memory and
   hot-disk phases, and chunk-level `resume-s3` delivery of the original evidence.

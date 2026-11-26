@@ -18,6 +18,13 @@ from test_s3_phases import Store
 def main(binary):
     with tempfile.TemporaryDirectory() as directory, ThreadingHTTPServer(("127.0.0.1", 0), Store) as server:
         root = Path(directory)
+        # Launch the actual portable binary from an evidence-work drive, using a
+        # different working directory so accidental current-directory staging fails.
+        portable = root / binary.name
+        try:
+            os.link(binary, portable)
+        except OSError:
+            shutil.copy2(binary, portable)
         server.objects = {}
         server.put_attempts = Counter()
         server.deny_all = server.drop_final = False
@@ -28,8 +35,8 @@ def main(binary):
         endpoint = ["--s3-endpoint", f"http://127.0.0.1:{server.server_port}"]
         target = ["--s3", "s3://evidence-test/hybrid/", *endpoint]
         env = dict(os.environ, AWS_SECRET_ACCESS_KEY="fixture", AWS_SESSION_TOKEN="fixture", AWS_REGION="us-east-1", NO_COLOR="1")
-        def command(*args, reader=False):
-            return subprocess.Popen([str(binary), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        def command(*args, reader=False, executable=portable):
+            return subprocess.Popen([str(executable), *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                     env=dict(env, AWS_ACCESS_KEY_ID="READER" if reader else "WRITER"), text=True, encoding="utf-8")
         def run(*args, code=0, reader=False):
             p = command(*args, reader=reader)
@@ -52,9 +59,11 @@ def main(binary):
                 (source / name).write_bytes(data)
             if os.name == "nt":
                 Path(str(source / hot) + ":Zone.Identifier").write_bytes(alternate)
-        def collect(stage):
-            stage.mkdir()
-            return ["collect", "--s3-hybrid-dir", stage, *target, "--source", source, "--computer", "HOST",
+        def collect(stage=None):
+            if stage is not None:
+                stage.mkdir()
+            location = ["--s3-hybrid-dir", stage] if stage is not None else []
+            return ["collect", *location, *target, "--source", source, "--computer", "HOST",
                     "--artifact", "windows.eventlogs", "--artifact", "windows.prefetch", "--s3-part-mib", "5",
                     "--reserve-mib", "0", "--threads", "1", "--yes"]
         def no_disk_copies(ws):
@@ -62,9 +71,18 @@ def main(binary):
             assert sum(f.stat().st_size for f in ws.rglob("*") if f.is_file()) < 1024 * 1024
         try:
             prepare()
-            stage = root / "complete"
-            run(*collect(stage))
-            ws, = stage.iterdir()
+            # A binary deployed inside the acquired tree must fail before it writes a workspace.
+            on_source = source / portable.name
+            try:
+                os.link(portable, on_source)
+            except OSError:
+                shutil.copy2(portable, on_source)
+            refused = command(*collect(), executable=on_source)
+            _, error = refused.communicate(timeout=30)
+            assert refused.returncode == 2 and "--s3-hybrid-dir" in error, error
+            assert not list(source.glob("kumade-recovery-*")) and not server.objects
+            run(*collect())
+            ws, = root.glob("kumade-recovery-*")
             no_disk_copies(ws)
             assert json.loads((ws / "Session.json").read_text())["Hybrid"]
             shutil.rmtree(source)
@@ -100,12 +118,12 @@ def main(binary):
 
             # Kill the collector during the cold file, before the acquisition seal.
             prepare()
-            stage = root / "crash"
+            existing = set(root.glob("kumade-recovery-*"))
             server.block_bytes = b"last distinct bytes"
-            p = command(*collect(stage))
+            p = command(*collect())
             try:
                 assert server.blocked.wait(35), "Cold upload was never reached"
-                ws, = stage.iterdir()
+                ws, = set(root.glob("kumade-recovery-*")) - existing
                 no_disk_copies(ws)
                 p.kill()
             finally:

@@ -12,7 +12,7 @@
 | YARA | Readable live Windows process memory | Protected pages, exits, timeouts and rule semantics limit coverage |
 | Entropy | Readable on-disk PE content | A high-entropy binary is a candidate, not a malware verdict |
 | VHDX / E01 | Windows NTFS evidence containers | Additional space/finalization work; fidelity has explicit limits |
-| Amazon S3 | Direct streaming and SHA-256 readback via `verify-s3` | Running-process retries, temporary upload credentials and bucket-side permissions |
+| Amazon S3 | Hybrid delivery, recoverable volatile evidence and SHA-256 readback via `verify-s3` | Protected workspace on a separate acquisition volume, temporary credentials and bucket-side permissions |
 | SFTP | Concurrent collectors and automatic reconnect with the built-in receiver | Needs trusted receiver readback; RAM still needs staging |
 | Partition imaging | Logical partition to `.dd` on a separate physical disk | Not a physical whole-disk image or an atomic live acquisition |
 

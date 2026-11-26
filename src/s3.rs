@@ -30,18 +30,21 @@ use uuid::Uuid;
 
 #[derive(clap::Args, Clone)]
 pub struct S3Args {
-    /// Stream to s3://BUCKET/PREFIX using temporary AWS credentials
+    /// Collect to s3://BUCKET/PREFIX using hybrid delivery by default
     #[arg(long, conflicts_with_all = ["output", "e01", "vhdx", "sftp"])]
     pub s3: Option<Location>,
-    /// Protected external directory for phased uploads and restartable delivery
+    /// Stream directly without a restartable workspace
+    #[arg(long, requires = "s3", conflicts_with_all = ["s3_hybrid_dir", "s3_recovery_dir"])]
+    pub s3_direct: bool,
+    /// Stage the entire collection here for restartable delivery
     #[arg(long, requires = "s3", conflicts_with_all = ["s3_staging_dir", "memory_staging_dir"])]
     pub s3_recovery_dir: Option<PathBuf>,
-    /// Stage volatile evidence and receipts here; stream disk artifacts directly to S3
+    /// Hybrid workspace parent (default: beside the executable on a separate volume)
     #[arg(long, requires = "s3", conflicts_with_all = ["s3_recovery_dir", "s3_staging_dir", "memory_staging_dir"])]
     pub s3_hybrid_dir: Option<PathBuf>,
     #[command(flatten)]
     pub connection: ConnectionArgs,
-    /// Existing protected parent for local collection metadata
+    /// Existing staging parent for hybrid evidence or direct-mode metadata
     #[arg(long, requires = "s3")]
     pub s3_staging_dir: Option<PathBuf>,
     /// Multipart buffer or recovery chunk size in MiB (default 8, range 5–256)
@@ -50,10 +53,33 @@ pub struct S3Args {
 }
 
 impl S3Args {
-    pub fn workspace_dir(&self) -> Option<&std::path::Path> {
-        self.s3_hybrid_dir
+    pub fn phased(&self) -> bool {
+        self.s3.is_some() && !self.s3_direct
+    }
+
+    pub fn staging_parent(&self, memory_dir: Option<&std::path::Path>) -> Result<PathBuf> {
+        if self.s3_direct {
+            return Ok(self.s3_staging_dir.clone().unwrap_or_else(env::temp_dir));
+        }
+        ensure!(
+            self.s3_staging_dir.is_none() || memory_dir.is_none(),
+            "Hybrid S3 uses one workspace. Choose --s3-hybrid-dir <DIR> or use --s3-direct for separate metadata and RAM directories."
+        );
+        if let Some(parent) = self
+            .s3_recovery_dir
             .as_deref()
-            .or(self.s3_recovery_dir.as_deref())
+            .or(self.s3_hybrid_dir.as_deref())
+            .or(self.s3_staging_dir.as_deref())
+            .or(memory_dir)
+        {
+            return Ok(parent.to_owned());
+        }
+        let executable =
+            env::current_exe().context("Cannot locate Kumade. Specify --s3-hybrid-dir <DIR>.")?;
+        Ok(executable
+            .parent()
+            .context("Cannot locate the executable directory. Specify --s3-hybrid-dir <DIR>.")?
+            .to_owned())
     }
 }
 

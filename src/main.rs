@@ -272,13 +272,11 @@ fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscove
             options.computer.is_none(),
             "--computer applies to offline --source inputs"
         );
-        return platform::live_sources(
-            if options.remote() && options.s3.workspace_dir().is_none() {
-                None
-            } else {
-                Some(destination)
-            },
-        );
+        return platform::live_sources(if options.remote() && !options.s3.phased() {
+            None
+        } else {
+            Some(destination)
+        });
     }
     let computer = options.computer.as_deref().unwrap_or("OfflineComputer");
     ensure!(
@@ -560,13 +558,15 @@ fn run() -> Result<u8> {
     let rules = rules(options.catalog.as_deref())?;
     // The destination is resolved before discovery so that live discovery can
     // leave the volume holding it out of scope.
-    let destination = if options.remote() {
+    let destination = if options.s3.s3.is_some() {
+        options
+            .s3
+            .staging_parent(options.memory_options.memory_staging_dir.as_deref())?
+    } else if options.sftp.sftp.is_some() {
         options
             .sftp
             .sftp_staging_dir
             .clone()
-            .or_else(|| options.s3.s3_staging_dir.clone())
-            .or_else(|| options.s3.workspace_dir().map(Path::to_path_buf))
             .unwrap_or_else(std::env::temp_dir)
     } else {
         options
@@ -754,13 +754,13 @@ fn run() -> Result<u8> {
         !options.memory
             || !options.sources.is_empty()
             || !options.remote()
-            || options.s3.workspace_dir().is_some()
+            || options.s3.phased()
             || options.memory_options.memory_staging_dir.is_some()
             || plan_only,
         "DumpIt needs a staged RAM file for remote delivery; specify --memory-staging-dir <external-directory>"
     );
     // Authenticate and verify the upload-only policy before collecting evidence.
-    let mut phases = if options.s3.workspace_dir().is_some() {
+    let mut phases = if options.s3.phased() {
         Some(kumade::s3_phases::Run::start(
             &options.s3,
             &destination,
@@ -856,7 +856,9 @@ fn run() -> Result<u8> {
     };
     // A sibling image may share the source's parent. Validate the actual output,
     // rather than rejecting its parent: fresh UUID staging remains a sibling.
-    let early_parent = if let Some(parent) = &options.memory_options.memory_staging_dir {
+    let early_parent = if phases.is_some() {
+        early_output.clone()
+    } else if let Some(parent) = &options.memory_options.memory_staging_dir {
         paths::resolve_future(parent)?
     } else if options.vhdx.is_some() || options.e01.is_some() {
         early_output
@@ -1155,6 +1157,51 @@ mod tests {
                     "stage",
                     other,
                     "second"
+                ])
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn s3_defaults_to_hybrid_and_direct_requires_explicit_selection() {
+        let parse = |extra: &[&str]| {
+            let cli = Cli::try_parse_from(
+                ["kumade", "--s3", "s3://test/case"]
+                    .into_iter()
+                    .chain(extra.iter().copied()),
+            )
+            .unwrap();
+            cli.options
+        };
+        let default = parse(&[]);
+        assert!(default.s3.phased());
+        assert!(default.s3.s3_recovery_dir.is_none());
+        assert_eq!(
+            default.s3.staging_parent(None).unwrap(),
+            std::env::current_exe().unwrap().parent().unwrap()
+        );
+        let dir = Path::new("stage");
+        assert_eq!(default.s3.staging_parent(Some(dir)).unwrap(), dir);
+        let staged = parse(&["--s3-staging-dir", "stage"]);
+        assert!(staged.s3.phased());
+        assert_eq!(staged.s3.staging_parent(None).unwrap(), dir);
+        assert!(staged.s3.staging_parent(Some(dir)).is_err());
+        let direct = parse(&["--s3-direct", "--s3-staging-dir", "stage"]);
+        assert!(!direct.s3.phased());
+        assert_eq!(
+            direct.s3.staging_parent(Some(Path::new("ram"))).unwrap(),
+            dir
+        );
+        assert!(Cli::try_parse_from(["kumade", "--s3-direct"]).is_err());
+        for flag in ["--s3-hybrid-dir", "--s3-recovery-dir"] {
+            assert!(
+                Cli::try_parse_from([
+                    "kumade",
+                    "--s3",
+                    "s3://test/case",
+                    "--s3-direct",
+                    flag,
+                    "stage"
                 ])
                 .is_err()
             );
