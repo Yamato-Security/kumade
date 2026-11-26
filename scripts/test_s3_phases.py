@@ -88,6 +88,9 @@ def main(binary):
             for name in [hot, cold]:
                 (source / name).parent.mkdir(parents=True)
                 (source / name).write_bytes(name.encode())
+            if os.name == "nt":
+                # A Windows staged collection must retain the base file and each ADS separately.
+                Path(str(source / cold) + ":Zone.Identifier").write_bytes(b"ZoneId=3")
             recovery = root / "stage"
             recovery.mkdir()
             collect = ["collect", "--source", source, "--computer", "HOST01", "--yes", "--artifact", "windows.eventlogs",
@@ -124,6 +127,11 @@ def main(binary):
             for name in [hot, cold]:
                 assert (root / "restored/C" / name).read_bytes() == name.encode()
             invoke(["verify", root / "restored"])
+            if os.name == "nt":
+                assert (root / "restored/_KumadeStreams/C" / cold / "Zone.Identifier").read_bytes() == b"ZoneId=3"
+                rows = [json.loads(row) for row in (root / "restored/Manifest.jsonl").read_text().splitlines()]
+                assert all(row["SourceFileId"].startswith("win:") for row in rows)
+                assert json.loads((root / "restored/Summary.json").read_text())["MetadataErrors"] == 0
             bad = json.loads((ws / "hot-disk-published.json").read_text())
             manifest = json.loads(next(v for k,v in server.objects.items() if k.endswith(bad["Name"])))
             key = next(k for k in server.objects if k.endswith(manifest["Files"][0]["Chunks"][0]["Key"]))

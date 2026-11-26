@@ -135,19 +135,19 @@ impl Write for Transfer<'_> {
     }
 }
 
-fn source_fingerprint(file: &File, native_ntfs: bool) -> Result<Fingerprint> {
+fn source_fingerprint(file: &File, capture_identity: bool) -> Result<Fingerprint> {
     let value = fingerprint(&file.metadata()?);
     #[cfg(windows)]
     {
         let mut value = value;
-        if native_ntfs {
+        if capture_identity {
             value.identity = Some(metadata::file_identity(file)?);
         }
         Ok(value)
     }
     #[cfg(not(windows))]
     {
-        let _ = native_ntfs;
+        let _ = capture_identity;
         Ok(value)
     }
 }
@@ -173,6 +173,7 @@ pub fn acquire_one(
 struct DestinationPolicy<'a> {
     remote: Option<&'a Arc<crate::sftp::Target>>,
     native_ntfs: bool,
+    phased_s3: bool,
     source_sparse: bool,
     host_reserve: Option<&'a HostReserve>,
 }
@@ -250,7 +251,9 @@ fn acquire_one_inner(
         return crate::sftp::acquire(record, source, item, raw_cache, target);
     }
     let outcome = (|| -> Result<()> {
-        let relative = if native_ntfs {
+        let relative = if destination.phased_s3 {
+            PathBuf::from(crate::sftp::relative_payload(item)?)
+        } else if native_ntfs {
             metadata::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
         } else {
             paths::output_relative(&source.id, &item.relative_path, item.stream.as_deref())?
@@ -307,7 +310,7 @@ fn acquire_one_inner(
             source,
             item,
             raw_cache,
-            native_ntfs,
+            native_ntfs || destination.phased_s3,
             &mut record.method,
             &mut transfer,
             |attributes, writer| {
@@ -429,7 +432,7 @@ pub(crate) fn copy_source<W: Write>(
     source: &Source,
     item: &PlannedFile,
     raw_cache: &mut HashMap<PathBuf, RawVolume>,
-    native_ntfs: bool,
+    capture_identity: bool,
     method: &mut String,
     writer: &mut W,
     mut attributes: impl FnMut(u32, &mut W) -> Result<()>,
@@ -442,7 +445,7 @@ pub(crate) fn copy_source<W: Write>(
     match platform::open_source(&native_path) {
         Ok(mut input) => {
             platform::validate_open_file(&input, &source.root)?;
-            let before = source_fingerprint(&input, native_ntfs)?;
+            let before = source_fingerprint(&input, capture_identity)?;
             #[cfg(windows)]
             {
                 use std::os::windows::fs::MetadataExt;
@@ -452,7 +455,7 @@ pub(crate) fn copy_source<W: Write>(
             attributes(0, writer)?;
             let limit = before.size.checked_add(1).context("Source size overflow")?;
             let copied = io::copy(&mut Read::by_ref(&mut input).take(limit), &mut *writer)?;
-            let after = source_fingerprint(&input, native_ntfs)?;
+            let after = source_fingerprint(&input, capture_identity)?;
             ensure!(
                 copied == before.size,
                 "Source changed size or ended early during acquisition"
@@ -912,6 +915,7 @@ fn collect_inner(
                             DestinationPolicy {
                                 remote: options.remote.as_ref(),
                                 native_ntfs: options.ntfs_metadata,
+                                phased_s3: phases.is_some(),
                                 source_sparse: sparse_sources.contains(&(
                                     source.id.clone(),
                                     item.source_path.display().to_string(),
@@ -1158,7 +1162,7 @@ fn collect_inner(
         .finish()?;
     if let Some(snapshots) = ntfs_metadata.as_mut() {
         if !options.quiet {
-            ui::status(if options.remote.is_some() {
+            ui::status(if options.remote.is_some() || phases.is_some() {
                 "Sealing NTFS metadata inventory (no server-side restoration)…"
             } else {
                 "Restoring NTFS metadata and original permissions…"

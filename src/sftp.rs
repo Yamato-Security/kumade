@@ -1080,7 +1080,7 @@ pub fn validate_object_name(name: &str) -> Result<()> {
     );
     Ok(())
 }
-fn relative_payload(item: &PlannedFile) -> Result<String> {
+pub(crate) fn relative_payload(item: &PlannedFile) -> Result<String> {
     if item.stream.is_some() {
         // Keep unnamed files and named streams in disjoint namespaces.
         let p =
