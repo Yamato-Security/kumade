@@ -45,6 +45,14 @@ SHA256 and obtain a successful receiver receipt after the temporary account is
 revoked. See [receiver verification](../SFTP-Receiver.md). Interrupted evidence
 is retained; do not overwrite it to retry.
 
+## An S3 collection stopped before delivery finished
+
+For hybrid or fully staged collection, retain the **S3 recovery workspace** and
+run `resume-s3` with the original bucket, prefix and endpoint. Hybrid recovery
+can reuse acknowledged disk files and identify missing ones. A new acquisition
+is needed for evidence that never reached S3 or the workspace. For `--s3-direct`,
+see the [lost-acknowledgement instructions](../S3.md#direct-streaming-retries-limits-and-costs).
+
 ## Output uses more space or time than expected
 
 Sparse logical sizes differ from allocated space. RAM, E01/container staging,

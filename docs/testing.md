@@ -5,6 +5,22 @@ This page retains dated validation history for version `0.1.0`, beginning on
 cover additional capabilities. Treat the initial results below as historical
 scope, not a statement that subsequently implemented features are still absent.
 
+## S3 delivery and recovery
+
+The Linux and Windows CI jobs run the collector and AWS SDK against a local
+HTTP test server. The server can store an object and then drop its acknowledgement,
+which exercises a failure that is hard to reproduce on demand.
+
+| Mode | What the tests check |
+|---|---|
+| Direct | Multipart uploads, lost replies and independent readback |
+| Fully staged | Restarting from the retained workspace and restoring the staged evidence |
+| Hybrid | Retrying an unconfirmed chunk, retaining a partially read file and recovering completed disk files after interruption |
+
+These tests use synthetic evidence and a loopback endpoint. Check bucket policy,
+STS permissions and retention in your own AWS environment before deployment.
+See the [S3 setup and verification guide](S3.md).
+
 ## VHDX metadata round trips (19 November 2026)
 
 The new `scripts/test_vhdx.ps1` creates synthetic NTFS files and validates a full

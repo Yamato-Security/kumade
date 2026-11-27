@@ -105,7 +105,7 @@ architecture/version restrictions or a security product. Kumade does not disable
 these controls or reboot the machine. Secure the destination: RAM can contain
 passwords, session tokens and other sensitive data.
 
-## Staging, containers and SFTP
+## Staging, containers and remote delivery
 
 DumpIt requires a seekable output file. Kumade creates a protected
 `.kumade-volatile-<UUID>` staging directory beside the chosen output, or beneath
@@ -135,6 +135,11 @@ until trusted server readback. The early upload is reused, not sent twice.
 Publication failure retains the original stage. The final delivery descriptor is
 published before successful-run staging cleanup; keep that descriptor's SHA-256
 and run `verify-delivery` on the trusted server as described in [SFTP delivery](SFTP.md).
+
+With S3 hybrid or full recovery, the protected workspace retains the RAM capture
+and paired pagefiles. The analyst can check the published `memory` phase with
+`verify-s3` before the entire case arrives. Direct S3 requires an explicit
+`--memory-staging-dir` for live RAM. See [S3 modes and recovery](S3.md).
 
 You can independently verify a completed retained early directory with
 `kumade verify <early-directory>`. This verifies the early capture's sealed bytes

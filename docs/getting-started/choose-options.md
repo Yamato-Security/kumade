@@ -9,10 +9,12 @@
 | Select a single disk family | `collect --yes --artifact windows.prefetch -o E:\Evidence` | [Catalogue](../collection/catalogue.md) |
 | Add the hibernation file | `collect --yes --hibernation -o E:\Evidence` | [Hibernation](../hibernation-acquisition.md) |
 | Read selected artifacts from a snapshot | `collect --yes --vss --volume C: -o E:\Evidence` | [VSS](../vss.md) |
+| Collect from the newest existing snapshot on each selected volume | `collect --yes --vss-existing newest -o E:\Evidence` | [Historical VSS](../vss-existing.md) |
 | Acquire new RAM and active pagefiles | `collect --yes --memory --dumpit E:\Tools\DumpIt -o E:\Evidence` | [RAM](../memory-acquisition.md) |
 | Native NTFS container | `collect --yes --vhdx E:\Evidence` | [VHDX](../vhdx-output.md) |
 | Compressed forensic container | `collect --yes --e01 E:\Evidence` | [E01](../e01-output.md) |
 | Stream to a remote evidence server | `collect --sftp SERVER ...` | [SFTP](../SFTP.md) |
+| Deliver to an S3 bucket with a protected workspace on `E:` | `collect --yes --s3 s3://example-ir-evidence/cases/IR-042/ --s3-hybrid-dir E:\Evidence` | [S3 credentials and recovery](../S3.md) |
 | Add a process-memory hunt | `collect --yes --scan-processes -o E:\Evidence` | [YARA](../yara-process-scan.md) |
 | Collect possible packed PE binaries | `collect --yes --high-entropy -o E:\Evidence` | [Entropy](../high-entropy.md) |
 | Copy an entire logical partition | `forensic-copy -s C: -o E:\Evidence` | [Partition imaging](../forensic-copy.md) |
@@ -25,7 +27,7 @@ Live inventory still runs with a narrow disk-artifact selection unless disabled.
 
 RAM/pagefiles add source writes for staging and large payloads. Entropy discovery
 walks selected source drives. YARA scans live process memory. E01 adds compression
-and container readback. SFTP adds transport and receiver verification. Combining
+and container readback. Remote delivery adds network transfer and independent readback. Full S3 recovery also needs local space for the entire collection. Combining
 features can cost more than adding their isolated timings.
 
 The [benchmarks](../benchmarks/index.md) include both individual options and
@@ -34,7 +36,7 @@ promises for other systems.
 
 ## Modes that cannot be combined
 
-Directory output (`-o`), `--vhdx`, `--e01` and `--sftp` are alternative destinations.
+Directory output (`-o`), `--vhdx`, `--e01`, `--sftp` and `--s3` are alternative destinations.
 SFTP streams objects rather than uploading a VHDX. `forensic-copy` is a separate
 partition-imaging command. Offline directory collection does not run live RAM,
 VSS or live process-memory scanning on the analyst's machine.

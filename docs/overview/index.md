@@ -10,8 +10,9 @@ Juntei parses other Windows forensic artifacts.
 Kumade discovers the selected volumes, profile roots and catalogue paths;
 plans the work; acquires supported files or raw NTFS streams; and records
 source observations, outcomes and hashes. The output includes payloads plus
-manifests and coverage reports. Optional features add RAM/pagefiles, live
-inventory, VSS, YARA process scanning and entropy-based PE collection.
+manifests and coverage reports. Live Windows collections include live inventory
+by default. Optional features add RAM/pagefiles, VSS, YARA process scanning
+and entropy-based PE collection.
 
 Default live collection checks the selected catalogue families on all discovered
 local fixed volumes. It is not a recursive backup of every file. Application
@@ -19,7 +20,7 @@ locations, access restrictions, host roles and Windows versions affect coverage.
 
 ## Design goals
 
-- **Broad defaults:** Check all shipped applicable families except paging artifacts.
+- **Broad defaults:** Check all shipped applicable families except the paging and hibernation families.
 - **Volatility-aware order:** Acquire RAM first when requested, then fast live state and hot disk artifacts before slower work.
 - **Explicit results:** Keep absent, excluded, partial and failed acquisition visible.
 - **Standalone collector:** Windows packages use system DLLs and a statically linked C runtime. RAM capture requires an external DumpIt toolkit.

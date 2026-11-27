@@ -38,7 +38,9 @@ Open PowerShell as Administrator for live/raw acquisition:
 ```
 
 This site describes the current `main` branch. A published release with the
-same version label may predate recent features. If an option is missing,
-check the release notes and your binary's help, or [build the matching source](build.md).
+same version label may predate recent features. The v0.1.0 release packages
+predate S3. For S3 collection, use a Windows artifact from a matching
+[Release packages run](https://github.com/Yamato-Security/kumade/actions/workflows/release.yml)
+or [build the matching source](build.md). Check that `collect --help` lists `--s3`.
 
 Continue with [your first collection](first-collection.md).

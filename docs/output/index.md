@@ -19,6 +19,7 @@ bit-for-bit copy of the source partition. For that, use [forensic-copy](../foren
 - [Directory layout](directory.md) explains the run and drive folders.
 - [Verification](verification.md) explains manifests, seals and completeness.
 - [VHDX](../vhdx-output.md) and [E01](../e01-output.md) describe native metadata fidelity.
+- [Amazon S3](../S3.md) covers the three upload modes, temporary credentials, recovery and independent readback.
 - [SFTP](../SFTP.md) and the [receiver](../SFTP-Receiver.md) describe delivery and readback.
 - [Analysis handoff](analysis.md) explains what to preserve for downstream tools.
 

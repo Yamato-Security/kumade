@@ -15,7 +15,10 @@ See the release notes for the development limitations and platform validation st
 Each Windows build is available as a standalone `.exe` and a ZIP containing
 only that `.exe`. Documentation is on this site; license notices accompany the
 downloads as `LICENSES.txt`. Rename the executable to `kumade.exe` to use the
-Windows examples below.
+Windows examples below. The README and website track `main`. The published
+v0.1.0 packages predate S3 delivery. For `--s3`, use a Windows build from the
+[Release packages workflow](https://github.com/Yamato-Security/kumade/actions/workflows/release.yml)
+at a revision that includes S3, or [build from source](docs/getting-started/build.md).
 
 **[Read the Kumade documentation](https://yamato-security.github.io/kumade/)** —
 installation, command reference, collection guides, output formats and benchmarks.
@@ -99,6 +102,7 @@ for Kumade's measurements.
   a dynamic image, native alternate streams and explicit NTFS metadata preservation.
 - Optional [compressed E01 output](docs/e01-output.md), with the same NTFS
   preservation, split EWF1 segments, automatic hash verification and a receipt.
+- [S3 delivery](docs/S3.md) with a recoverable workspace, and [SFTP delivery](docs/SFTP.md) with a temporary upload-only account and receiver verification.
 - Green Kumade terminal banner and labels, white values, and a green progress
   bar with elapsed time, file counters, percentage, filename and approximate size.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
@@ -206,7 +210,8 @@ cargo build --release
 # SOURCE is a Windows volume root containing Windows/Users/ProgramData.
 ./target/release/kumade plan -d /cases/host/C -o /cases/plans/host --computer HOST01
 ./target/release/kumade -d /cases/host/C -o /cases/collected --computer HOST01
-./target/release/kumade verify /cases/collected/HOST01_<UTC>_<RUNID>
+# Use the run directory printed by collect, for example:
+./target/release/kumade verify /cases/collected/HOST01_2026-11-25_09-00-00
 ```
 
 On Windows, run an elevated PowerShell session for live collection:
@@ -300,9 +305,11 @@ uses hashes, not an authenticated signing identity.
 ## Not implemented yet
 
 Application-writer-coordinated VSS backups, external processing,
-image-source CLI support, ZIP archive packaging, resuming after process restart,
+image-source CLI support, ZIP archive packaging,
 general directory-mode ADS discovery and structural artifact validators are pending.
-VHDX mode inventories named data streams on selected files.
+VHDX mode inventories named data streams on selected files. For interrupted
+uploads, hybrid and fully staged S3 collections support `resume-s3` after a
+collector restart. Direct S3 and SFTP require a new run after the collector exits.
 
 ## Physical RAM acquisition
 
@@ -311,7 +318,7 @@ DumpIt toolkit. Active pagefiles are copied concurrently by default; use
 `--no-memory-pagefile` for RAM alone. Use `--dumpit <toolkit-directory>`; optionally
 add `--paging` for other cataloged swap/hibernation/existing dump files. No vendor binaries are bundled.
 See [RAM acquisition](docs/memory-acquisition.md) for setup, staging requirements,
-architecture selection, verification, failures, containers and SFTP delivery.
+architecture selection, verification, failures, containers and remote delivery.
 
 ## Other limitations
 
@@ -345,7 +352,7 @@ own licenses; see [fixture provenance](tests/fixtures/SOURCES.md).
 
 ## Process-memory YARA hunting
 
-Use `kumade scan-processes -o Yara-Results` for an opt-in live memory scan with YARA Forge Core (default), Extended, Full or local rules. See [process-memory scanning](docs/yara-process-scan.md) for options, coverage/error reporting and interpretation limits.
+Use `kumade scan-processes -o Yara-Results` for an opt-in live memory scan with YARA Forge Core, Extended, Full or local rules. The standard build defaults to Core. A bundled build defaults to its embedded pack. See [process-memory scanning](docs/yara-process-scan.md) for options, coverage/error reporting and interpretation limits.
 
 ## Offline YARA Forge packages
 

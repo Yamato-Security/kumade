@@ -82,8 +82,7 @@ New Kumade snapshots have `OwnedByCollector: true`, `CrashConsistent` and
 `WritersParticipated: false`. Older metadata without ownership remains readable.
 
 Manifest rows identify the historical source and use `VssNativeRead` or
-`VssRawNTFS`. **Identical versions are retained separately**, including in
-directory, VHDX/E01 and SFTP output. Compare hashes to identify duplicates.
+`VssRawNTFS`. **Identical versions from separate snapshots are retained separately.** Compare hashes to identify duplicates.
 Many snapshots can substantially increase transfer/output size.
 
 ## Combining modes and limitations

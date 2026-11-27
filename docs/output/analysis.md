@@ -24,12 +24,14 @@ Kumade drive folders using the sealed host marker. Keep registry transaction
 logs, ESE recovery files and SQLite WAL companions with their databases.
 Follow Juntei's current command reference for supported input formats.
 
-## Containers and SFTP
+## Containers and remote collections
 
 Use the [container guides](index.md) for read-only handling and fidelity limits.
 Do not run recovered executables. For SFTP, verify the delivery first, then
 restore a separate working copy with `verify-delivery --restore` if downstream
-tools need ordinary paths. The restoration preserves provenance in inventories;
+tools need ordinary paths. For [S3](../S3.md), use `verify-s3 --restore` with the
+printed URI and SHA-256 of the collection or the phase you need. Restored files
+carry their source provenance in the inventories;
 its visible file timestamps/ACLs are not a replacement for source observations.
 
 ## Correlate instead of overinterpreting

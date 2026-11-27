@@ -57,8 +57,8 @@ for investigation with Hayabusa, Takajo and Juntei.</p>
 
     ---
 
-    Choose directory, NTFS VHDX, compressed E01 or streaming SFTP delivery with
-    temporary upload-only credentials.
+    Save to a directory, NTFS VHDX or compressed E01. Send evidence remotely
+    with SFTP or use Amazon S3 for resumable hybrid delivery.
 
     [Choose an output](output/index.md)
 

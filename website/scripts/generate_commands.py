@@ -20,7 +20,7 @@ Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01, SFTP and S3 are
 alternative outputs. Read [the wizard](../collection-wizard.md),
 [collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
-[hibernation](../hibernation-acquisition.md)
+[hibernation](../hibernation-acquisition.md), [S3 delivery and recovery](../S3.md)
 and [output guide](../output/index.md).
 
 Acquisition defaults to available logical CPUs capped at four. `-T` accepts
@@ -160,9 +160,8 @@ payload hashes without reading original source evidence.
 ```
 
 For containers, inspect a read-only mounted run directory using the
-[container guide](../output/index.md). For remote delivery, use the trusted
-receiver or `verify-delivery`, rather than treating local upload metadata as
-verified evidence. A verified partial collection remains partial.
+[container guide](../output/index.md). For SFTP, use the trusted receiver or `verify-delivery`. For S3, use
+`verify-s3` with the collector’s printed URI and SHA-256. A verified partial collection remains partial.
 Read [verification semantics](../output/verification.md).
 '''),
     'verify-delivery': ('Verify or restore an SFTP delivery', r'''Use the trusted receiver's files after the upload credential is revoked.
@@ -183,7 +182,7 @@ prove source authenticity or atomic acquisition.
 See [SFTP receiver verification/restoration](../SFTP-Receiver.md#independent-readback-and-restoration)
 and [remote output](../SFTP.md).
 '''),
-    'resume-s3': ('Resume a phased S3 delivery', r'''Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
+    'resume-s3': ('Resume a hybrid or fully staged S3 delivery', r'''Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
 '''),
     'verify-s3': ('Verify or restore an S3 delivery', r'''Use a separate read role to verify the full delivery or an individual phase using its URI and SHA-256 printed
 by the collector. Choose a new local receipt path. Add `--restore DIR` to

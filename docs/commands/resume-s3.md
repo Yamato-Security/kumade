@@ -1,6 +1,6 @@
 # `resume-s3`
 
-Resume a phased S3 delivery.
+Resume a hybrid or fully staged S3 delivery.
 
 Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
 

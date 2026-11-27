@@ -53,6 +53,12 @@ the upload credential and obtain a successful trusted readback receipt. The
 [built-in receiver](../SFTP-Receiver.md) performs this automatically at final delivery.
 `verify-delivery` supports independent verification and optional restoration.
 
+For S3, record the URI and SHA-256 printed by the collector. An analyst with
+separate read credentials runs `verify-s3` against those values. Hybrid and
+fully staged runs support verification of individual published phases before
+the whole case arrives. Direct mode uses the final delivery record. Preserve
+the verification receipt with the case. See [S3 verification and restore](../S3.md).
+
 A valid receipt does not repair partial source coverage, prove source authenticity
 or turn live acquisition into an atomic snapshot. Ordinary `verify` deliberately
 refuses an unverified remote metadata directory.

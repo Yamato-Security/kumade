@@ -77,11 +77,11 @@ identical payloads, so compare the configurations and coverage as well as time.
 - **Acquire evidence:** Use the embedded catalogue or an explicit custom catalogue; inspect coverage and failure reports.
 - **Preserve volatile state:** Enable RAM when needed, retain the paired pagefile capture, and collect live-system inventory.
 - **Hunt while collecting:** Opt into process-memory YARA or entropy-guided PE collection. These add I/O, CPU work and potential false positives.
-- **Deliver evidence:** Choose directory, VHDX, E01 or SFTP output. Kumade's receiver creates temporary, upload-only credentials and prevents replacement or deletion of committed evidence.
+- **Deliver evidence:** Choose directory, VHDX, E01, SFTP or [Amazon S3](S3.md) output. Kumade's receiver creates temporary, upload-only credentials and prevents replacement or deletion of committed evidence.
 
-VSS support differs between collectors: Kumade creates and cleans up owned
-acquisition snapshots; the other ○ ratings include reading existing shadow
-copies. SFTP means evidence delivery from the collector, not a central agent
+VSS support differs between collectors: Kumade can create and clean up its own acquisition
+snapshots or [collect selected artifacts from existing copies](vss-existing.md).
+The other ○ ratings include reading existing shadow copies. SFTP means evidence delivery from the collector, not a central agent
 deployment platform. Tools B and D upload a locally prepared container/archive;
 Kumade can stream file payloads, although discovery, manifests, small metadata
 and optional providers can still require local memory or temporary disk space.

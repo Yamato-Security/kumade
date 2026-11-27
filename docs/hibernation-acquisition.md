@@ -45,10 +45,10 @@ stream. An unreadable source is a reported failure, not an empty substitute.
 
 Directory output retains the drive-relative path, for example
 `<HOST>_<DATE>/C/hiberfil.sys`. The family uses the same acquisition pipeline for
-NTFS VHDX, compressed E01 and SFTP delivery. Output metadata includes the source,
+NTFS VHDX, compressed E01, SFTP and S3 delivery. Output metadata includes the source,
 acquisition method, byte count, timestamps, SHA-256 and outcome. Review
 `Manifest.csv` / `Manifest.jsonl`, `Coverage.csv` and any errors, then verify the
-output or use trusted receiver readback for SFTP.
+output. Remote readback uses the SFTP receiver or the analyst’s [`verify-s3`](S3.md).
 
 ## Interpretation and limitations
 

@@ -12,7 +12,7 @@
 | YARA | Readable live Windows process memory | Protected pages, exits, timeouts and rule semantics limit coverage |
 | Entropy | Readable on-disk PE content | A high-entropy binary is a candidate, not a malware verdict |
 | VHDX / E01 | Windows NTFS evidence containers | Additional space/finalization work; fidelity has explicit limits |
-| Amazon S3 | Hybrid delivery, recoverable volatile evidence and SHA-256 readback via `verify-s3` | Protected workspace on a separate acquisition volume, temporary credentials and bucket-side permissions |
+| Amazon S3 | Hybrid delivery by default, full staging or direct streaming, with independent readback via `verify-s3` | Hybrid and full recovery need a protected workspace on a separate volume for live Windows collection. Direct mode has no restartable workspace. |
 | SFTP | Concurrent collectors and automatic reconnect with the built-in receiver | Needs trusted receiver readback; RAM still needs staging |
 | Partition imaging | Logical partition to `.dd` on a separate physical disk | Not a physical whole-disk image or an atomic live acquisition |
 
@@ -36,7 +36,8 @@ and [verification reports](../output/verification.md).
 ## Current development limits
 
 General raw enumeration of inaccessible directories, structural validation by
-artifact parsers, application-writer VSS coordination, resume after a process restart and Azure Blob upload
+artifact parsers, application-writer VSS coordination and Azure Blob upload
 are not implemented. Standard catalogue paths may miss custom application
 stores. Raw compressed/encrypted/reparse-backed content is refused rather than
-reported as correct logical content. See [implementation status](../implementation-status.md).
+reported as correct logical content. After a collector restart, [S3 recovery](../S3.md#hybrid-collection)
+can use a retained hybrid or fully staged workspace. Direct S3 and SFTP require a new run. See [implementation status](../implementation-status.md).
