@@ -199,7 +199,7 @@ impl<R: BufRead, W: Write> Prompt<R, W> {
         let mut line = String::new();
         ensure!(
             std::io::Read::take(&mut self.input, 4097).read_line(&mut line)? > 0,
-            "Wizard input ended; collection was not started. Use --yes for unattended collection"
+            "Wizard input ended; collection was not started. Use --no-wizard for unattended collection"
         );
         ensure!(line.len() <= 4096, "Wizard answer is too long");
         let value = line.trim();

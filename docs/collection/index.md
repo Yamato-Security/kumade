@@ -17,7 +17,7 @@ is a collection candidate, not a conclusion about malicious activity.
 
 ```powershell
 .\kumade.exe plan --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
-.\kumade.exe collect --yes --volume C: --artifact windows.prefetch -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --artifact windows.prefetch -o E:\Evidence
 ```
 
 `plan` writes a fresh plan without copying payloads or creating VSS snapshots.

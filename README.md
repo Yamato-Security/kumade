@@ -69,7 +69,7 @@ for Kumade's measurements.
 
 - [Volatility-aware acquisition](docs/acquisition-order.md): preserve fast live state and hot disk artifacts before bulk data, entropy analysis and compression.
 
-- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. `--yes` accepts defaults without prompts for automation; `--paging` opts into large paging/hibernation/existing dump files.
+- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. `--no-wizard` accepts defaults without prompts for automation; `--paging` opts into large paging/hibernation/existing dump files.
 
 - Optional [hibernation-file acquisition](docs/hibernation-acquisition.md): `--hibernation` adds `hiberfil.sys` without enabling other paging/dump files. The dedicated wizard choice shows its estimated size; existing broad `--paging` selections keep their scope. Uses verified copying and raw NTFS fallback without changing Windows power settings.
 
@@ -116,7 +116,7 @@ Measured on 2026-11-25 (JST) using Kumade 0.1.0 at commit
 [`aa86395`](https://github.com/Yamato-Security/kumade/commit/aa863958b59c750df02d771b48e688ab04895b9e):
 Windows 11 ARM64 VM, four virtual CPUs, 4 GiB RAM, with source and output on
 the same NTFS virtual disk. All comparisons restrict collection to **C:** with
-`collect --yes --volume C:`. “Default” means the feature defaults within that
+`collect --no-wizard --volume C:`. “Default” means the feature defaults within that
 scope; unrestricted all-volume collection was not benchmarked.
 
 **30 measured runs:** four default controls and two runs per optional configuration.
@@ -374,7 +374,7 @@ for offline use, provenance, build variants and rule licensing.
 
 ## Amazon S3 delivery
 
-Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --yes` with
+Use `kumade collect --s3 s3://example-ir-evidence/cases/IR-042/ --no-wizard` with
 temporary AWS credentials. Hybrid delivery is the default. Requested RAM, paired
 pagefiles, live tables and upload receipts stay in a protected workspace beside
 the executable. Ordinary disk evidence streams directly to S3. For live collection,

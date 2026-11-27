@@ -139,6 +139,7 @@ fn verbose_lists_every_file_with_parallel_workers_and_preserves_verification() {
             "0",
             "-T",
             "4",
+            "--no-wizard",
             verbose,
         ]);
         assert!(
@@ -224,6 +225,7 @@ fn cli_can_plan_collect_and_verify_offline() {
         "HOST01",
         "--reserve-mib",
         "0",
+        "--no-wizard",
     ]);
     assert!(
         out.status.success(),
@@ -254,6 +256,7 @@ fn memory_request_has_nonzero_partial_exit() {
         "--memory",
         "--reserve-mib",
         "0",
+        "--no-wizard",
     ]);
     assert_eq!(out.status.code(), Some(3));
 }
@@ -361,6 +364,7 @@ fn offline_source_directories_cannot_shadow_collection_metadata() {
         "HOST01",
         "--reserve-mib",
         "0",
+        "--no-wizard",
         "-q",
     ]);
     assert!(
@@ -452,7 +456,7 @@ fn offline_memory_never_runs_a_provider_on_the_analyst_host() {
         "DO-NOT-RUN.exe",
         "--reserve-mib",
         "0",
-        "--yes",
+        "--no-wizard",
     ]);
     assert_eq!(out.status.code(), Some(3));
     let root = fs::read_dir(&output)
@@ -488,7 +492,7 @@ fn explicit_volatile_staging_cannot_write_inside_offline_evidence() {
         "--memory",
         "--memory-staging-dir",
         arg(&source.join("forbidden")),
-        "--yes",
+        "--no-wizard",
     ]);
     assert_eq!(out.status.code(), Some(2));
     assert!(!source.join("forbidden").exists());

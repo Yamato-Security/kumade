@@ -102,7 +102,7 @@ def main(binary):
                 Path(str(source / cold) + ":Zone.Identifier").write_bytes(b"ZoneId=3")
             recovery = root / "stage"
             recovery.mkdir()
-            collect = ["collect", "--source", source, "--computer", "HOST01", "--yes", "--artifact", "windows.eventlogs",
+            collect = ["collect", "--source", source, "--computer", "HOST01", "--no-wizard", "--artifact", "windows.eventlogs",
                        "--artifact", "windows.prefetch", "--reserve-mib", "0", "--s3-recovery-dir", recovery, *original]
             p = subprocess.Popen([str(binary), *map(str,collect)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  encoding="utf-8", env=dict(env, AWS_ACCESS_KEY_ID="WRITER"))

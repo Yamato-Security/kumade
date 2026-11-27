@@ -57,7 +57,7 @@ pub struct Args {
     #[arg(long, requires = "sftp")]
     pub sftp_directory: Option<String>,
     /// Read the password from the first stdin line instead of a hidden terminal prompt
-    #[arg(long, requires = "sftp", conflicts_with = "wizard")]
+    #[arg(long, requires = "sftp", requires = "no_wizard")]
     pub sftp_password_stdin: bool,
     /// Parent for private metadata-only staging (default: system temporary directory)
     #[arg(long, requires = "sftp")]

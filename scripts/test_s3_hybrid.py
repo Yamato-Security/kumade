@@ -86,7 +86,7 @@ def main(binary):
             location = ["--s3-hybrid-dir", stage] if stage is not None else []
             return ["collect", *location, *target, "--source", source, "--computer", "HOST",
                     "--artifact", "windows.eventlogs", "--artifact", "windows.prefetch", "--s3-part-mib", "5",
-                    "--reserve-mib", "0", "--threads", "1", "--yes"]
+                    "--reserve-mib", "0", "--threads", "1", "--no-wizard"]
         def no_disk_copies(ws):
             assert not list(ws.rglob("*.evtx")) and not list(ws.rglob("*.pf"))
             assert sum(f.stat().st_size for f in ws.rglob("*") if f.is_file()) < 1024 * 1024

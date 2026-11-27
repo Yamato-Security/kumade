@@ -6,6 +6,12 @@
   command or `-h`. Use `doctor --check`, `list --builtin` and `list-vss --all`
   to run the default host, catalog and snapshot checks.
 
+- A collection needs an output (`-o DIR`, or `--vhdx`, `--e01`, `--sftp` or
+  `--s3`) and then runs the wizard, also when stdin is redirected.
+  `--no-wizard` collects the defaults without it; `--yes` remains an alias.
+  `--wizard` is removed. `--quiet` and `--sftp-password-stdin` need
+  `--no-wizard`.
+
 - Default S3 collection to hybrid delivery with protected volatile staging beside
   the executable, direct disk streaming,
   per-file acknowledgements and recovery of completed files after a collector interruption.

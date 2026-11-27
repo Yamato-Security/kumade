@@ -52,7 +52,7 @@ On the Windows computer being collected:
 ```powershell
 .\kumade.exe collect --sftp SERVER_ADDRESS --sftp-port 2222 `
   --sftp-user GENERATED_USERNAME --sftp-host-key "SHA256:SERVER_FINGERPRINT" `
-  --sftp-staging-dir E:\Metadata --yes
+  --sftp-staging-dir E:\Metadata --no-wizard
 ```
 
 Create the metadata staging parent first. The password prompt does not echo.

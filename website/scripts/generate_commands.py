@@ -12,13 +12,14 @@ Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 
 ```powershell
 .\kumade.exe collect -o E:\Evidence
-.\kumade.exe collect --yes --volume C: --vss --vhdx E:\Evidence
-.\kumade.exe collect --yes --volume C: --hibernation -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --vss --vhdx E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --hibernation -o E:\Evidence
 ```
 
-`--yes` selects feature defaults plus explicit flags. It does not enable RAM,
+`--no-wizard` selects feature defaults plus explicit flags. It does not enable RAM,
 paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01, SFTP and S3 are
-alternative outputs. Read [the wizard](../collection-wizard.md),
+alternative outputs, and one of them is required. With an output, `collect` runs the wizard
+unless `--no-wizard` is given. Read [the wizard](../collection-wizard.md),
 [collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
 [hibernation](../hibernation-acquisition.md), [S3 delivery and recovery](../S3.md)
 and [output guide](../output/index.md).

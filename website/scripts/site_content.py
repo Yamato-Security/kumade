@@ -31,7 +31,7 @@ def catalogue():
              '- **Raw NTFS** paths identify metafiles or named streams for the locked-file/raw reader. `:$J` identifies a named data stream.',
              '- Matching is case-insensitive. `**` covers descendant paths. Standard catalogue locations can miss custom application stores, inaccessible directories or remote/cloud-only data.',
              '- Database families include companion logs where the directory patterns match them. Retain those files together for recovery-aware parsers.', '',
-             '```powershell', '.\\kumade.exe list --builtin', '.\\kumade.exe collect --yes --artifact windows.prefetch --artifact windows.srum -o E:\\Evidence', '```', '',
+             '```powershell', '.\\kumade.exe list --builtin', '.\\kumade.exe collect --no-wizard --artifact windows.prefetch --artifact windows.srum -o E:\\Evidence', '```', '',
              'An explicit `--artifact` narrows disk scope. Live inventory still runs on a live host unless `--no-live-info` is supplied. '
              '`Coverage.csv`, `DiscoveryIssues.csv` and `Errors.csv` explain missing, skipped, partial and failed collection. '
              'See [collection guidance](index.md) and [verification](../output/verification.md).', '']

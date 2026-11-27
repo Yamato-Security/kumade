@@ -43,13 +43,13 @@ hash from an untrusted copy as evidence of that copy's authenticity. Kumade hold
 the checked executable open without write/delete sharing while it runs.
 
 ```powershell
-.\kumade.exe collect -o E:\Evidence --memory --dumpit E:\Tools\Comae-Toolkit --yes
+.\kumade.exe collect -o E:\Evidence --memory --dumpit E:\Tools\Comae-Toolkit --no-wizard
 ```
 
 To include the catalog's paging, swap, hibernation and existing dump files too:
 
 ```powershell
-.\kumade.exe collect -o E:\Evidence --memory --paging --dumpit E:\Tools\Comae-Toolkit --yes
+.\kumade.exe collect -o E:\Evidence --memory --paging --dumpit E:\Tools\Comae-Toolkit --no-wizard
 ```
 
 Active `pagefile.sys` files are copied **concurrently with RAM by default** when

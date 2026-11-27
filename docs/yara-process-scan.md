@@ -33,7 +33,7 @@ provenance are still written to the requested results directory.
 
 ```powershell
 # Offline collection with a bundled binary:
-.\kumade-0.1.0-win-aarch64-yara-core.exe collect --yes --scan-processes -o E:\Evidence
+.\kumade-0.1.0-win-aarch64-yara-core.exe collect --no-wizard --scan-processes -o E:\Evidence
 
 # Download the latest selected pack as one versioned ZIP:
 .\kumade.exe update-rules --ruleset core -o E:\YaraRules
@@ -42,7 +42,7 @@ provenance are still written to the requested results directory.
 
 # Use the ZIP reported by update-rules (replace the date if newer):
 .\kumade.exe scan-processes --rules E:\YaraRules\yara-forge-rules-full-20261122.zip -o E:\YaraResults
-.\kumade.exe collect --yes --scan-processes --yara-rules E:\YaraRules\yara-forge-rules-full-20261122.zip -o E:\Evidence
+.\kumade.exe collect --no-wizard --scan-processes --yara-rules E:\YaraRules\yara-forge-rules-full-20261122.zip -o E:\Evidence
 ```
 
 `--rules` / `--yara-rules` accepts either one official Forge ZIP or local UTF-8

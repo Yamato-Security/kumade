@@ -23,7 +23,7 @@ use kumade::{
 };
 use std::{
     collections::HashSet,
-    io::{IsTerminal, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -33,6 +33,7 @@ use std::{
     name = "kumade",
     version,
     args_conflicts_with_subcommands = true,
+    subcommand_negates_reqs = true,
     help_template = "{about}\n\n{usage-heading} {usage}\n\nCommands:\n{subcommands}\n\nRun `kumade <COMMAND> -h` for its options.",
     about = "Windows evidence collection by Yamato Security — development prototype"
 )]
@@ -87,12 +88,9 @@ enum Command {
 
 #[derive(Args, Clone)]
 struct CollectionArgs {
-    /// Accept collection defaults without interactive prompts (for scripts)
-    #[arg(long, alias = "no-wizard", conflicts_with = "wizard")]
-    yes: bool,
-    /// Force the collection wizard, including when answers are piped
-    #[arg(long, conflicts_with = "quiet")]
-    wizard: bool,
+    /// Collect the default selection without the wizard (for scripts)
+    #[arg(long = "no-wizard", alias = "yes")]
+    no_wizard: bool,
     /// Include paging, swap, hibernation and existing memory dumps (default: off)
     #[arg(long)]
     paging: bool,
@@ -131,8 +129,8 @@ struct CollectionArgs {
     /// VSS snapshot creation deadline in seconds
     #[arg(long, value_name = "SECONDS", requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
     vss_timeout: Option<u64>,
-    /// Output parent directory; plan writes Plan.json here
-    #[arg(short, long, value_name = "DIR")]
+    /// Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
+    #[arg(short, long, value_name = "DIR", required_unless_present_any = ["vhdx", "e01", "sftp", "s3"])]
     output: Option<PathBuf>,
     /// Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
     #[arg(long, value_name = "FILE_OR_DIR", conflicts_with = "output")]
@@ -249,7 +247,7 @@ fn default_threads() -> usize {
         .min(4)
 }
 
-/// `-o` and a bare `--vhdx`/`--e01` share this default. The shell's current
+/// A bare `--vhdx`/`--e01` uses this default. The shell's current
 /// directory is never used: an elevated prompt starts in C:\Windows\System32,
 /// on the very volume being acquired.
 fn default_results_dir() -> PathBuf {
@@ -537,6 +535,12 @@ fn run() -> Result<u8> {
         None => (cli.options, false),
     };
     options.sftp.validate()?;
+    // Every collection runs the wizard unless --no-wizard asks for the defaults.
+    let interactive = !plan_only && !options.no_wizard;
+    ensure!(
+        !interactive || !options.quiet,
+        "--quiet needs --no-wizard: the wizard asks its questions on the console"
+    );
     ensure!(
         !plan_only || !options.remote(),
         "Remote uploads are a collect destination; plan uses -o DIR"
@@ -616,20 +620,12 @@ fn run() -> Result<u8> {
     };
     discovered.issues.append(&mut history.issues);
     ensure!(
-        !plan_only || !options.wizard,
-        "The collection wizard is not used with plan"
-    );
-    ensure!(
         !options.scan_processes || cfg!(windows),
         "Process-memory YARA scanning requires Windows"
     );
     if options.scan_processes {
         kumade::yara_scan::check_host()?;
     }
-    let interactive = !plan_only
-        && !options.yes
-        && !options.quiet
-        && (options.wizard || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal()));
     let mut defaults =
         kumade::wizard::default_artifacts(&rules, &options.artifacts, options.paging);
     if options.hibernation {
@@ -1158,9 +1154,73 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    /// Parse a command line, adding the output directory that every collection requires unless
+    /// the line already names a destination, so each case still tests its own condition.
+    fn parse_args<'a>(args: impl IntoIterator<Item = &'a str>) -> Result<Cli, clap::Error> {
+        let mut args: Vec<&str> = args.into_iter().collect();
+        let destinations = ["-o", "--output", "--vhdx", "--e01", "--sftp", "--s3"];
+        if !args.iter().any(|a| destinations.contains(a)) {
+            args.extend(["-o", "results"]);
+        }
+        Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn collections_need_a_destination_and_run_the_wizard_unless_no_wizard_is_given() {
+        for args in [
+            vec!["kumade", "collect", "--no-wizard"],
+            vec!["kumade", "--no-wizard"],
+            vec!["kumade", "plan", "--artifact", "windows.prefetch"],
+            vec!["kumade", "collect", "-o", "results", "--wizard"],
+            vec![
+                "kumade",
+                "collect",
+                "--sftp",
+                "host",
+                "--sftp-host-key",
+                "SHA256:x",
+                "--sftp-password-stdin",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        for args in [
+            vec!["kumade", "collect", "-o", "results"],
+            vec!["kumade", "-o", "results"],
+            vec!["kumade", "collect", "--vhdx"],
+            vec!["kumade", "collect", "--e01", "out"],
+            vec!["kumade", "collect", "--sftp", "host"],
+            vec![
+                "kumade",
+                "collect",
+                "--sftp",
+                "host",
+                "--sftp-password-stdin",
+                "--no-wizard",
+            ],
+            vec!["kumade", "doctor", "--check"],
+            vec!["kumade", "list", "--builtin"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok());
+        }
+        let cli = Cli::try_parse_from(["kumade", "collect", "-o", "results"]).unwrap();
+        let Some(Command::Collect(options)) = cli.command else {
+            panic!("collect")
+        };
+        assert!(!options.no_wizard);
+        // --yes stays as a hidden alias for scripts written before --no-wizard
+        assert!(
+            Cli::try_parse_from(["kumade", "-o", "results", "--yes"])
+                .unwrap()
+                .options
+                .no_wizard
+        );
+    }
+
     #[test]
     fn hybrid_requires_s3_and_a_single_staging_destination() {
-        assert!(Cli::try_parse_from(["kumade", "collect", "--s3-hybrid-dir", "stage"]).is_err());
+        let error = Cli::try_parse_from(["kumade", "collect", "--s3-hybrid-dir", "stage"]);
+        assert!(error.err().unwrap().to_string().contains("--s3 <S3>"));
         for other in [
             "--s3-recovery-dir",
             "--s3-staging-dir",
@@ -1168,7 +1228,7 @@ mod tests {
             "-o",
         ] {
             assert!(
-                Cli::try_parse_from([
+                parse_args([
                     "kumade",
                     "collect",
                     "--s3",
@@ -1185,7 +1245,7 @@ mod tests {
     #[test]
     fn s3_defaults_to_hybrid_and_direct_requires_explicit_selection() {
         let parse = |extra: &[&str]| {
-            let cli = Cli::try_parse_from(
+            let cli = parse_args(
                 ["kumade", "--s3", "s3://test/case"]
                     .into_iter()
                     .chain(extra.iter().copied()),
@@ -1212,10 +1272,11 @@ mod tests {
             direct.s3.staging_parent(Some(Path::new("ram"))).unwrap(),
             dir
         );
-        assert!(Cli::try_parse_from(["kumade", "--s3-direct"]).is_err());
+        let error = Cli::try_parse_from(["kumade", "--s3-direct"]);
+        assert!(error.err().unwrap().to_string().contains("--s3 <S3>"));
         for flag in ["--s3-hybrid-dir", "--s3-recovery-dir"] {
             assert!(
-                Cli::try_parse_from([
+                parse_args([
                     "kumade",
                     "--s3",
                     "s3://test/case",
@@ -1234,18 +1295,18 @@ mod tests {
             vec!["kumade", "collect", "--sftp", "host", "--vhdx"],
             vec!["kumade", "collect", "--sftp", "host", "--e01"],
             vec!["kumade", "collect", "--sftp-password-stdin"],
+            // the wizard and a piped password would both read stdin
             vec![
                 "kumade",
                 "collect",
                 "--sftp",
                 "host",
                 "--sftp-password-stdin",
-                "--wizard",
             ],
         ] {
-            assert!(Cli::try_parse_from(args).is_err());
+            assert!(parse_args(args).is_err());
         }
-        let cli = Cli::try_parse_from(["kumade", "collect", "--sftp", "host"]).unwrap();
+        let cli = parse_args(["kumade", "collect", "--sftp", "host"]).unwrap();
         let Some(Command::Collect(options)) = cli.command else {
             panic!("collect")
         };
@@ -1254,10 +1315,10 @@ mod tests {
 
     #[test]
     fn default_workers_follow_available_cpus_and_explicit_workers_override_them() {
-        let cli = Cli::try_parse_from(["kumade", "-o", "results"]).unwrap();
+        let cli = parse_args(["kumade", "-o", "results"]).unwrap();
         assert_eq!(cli.options.threads, default_threads());
         assert!(cli.options.threads > 0 && cli.options.threads <= 4);
-        let cli = Cli::try_parse_from(["kumade", "collect", "-T", "2"]).unwrap();
+        let cli = parse_args(["kumade", "collect", "-T", "2"]).unwrap();
         let Some(Command::Collect(options)) = cli.command else {
             panic!("expected collect");
         };
@@ -1266,7 +1327,7 @@ mod tests {
 
     #[test]
     fn entropy_flags_are_opt_in_and_validate_thresholds_and_limits() {
-        let cli = Cli::try_parse_from(["kumade", "collect"]).unwrap();
+        let cli = parse_args(["kumade", "collect"]).unwrap();
         let Some(Command::Collect(options)) = cli.command else {
             panic!("collect");
         };
@@ -1296,9 +1357,9 @@ mod tests {
                 "everything",
             ],
         ] {
-            assert!(Cli::try_parse_from(args).is_err());
+            assert!(parse_args(args).is_err());
         }
-        let cli = Cli::try_parse_from([
+        let cli = parse_args([
             "kumade",
             "--high-entropy",
             "--entropy-extension",
@@ -1318,12 +1379,11 @@ mod tests {
                 kumade::entropy::ExtensionSet::Comprehensive,
             ),
         ] {
-            let cli = Cli::try_parse_from(["kumade", "--high-entropy", "--entropy-coverage", flag])
-                .unwrap();
+            let cli = parse_args(["kumade", "--high-entropy", "--entropy-coverage", flag]).unwrap();
             assert_eq!(cli.options.entropy.settings().coverage, level);
         }
         assert!(
-            Cli::try_parse_from(["kumade", "--high-entropy", "--entropy-all-files"])
+            parse_args(["kumade", "--high-entropy", "--entropy-all-files"])
                 .unwrap()
                 .options
                 .entropy
@@ -1348,35 +1408,35 @@ mod tests {
                 "100",
             ],
         ] {
-            assert!(Cli::try_parse_from(args).is_ok());
+            assert!(parse_args(args).is_ok());
         }
     }
 
     #[test]
     fn memory_pagefiles_are_default_on_but_ram_stays_opt_in() {
-        let cli = Cli::try_parse_from(["kumade", "collect"]).unwrap();
+        let cli = parse_args(["kumade", "collect"]).unwrap();
         let Some(Command::Collect(options)) = cli.command else {
             panic!("collect")
         };
         assert!(!options.memory);
         assert!(!options.memory_options.no_memory_pagefile);
-        let cli = Cli::try_parse_from(["kumade", "--memory", "--no-memory-pagefile"]).unwrap();
+        let cli = parse_args(["kumade", "--memory", "--no-memory-pagefile"]).unwrap();
         assert!(cli.options.memory && cli.options.memory_options.no_memory_pagefile);
-        assert!(Cli::try_parse_from(["kumade", "--no-memory-pagefile"]).is_err());
+        assert!(parse_args(["kumade", "--no-memory-pagefile"]).is_err());
     }
     #[test]
     fn containers_accept_automatic_names_and_destination_directories() {
         // A bare flag carries no path; run() substitutes the exe-relative default.
-        let cli = Cli::try_parse_from(["kumade", "--vhdx"]).unwrap();
+        let cli = parse_args(["kumade", "--vhdx"]).unwrap();
         assert_eq!(cli.options.vhdx, Some(None));
         assert!(default_results_dir().ends_with("Kumade-Results"));
         assert!(default_results_dir().is_absolute() || std::env::current_exe().is_err());
-        let cli = Cli::try_parse_from(["kumade", "--vhdx", "-v"]).unwrap();
+        let cli = parse_args(["kumade", "--vhdx", "-v"]).unwrap();
         assert_eq!(cli.options.vhdx, Some(None));
         assert!(cli.options.verbose);
-        let cli = Cli::try_parse_from(["kumade", "--e01", "output"]).unwrap();
+        let cli = parse_args(["kumade", "--e01", "output"]).unwrap();
         assert_eq!(cli.options.e01, Some(Some(PathBuf::from("output"))));
-        let cli = Cli::try_parse_from(["kumade", "--vhdx", "--vhdx-size-gib", "4"]).unwrap();
+        let cli = parse_args(["kumade", "--vhdx", "--vhdx-size-gib", "4"]).unwrap();
         assert_eq!(cli.options.vhdx_size_gib, Some(4));
     }
 }

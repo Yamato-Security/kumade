@@ -92,7 +92,7 @@ From an elevated Windows PowerShell terminal, with an evidence destination on `E
 ```
 
 The second command opens the collection wizard. For unattended collection with
-feature defaults, use `collect --yes -o E:\Evidence`. RAM, VSS, entropy and
+feature defaults, use `collect --no-wizard -o E:\Evidence`. RAM, VSS, entropy and
 YARA are opt-in. See the [first-collection guide](getting-started/first-collection.md).
 
 Kumade is in active development under **RPL-1.5**. This documentation tracks

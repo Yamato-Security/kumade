@@ -37,10 +37,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade plan [OPTIONS]
 
     Options:
-          --yes
-              Accept collection defaults without interactive prompts (for scripts)
-          --wizard
-              Force the collection wizard, including when answers are piped
+          --no-wizard
+              Collect the default selection without the wizard (for scripts)
           --paging
               Include paging, swap, hibernation and existing memory dumps (default: off)
           --hibernation
@@ -64,7 +62,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --vss-timeout <SECONDS>
               VSS snapshot creation deadline in seconds
       -o, --output <DIR>
-              Output parent directory; plan writes Plan.json here
+              Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
           --vhdx [<FILE_OR_DIR>]
               Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
           --vhdx-size-gib <GIB>

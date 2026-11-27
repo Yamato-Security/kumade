@@ -12,16 +12,16 @@ external evidence destination:
 
 ```powershell
 # Normal collection plus hiberfil.sys; other paging/dump files stay off:
-.\kumade.exe collect --yes --volume C: --hibernation -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --hibernation -o E:\Evidence
 
 # Just the hibernation family, without live-system inventory:
-.\kumade.exe collect --yes --volume C: --artifact windows.hibernation --no-live-info -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --artifact windows.hibernation --no-live-info -o E:\Evidence
 
 # Inspect the scope before copying any payload:
 .\kumade.exe plan --volume C: --artifact windows.hibernation -o E:\Plans\Hibernation
 
 # An existing hibernation file in an offline Windows volume directory:
-.\kumade.exe collect --yes -d D:\Case\C --artifact windows.hibernation -o E:\Evidence
+.\kumade.exe collect --no-wizard -d D:\Case\C --artifact windows.hibernation -o E:\Evidence
 ```
 
 `--hibernation` adds the family to the normal defaults or an explicit

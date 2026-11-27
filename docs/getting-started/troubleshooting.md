@@ -2,8 +2,9 @@
 
 ## Help appears without collecting
 
-Running Kumade without arguments deliberately displays help. Use `collect --wizard` to
-start the wizard or `collect --yes` for unattended defaults.
+Running Kumade, or a command such as `collect`, without arguments deliberately
+displays help. Use `collect -o E:\Evidence` to start the wizard or
+`collect --no-wizard -o E:\Evidence` for unattended defaults.
 
 ## An option does not exist
 

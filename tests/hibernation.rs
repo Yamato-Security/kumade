@@ -180,7 +180,7 @@ fn broad_paging_and_hibernation_capture_one_verified_copy() {
         &source,
         "collect",
         &[
-            "--yes",
+            "--no-wizard",
             "--artifact",
             "windows.hibernation",
             "--hibernation",
@@ -234,7 +234,7 @@ fn case_insensitive_hiberfil_name_is_acquired_without_paging_files() {
         temp.path(),
         &source,
         "collect",
-        &["--yes", "--artifact", "windows.hibernation"],
+        &["--no-wizard", "--artifact", "windows.hibernation"],
         None,
     );
     assert!(
@@ -256,7 +256,7 @@ fn missing_hiberfil_is_not_fabricated_or_reported_as_acquired() {
         temp.path(),
         &source,
         "collect",
-        &["--yes", "--artifact", "windows.hibernation"],
+        &["--no-wizard", "--artifact", "windows.hibernation"],
         None,
     );
     assert!(
@@ -304,12 +304,7 @@ fn explicit_wizard_scope_has_a_separate_hibernation_prompt_and_accurate_estimate
         temp.path(),
         &source,
         "collect",
-        &[
-            "--wizard",
-            "--artifact",
-            "windows.prefetch",
-            "--hibernation",
-        ],
+        &["--artifact", "windows.prefetch", "--hibernation"],
         Some(&"\n".repeat(20)),
     );
     assert!(

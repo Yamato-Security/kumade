@@ -163,7 +163,7 @@ $ea = [KumadeNativeTest]::EA($file)
 $hashes = @{}
 foreach ($path in @($file,$other,$sparse,($file+':Zone.Identifier'),($file+':extra.evidence'))) { $hashes[$path]=[KumadeNativeTest]::Hash($path) }
 $image = Join-Path $WorkDirectory "Evidence 'quoted'.vhdx"
-$arguments = @('collect','-d',$source,'--computer','SYNTHETIC','--artifact','windows.prefetch','--vhdx',$image,'--vhdx-size-gib','1','--reserve-mib','0','-T','2')
+$arguments = @('collect','--no-wizard','-d',$source,'--computer','SYNTHETIC','--artifact','windows.prefetch','--vhdx',$image,'--vhdx-size-gib','1','--reserve-mib','0','-T','2')
 $code = Invoke-Collector $arguments 'collect.txt'
 if ($code -ne 0) { throw ('Collection failed ('+$code+'): '+(Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $WorkDirectory 'collect.txt'))) }
 if ((Get-DiskImage -ImagePath $image).Attached) { throw 'Image remained attached after collection' }

@@ -5,14 +5,14 @@ paths such as `Windows`, `Users` and `ProgramData` for that source volume.
 Do not point it at an arbitrary parent folder and assume automatic image discovery.
 
 ```powershell
-.\kumade.exe collect --yes -d D:\Case\C --computer HOST01 -o E:\Evidence
+.\kumade.exe collect --no-wizard -d D:\Case\C --computer HOST01 -o E:\Evidence
 ```
 
 Repeat `--source` / `-d` for disjoint volume roots. Use `--profile-root` for
 nonstandard profile paths that remain within a selected source.
 
 ```sh
-./kumade collect --yes -d /cases/HOST01/C --computer HOST01 -o /cases/collected
+./kumade collect --no-wizard -d /cases/HOST01/C --computer HOST01 -o /cases/collected
 ```
 
 Applicable directory acquisition works from source builds on Linux/macOS too.
