@@ -18,8 +18,8 @@ hooks:
 theme:
   name: material
   language: en
-  logo: assets/kumade-logo.png
-  favicon: assets/kumade-logo.png
+  logo: assets/kumade-golden-waves.png
+  favicon: assets/kumade-golden-waves.png
   icon:
     repo: fontawesome/brands/github
   font:

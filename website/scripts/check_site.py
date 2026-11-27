@@ -55,9 +55,9 @@ def main():
             elif url.fragment and target in pages and unquote(url.fragment)not in pages[target].ids:
                 errors.append(f'{source.relative_to(root)}: missing anchor: {link}')
     home = (root/'index.html').read_text()
-    for required in ['Kumade','assets/kumade-logo.png','Getting Started','Commands','Collection','Output','Benchmarks','Resources']:
+    for required in ['Kumade','assets/kumade-golden-waves.png','Getting Started','Commands','Collection','Output','Benchmarks','Resources']:
         assert required in home,required
-    assert (root/'assets/kumade-logo.png').stat().st_size>1000
+    assert (root/'assets/kumade-golden-waves.png').stat().st_size>1000
     index = root/'search/search_index.json'
     assert index.is_file(),'Missing search index'
     assert not errors,'\n'.join(errors[:80])
