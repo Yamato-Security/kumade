@@ -35,7 +35,7 @@ use std::{
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
     help_template = "{about}\n\n{usage-heading} {usage}\n\nCommands:\n{subcommands}\n\nRun `kumade <COMMAND> -h` for its options.",
-    about = "Windows evidence collection by Yamato Security — development prototype"
+    about = "Windows DFIR Triage Collector — development prototype"
 )]
 struct Cli {
     #[command(subcommand)]

@@ -8,7 +8,7 @@
 
 Version: 0.1.0
 
-Windows evidence collection by Yamato Security — development prototype
+Windows DFIR Triage Collector — development prototype
 
 Usage: kumade [OPTIONS]
        kumade <COMMAND>
