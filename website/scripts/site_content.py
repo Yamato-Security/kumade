@@ -75,5 +75,5 @@ def on_files(files, config):
              'overview/changelog.md': (ROOT/'CHANGELOG.md').read_text().replace('](docs/', '](../')}
     for uri, content in pages.items():
         files.append(File.generated(config, uri, content=content))
-    files.append(File.generated(config, 'assets/kumade-logo.png', abs_src_path=str(ROOT/'art/Kumade-Logo.png')))
+    files.append(File.generated(config, 'assets/kumade-golden-waves.png', abs_src_path=str(ROOT/'art/KumadeGoldenWaves.png')))
     return files

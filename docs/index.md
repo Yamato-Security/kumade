@@ -7,7 +7,7 @@ hide:
 
 <div class="km-hero" markdown>
 
-![Kumade — Windows triage collector](assets/kumade-logo.png){ .km-hero-art width="1254" height="1254" }
+![Kumade — Windows triage collector](assets/kumade-golden-waves.png){ .km-hero-art width="1254" height="1254" }
 
 <p class="tagline"><strong>Windows evidence collection by Yamato Security.</strong><br>
 Collect forensic artifacts, preserve live-response context, and deliver evidence
