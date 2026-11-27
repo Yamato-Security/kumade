@@ -87,7 +87,7 @@ for investigation with Hayabusa, Takajo and Juntei.</p>
 From an elevated Windows PowerShell terminal, with an evidence destination on `E:`:
 
 ```powershell
-.\kumade.exe doctor
+.\kumade.exe doctor --check
 .\kumade.exe collect -o E:\Evidence
 ```
 

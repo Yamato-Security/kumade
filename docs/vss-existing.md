@@ -8,7 +8,7 @@ change its attributes or take ownership of it. Use elevated, native Windows.
 ## List before collecting
 
 ```powershell
-.\kumade.exe list-vss
+.\kumade.exe list-vss --all
 .\kumade.exe list-vss --volume C:
 .\kumade.exe list-vss --volume C: -o E:\Snapshots.csv
 .\kumade.exe list-vss --volume C: -t jsonl

@@ -29,27 +29,90 @@ fn arg(path: &Path) -> &str {
 }
 
 #[test]
-fn help_and_doctor_do_not_collect_evidence() {
-    for cmd in ["--help", "doctor", "list"] {
-        let o = run(&[cmd]);
-        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
+    let root = run(&[]);
+    assert!(root.status.success());
+    assert!(root.stderr.is_empty());
+    let menu = String::from_utf8(root.stdout).unwrap();
+    assert!(menu.contains("Commands:"));
+    assert!(!menu.contains("Options:"));
+    assert!(!menu.contains("--vhdx"));
+    for args in [["-h"], ["--help"], ["help"], ["--"]] {
+        let output = run(&args);
+        assert!(output.status.success());
+        assert_eq!(output.stdout, menu.as_bytes());
     }
+    let temp = tempfile::tempdir().unwrap();
+    let binary_name = Path::new(env!("CARGO_BIN_EXE_kumade"))
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    for command in [
+        "collect",
+        "doctor",
+        "forensic-copy",
+        "list",
+        "list-vss",
+        "live-info",
+        "plan",
+        "receive",
+        "resume-s3",
+        "scan-processes",
+        "update-rules",
+        "verify",
+        "verify-delivery",
+        "verify-s3",
+    ] {
+        let shown = Command::new(env!("CARGO_BIN_EXE_kumade"))
+            .arg(command)
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(shown.status.success(), "{command}: {:?}", shown.stderr);
+        assert!(shown.stderr.is_empty(), "{command}");
+        let help = String::from_utf8(shown.stdout).unwrap();
+        assert!(
+            help.contains(&format!("Usage: {binary_name} {command}")),
+            "{command}"
+        );
+        assert!(help.contains("--help"), "{command}");
+        assert_eq!(
+            help.contains("--vhdx "),
+            matches!(command, "collect" | "plan")
+        );
+        for option in ["-h", "--"] {
+            let explicit = run(&[command, option]);
+            assert!(explicit.status.success());
+            assert_eq!(help.as_bytes(), explicit.stdout, "{command} {option}");
+        }
+    }
+    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
 }
 
 #[test]
-fn no_arguments_display_help_without_starting_acquisition() {
-    let temp = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .current_dir(temp.path())
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Usage:"));
-    assert!(stdout.contains("--vhdx"));
-    assert!(stdout.contains("--verbose"));
-    assert!(!stdout.contains("Discovering artifacts"));
-    assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+fn explicit_flags_run_default_inspection_actions() {
+    for (args, expected) in [
+        (["doctor", "--check"], "Raw NTFS acquisition"),
+        (["list", "--builtin"], "windows.prefetch"),
+    ] {
+        let output = run(&args);
+        assert!(output.status.success());
+        assert!(String::from_utf8(output.stdout).unwrap().contains(expected));
+    }
+    assert_eq!(
+        run(&["list-vss", "--all", "--volume", "C:"]).status.code(),
+        Some(2)
+    );
+    for args in [
+        &["unknown-command"][..],
+        &["collect", "--unknown"],
+        &["verify", "--unknown"],
+    ] {
+        let invalid = run(args);
+        assert_eq!(invalid.status.code(), Some(2));
+        assert!(!invalid.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -198,7 +261,7 @@ fn memory_request_has_nonzero_partial_exit() {
 #[test]
 fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .arg("doctor")
+        .args(["doctor", "--check"])
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .output()
@@ -207,7 +270,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("\x1b[38;2;0;255;0mVersion:\x1b[0m \x1b[38;2;255;255;255m"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .arg("doctor")
+        .args(["doctor", "--check"])
         .env("CLICOLOR_FORCE", "1")
         .env("NO_COLOR", "1")
         .output()
@@ -217,7 +280,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     assert!(!text.contains('\x1b'));
     assert!(text.contains("by Yamato Security"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .arg("doctor")
+        .args(["doctor", "--check"])
         .env_remove("CLICOLOR_FORCE")
         .env_remove("NO_COLOR")
         .output()
@@ -328,7 +391,6 @@ fn forensic_copy_help_and_required_arguments() {
     assert!(text.contains("--output <DIR>"));
     assert!(text.contains("external physical drive"));
     for args in [
-        vec!["forensic-copy"],
         vec!["forensic-copy", "-s", "C:"],
         vec!["forensic-copy", "-o", "E:\\Evidence"],
     ] {

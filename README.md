@@ -108,7 +108,7 @@ for Kumade's measurements.
   Redirected output is plain text; `NO_COLOR` disables terminal colors.
 - Acquisition defaults to up to four workers (limited by available logical CPUs);
   `-T, --threads` explicitly accepts 1–128 workers. `-v, --verbose` lists each file/stream being copied instead of
-  displaying a progress bar. Running without arguments displays help.
+  displaying a progress bar. Run `kumade` for the command list. Run a command by itself or add `-h` to see its usage and options.
 
 ## Collection benchmarks
 
@@ -204,8 +204,8 @@ Building from source requires Rust 1.99 or later.
 
 ```bash
 cargo build --release
-./target/release/kumade doctor
-./target/release/kumade list
+./target/release/kumade doctor --check
+./target/release/kumade list --builtin
 
 # SOURCE is a Windows volume root containing Windows/Users/ProgramData.
 ./target/release/kumade plan -d /cases/host/C -o /cases/plans/host --computer HOST01

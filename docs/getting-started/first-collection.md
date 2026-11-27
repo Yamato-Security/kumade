@@ -7,8 +7,8 @@ writes to the computer you are investigating.
 ## 1. Check the host and catalogue
 
 ```powershell
-.\kumade.exe doctor
-.\kumade.exe list
+.\kumade.exe doctor --check
+.\kumade.exe list --builtin
 ```
 
 `doctor` describes available capabilities; it does not guarantee that every

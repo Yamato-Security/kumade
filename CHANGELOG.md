@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show the command list at the top level and command-specific help for a bare
+  command or `-h`. Use `doctor --check`, `list --builtin` and `list-vss --all`
+  to run the default host, catalog and snapshot checks.
+
 - Default S3 collection to hybrid delivery with protected volatile staging beside
   the executable, direct disk streaming,
   per-file acknowledgements and recovery of completed files after a collector interruption.

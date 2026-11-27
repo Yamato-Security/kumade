@@ -6,7 +6,7 @@ Inspect the embedded catalogue before narrowing a collection. This lists
 acquisition definitions, not every matching file on the computer.
 
 ```powershell
-.\kumade.exe list
+.\kumade.exe list --builtin
 .\kumade.exe list --catalog .\custom-catalogue.yaml
 ```
 
@@ -36,6 +36,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade list [OPTIONS]
 
     Options:
+          --builtin            Show the embedded acquisition catalog
           --catalog <CATALOG>
       -h, --help               Print help
     ```

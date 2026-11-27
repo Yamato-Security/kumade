@@ -13,6 +13,7 @@ List existing local Volume Shadow Copies without creating or deleting them
 Usage: kumade list-vss [OPTIONS]
 
 Options:
+      --all              List snapshots from all local volumes
       --volume <VOLUME>  Filter by local source volume; repeat for multiple volumes
   -o, --output <FILE>    Write a fresh CSV/JSON/JSONL file (otherwise display a table)
   -t, --format <FORMAT>  Structured output format; without -o write structured rows to stdout [possible values: csv, json, jsonl]

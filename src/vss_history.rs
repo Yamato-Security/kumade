@@ -212,6 +212,9 @@ pub fn prepare(current: &[Source], selection: &Selection) -> Result<SourceDiscov
 
 #[derive(clap::Args, Clone, Debug)]
 pub struct ListOptions {
+    /// List snapshots from all local volumes
+    #[arg(long, conflicts_with = "volumes")]
+    pub all: bool,
     /// Filter by local source volume; repeat for multiple volumes
     #[arg(long = "volume", value_name = "VOLUME")]
     pub volumes: Vec<String>,

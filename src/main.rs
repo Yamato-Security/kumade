@@ -33,6 +33,7 @@ use std::{
     name = "kumade",
     version,
     args_conflicts_with_subcommands = true,
+    help_template = "{about}\n\n{usage-heading} {usage}\n\nCommands:\n{subcommands}\n\nRun `kumade <COMMAND> -h` for its options.",
     about = "Windows evidence collection by Yamato Security — development prototype"
 )]
 struct Cli {
@@ -47,13 +48,20 @@ enum Command {
     /// Collect selected artifacts into a new, hash-verified run directory
     Collect(CollectionArgs),
     /// Inspect platform support and acquisition prerequisites
-    Doctor,
+    Doctor {
+        /// Check platform support and collection prerequisites
+        #[arg(long)]
+        check: bool,
+    },
     /// Image a logical partition to a raw file on a different external drive
     ForensicCopy(ForensicCopyArgs),
     /// Capture live Windows response inventory without copying forensic artifacts
     LiveInfo(LiveInfoArgs),
     /// List the embedded or explicitly selected acquisition catalog
     List {
+        /// Show the embedded acquisition catalog
+        #[arg(long, conflicts_with = "catalog")]
+        builtin: bool,
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
@@ -345,13 +353,25 @@ fn sources(options: &CollectionArgs, destination: &Path) -> Result<SourceDiscove
 
 fn run() -> Result<u8> {
     let started_utc = kumade::model::utc_now();
-    if std::env::args_os().len() == 1 {
-        ui::banner();
-        Cli::command().print_help()?;
-        println!();
-        return Ok(0);
+    let mut args: Vec<_> = std::env::args_os().collect();
+    // Ignore a trailing option terminator when deciding whether a command is bare.
+    let supplied = match args.as_slice() {
+        [_, supplied @ .., end] if end == "--" => supplied,
+        [_, supplied @ ..] => supplied,
+        [] => &[],
+    };
+    let show_help = match supplied {
+        [] => true,
+        [command] => command
+            .to_str()
+            .is_some_and(|name| Cli::command().find_subcommand(name).is_some()),
+        _ => false,
+    };
+    if show_help {
+        args.truncate(1 + supplied.len());
+        args.push("-h".into());
     }
-    let cli = match Cli::try_parse() {
+    let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
             ui::banner();
@@ -421,7 +441,7 @@ fn run() -> Result<u8> {
             }
             return Ok(if info.failures() > 0 { 3 } else { 0 });
         }
-        Some(Command::Doctor) => {
+        Some(Command::Doctor { .. }) => {
             ui::banner();
             ui::field(
                 "Platform",
@@ -478,7 +498,7 @@ fn run() -> Result<u8> {
             );
             return Ok(0);
         }
-        Some(Command::List { catalog }) => {
+        Some(Command::List { catalog, .. }) => {
             ui::banner();
             let rules = rules(catalog.as_deref())?;
             ui::heading(&format!(

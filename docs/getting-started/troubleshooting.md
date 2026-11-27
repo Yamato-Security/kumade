@@ -2,7 +2,7 @@
 
 ## Help appears without collecting
 
-Running Kumade without arguments deliberately displays help. Use `collect` to
+Running Kumade without arguments deliberately displays help. Use `collect --wizard` to
 start the wizard or `collect --yes` for unattended defaults.
 
 ## An option does not exist
