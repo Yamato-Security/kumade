@@ -86,7 +86,34 @@ enum Command {
     Verify { directory: PathBuf },
 }
 
+// clap treats a required option as satisfied when it conflicts with an option that is present,
+// so an option that requires --vhdx, --e01, --s3, --sftp, --vss or --scan-processes would be
+// accepted and then ignored next to one of that option's alternatives (`-o DIR --vhdx-size-gib
+// 4`). Each group gives those options their parent's conflicts so that such a line fails.
 #[derive(Args, Clone)]
+#[command(
+    group(clap::ArgGroup::new("vhdx_options").multiple(true)
+        .args(["vhdx_size_gib"])
+        .conflicts_with_all(["output", "e01", "sftp", "s3"])),
+    group(clap::ArgGroup::new("e01_options").multiple(true)
+        .args(["e01_size_gib"])
+        .conflicts_with_all(["output", "vhdx", "sftp", "s3"])),
+    group(clap::ArgGroup::new("s3_options").multiple(true)
+        .args(["s3_direct", "s3_recovery_dir", "s3_hybrid_dir", "s3_region", "s3_endpoint",
+            "s3_staging_dir", "s3_part_mib"])
+        .conflicts_with_all(["output", "e01", "vhdx", "sftp"])),
+    group(clap::ArgGroup::new("sftp_options").multiple(true)
+        .args(["sftp_user", "sftp_host_key", "sftp_port", "sftp_directory",
+            "sftp_password_stdin", "sftp_staging_dir", "sftp_timeout", "sftp_retries",
+            "sftp_no_compression"])
+        .conflicts_with_all(["output", "vhdx", "e01", "s3"])),
+    group(clap::ArgGroup::new("vss_options").multiple(true)
+        .args(["vss_timeout"])
+        .conflicts_with("sources")),
+    group(clap::ArgGroup::new("scan_options").multiple(true)
+        .args(["yara_ruleset", "yara_rules", "yara_release"])
+        .conflicts_with("sources")),
+)]
 struct CollectionArgs {
     /// Collect the default selection without the wizard (for scripts)
     #[arg(long = "no-wizard", alias = "yes")]
@@ -1163,6 +1190,97 @@ mod tests {
             args.extend(["-o", "results"]);
         }
         Cli::try_parse_from(args)
+    }
+
+    #[test]
+    fn options_that_require_another_fail_next_to_its_alternatives() {
+        // clap accepts a missing required option when it conflicts with one that is present, so
+        // every `requires` relation is checked against each alternative of the required option.
+        let mut cmd = Cli::command();
+        cmd.build();
+        let collect = cmd.find_subcommand("collect").unwrap();
+        let args: Vec<&clap::Arg> = collect.get_arguments().collect();
+        let find = |id: &str| *args.iter().find(|a| a.get_id() == id).unwrap();
+        let conflicts = |id: &str| -> Vec<String> {
+            let mut ids: Vec<String> = collect
+                .get_arg_conflicts_with(find(id))
+                .iter()
+                .map(|a| a.get_id().to_string())
+                .collect();
+            for other in &args {
+                if collect
+                    .get_arg_conflicts_with(other)
+                    .iter()
+                    .any(|a| a.get_id() == id)
+                {
+                    ids.push(other.get_id().to_string());
+                }
+            }
+            ids.sort();
+            ids.dedup();
+            ids
+        };
+        // clap has no getter for `requires`; its Debug output lists them as quoted IDs.
+        let requires = |arg: &clap::Arg| -> Vec<String> {
+            let debug = format!("{arg:?}");
+            let list = debug.split("requires: [").nth(1).unwrap();
+            let list = &list[..list.find(']').unwrap()];
+            list.split('"')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_owned)
+                .collect()
+        };
+        let outputs = ["output", "vhdx", "e01", "s3", "sftp"];
+        let select = |id: &str| -> Vec<String> {
+            let mut tokens: Vec<String> = match id {
+                "output" => vec!["-o".into(), "results".into()],
+                "sources" => vec!["-d".into(), "source".into()],
+                "s3" => vec!["--s3".into(), "s3://bucket/case".into()],
+                "sftp" => vec!["--sftp".into(), "host".into()],
+                flag => vec![format!("--{}", find(flag).get_long().unwrap())],
+            };
+            if !outputs.contains(&id) {
+                tokens.extend(["-o".into(), "results".into()]);
+            }
+            tokens
+        };
+        let line = |parts: &[&[String]]| -> Vec<String> {
+            let mut all = vec!["kumade".to_owned(), "collect".into(), "--no-wizard".into()];
+            all.extend(parts.iter().flat_map(|p| p.iter().cloned()));
+            all
+        };
+        let mut checked = 0;
+        for dependent in &args {
+            for parent in requires(dependent) {
+                let alternatives = conflicts(&parent);
+                if alternatives.is_empty() {
+                    continue;
+                }
+                let long = format!("--{}", dependent.get_long().unwrap());
+                let given = [vec![long.clone()]]
+                    .into_iter()
+                    .chain(
+                        ["8", "core", "x", "https://example.com"]
+                            .map(|v| vec![long.clone(), v.into()]),
+                    )
+                    .find(|tokens| Cli::try_parse_from(line(&[&select(&parent), tokens])).is_ok())
+                    .unwrap_or_else(|| panic!("{long} does not parse with its parent {parent}"));
+                for alternative in alternatives {
+                    let error = Cli::try_parse_from(line(&[&select(&alternative), &given]))
+                        .err()
+                        .unwrap_or_else(|| panic!("{long} was accepted next to {alternative}"));
+                    assert_eq!(
+                        error.kind(),
+                        clap::error::ErrorKind::ArgumentConflict,
+                        "{long} {alternative}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        // vhdx/e01 sizes, 7 S3 and 9 SFTP options against the other outputs, VSS and YARA against -d
+        assert_eq!(checked, 2 * 4 + 7 * 4 + 9 * 4 + 1 + 3);
     }
 
     #[test]

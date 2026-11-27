@@ -12,6 +12,11 @@
   `--wizard` is removed. `--quiet` and `--sftp-password-stdin` need
   `--no-wizard`.
 
+- Reject options that belong to an option that is not used, instead of ignoring
+  them: `--vhdx-size-gib`, `--e01-size-gib`, the `--s3-*` and `--sftp-*` options
+  next to another output, and `--vss-timeout` and the `--yara-*` options with
+  `-d`.
+
 - Default S3 collection to hybrid delivery with protected volatile staging beside
   the executable, direct disk streaming,
   per-file acknowledgements and recovery of completed files after a collector interruption.
