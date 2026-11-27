@@ -386,6 +386,7 @@ try {
             "--no-live-info",
             "--reserve-mib",
             "0",
+            "--no-wizard",
             "-q",
         ]);
         match mode {
@@ -450,6 +451,7 @@ try {
             "--no-live-info",
             "--reserve-mib",
             "0",
+            "--no-wizard",
             "-q",
             "-o",
         ])

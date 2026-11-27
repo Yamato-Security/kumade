@@ -208,7 +208,7 @@ def main(binary):
             stage = root / host / "stage"
             stage.mkdir()
             result = run(["collect", "--s3-direct", "--s3", "s3://evidence-test/case/", "--source", source,
-                          "--computer", host, "--artifact", "windows.prefetch", "--yes",
+                          "--computer", host, "--artifact", "windows.prefetch", "--no-wizard",
                           "--s3-staging-dir", stage, "--s3-part-mib", "5", "--reserve-mib", "0"], expected_code, host=host)
             if expected_code == 0:
                 assert not list(stage.iterdir())

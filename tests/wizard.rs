@@ -183,7 +183,7 @@ fn manifest(t: &Path) -> Vec<Record> {
 #[test]
 fn cli_wizard_defaults_and_transfers_match_actual_manifest() {
     let (t, _p, _r) = fixture();
-    let o = cli(t.path(), &["--wizard"], &"\n".repeat(20));
+    let o = cli(t.path(), &[], &"\n".repeat(20));
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let text = String::from_utf8_lossy(&o.stdout);
     assert!(text.contains("Estimated transfer: 8B"));
@@ -203,7 +203,7 @@ fn cli_wizard_defaults_and_transfers_match_actual_manifest() {
 fn cli_wizard_can_include_paging() {
     let (t, _p, _r) = fixture();
     let answers = format!("\ny\n\n{}2\n\n", if cfg!(windows) { "\n\n" } else { "" });
-    let o = cli(t.path(), &["--wizard"], &answers);
+    let o = cli(t.path(), &[], &answers);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(manifest(t.path()).len(), 2);
 }
@@ -214,7 +214,7 @@ fn cli_eof_and_cancellation_create_no_collection() {
         format!("\n\n\n{}\nn\n", if cfg!(windows) { "\n\n" } else { "" }),
     ] {
         let (t, _p, _r) = fixture();
-        let o = cli(t.path(), &["--wizard"], &input);
+        let o = cli(t.path(), &[], &input);
         assert!(!o.status.success());
         assert!(!t.path().join("results").exists());
     }
@@ -378,7 +378,7 @@ fn cli_wizard_sizes_the_paging_family_added_to_an_explicit_scope() {
     let (t, _p, _r) = fixture();
     let o = cli(
         t.path(),
-        &["--wizard", "--artifact", "windows.prefetch", "--paging"],
+        &["--artifact", "windows.prefetch", "--paging"],
         &"\n".repeat(20),
     );
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));

@@ -12,13 +12,14 @@ Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 
 ```powershell
 .\kumade.exe collect -o E:\Evidence
-.\kumade.exe collect --yes --volume C: --vss --vhdx E:\Evidence
-.\kumade.exe collect --yes --volume C: --hibernation -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --vss --vhdx E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --hibernation -o E:\Evidence
 ```
 
-`--yes` selects feature defaults plus explicit flags. It does not enable RAM,
+`--no-wizard` selects feature defaults plus explicit flags. It does not enable RAM,
 paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01, SFTP and S3 are
-alternative outputs. Read [the wizard](../collection-wizard.md),
+alternative outputs, and one of them is required. With an output, `collect` runs the wizard
+unless `--no-wizard` is given. Read [the wizard](../collection-wizard.md),
 [collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
 [hibernation](../hibernation-acquisition.md), [S3 delivery and recovery](../S3.md)
 and [output guide](../output/index.md).
@@ -31,7 +32,7 @@ More workers need not improve a constrained disk or network path.
 It does not acquire evidence or guarantee that every protected source is readable.
 
 ```powershell
-.\kumade.exe doctor
+.\kumade.exe doctor --check
 ```
 
 Use the native package for the host architecture. See
@@ -54,7 +55,7 @@ live bytes can change and VSS remains crash-consistent.
 acquisition definitions, not every matching file on the computer.
 
 ```powershell
-.\kumade.exe list
+.\kumade.exe list --builtin
 .\kumade.exe list --catalog .\custom-catalogue.yaml
 ```
 
@@ -65,7 +66,7 @@ silently load a catalogue found beside the executable. See the
     'list-vss': ('List existing shadow copies', r'''List local VSS snapshots without creating or deleting them.
 
 ```powershell
-.\kumade.exe list-vss
+.\kumade.exe list-vss --all
 .\kumade.exe list-vss --volume C: -o E:\Snapshots.csv
 .\kumade.exe list-vss --volume C: -t jsonl
 ```
@@ -216,8 +217,8 @@ def main():
         page += '[Download plain-text help](help/'+name+'.txt).\n'
         (destination/(name+'.md')).write_text(page)
     index = ['# Commands', '',
-             'Run `kumade.exe --help` for the root menu, or `kumade.exe COMMAND --help` for a command. '
-             'With no arguments, Kumade displays help without starting a collection. '
+             'Run `kumade.exe` or `kumade.exe -h` for the command list. '
+             'Run a command by itself (for example, `kumade.exe collect`) or add `-h` to see its usage and options. '
              'Collection flags also work without writing the `collect` subcommand.', '',
              '| Command | Purpose |', '|---|---|']
     for name, (title, _) in PAGES.items():

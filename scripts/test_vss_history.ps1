@@ -107,7 +107,7 @@ assign
         @{Name='new-plus-existing'; Selector='all'; Count=7; Historical=2; New=$true}
     )) {
         $parent = Join-Path $WorkDirectory $test.Name
-        $arguments = @('collect','--yes','--vss-existing',$test.Selector,'--volume',$volume,'--artifact','windows.prefetch','--no-live-info','--reserve-mib','0','-q','-o',$parent)
+        $arguments = @('collect','--no-wizard','--vss-existing',$test.Selector,'--volume',$volume,'--artifact','windows.prefetch','--no-live-info','--reserve-mib','0','-q','-o',$parent)
         if ($test.New) { $arguments += '--vss' }
         Invoke-Kumade -Arguments $arguments | Out-Null
         $run = Read-Manifest $parent

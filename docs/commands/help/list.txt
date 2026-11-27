@@ -13,5 +13,6 @@ List the embedded or explicitly selected acquisition catalog
 Usage: kumade list [OPTIONS]
 
 Options:
+      --builtin            Show the embedded acquisition catalog
       --catalog <CATALOG>
   -h, --help               Print help

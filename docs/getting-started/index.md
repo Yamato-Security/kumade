@@ -33,7 +33,7 @@ Open PowerShell as Administrator for live/raw acquisition:
 
 ```powershell
 .\kumade.exe --version
-.\kumade.exe doctor
+.\kumade.exe doctor --check
 .\kumade.exe collect --help
 ```
 

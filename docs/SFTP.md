@@ -17,7 +17,7 @@ an elevated Windows terminal:
 ```powershell
 .\kumade.exe collect --sftp evidence.example.org --sftp-user kuTEMPORARY `
   --sftp-host-key "SHA256:REPLACE_WITH_REAL_FINGERPRINT" `
-  --sftp-staging-dir E:\Metadata --yes
+  --sftp-staging-dir E:\Metadata --no-wizard
 ```
 
 Create the metadata staging parent directory first on a protected filesystem.

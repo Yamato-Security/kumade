@@ -194,7 +194,7 @@ def execute(binary):
                     str(staging),
                     "--reserve-mib",
                     "0",
-                    "--yes",
+                    "--no-wizard",
                     "-T",
                     "4",
                 ]

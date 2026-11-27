@@ -106,6 +106,7 @@ fn e01_cli_preserves_sealed_payloads_named_streams_and_ntfs_metadata() -> Result
             "SYNTHETIC",
             "--artifact",
             "windows.prefetch",
+            "--no-wizard",
             "--e01",
         ])
         .arg(&output)

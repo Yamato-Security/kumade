@@ -5,7 +5,7 @@ List existing shadow copies.
 List local VSS snapshots without creating or deleting them.
 
 ```powershell
-.\kumade.exe list-vss
+.\kumade.exe list-vss --all
 .\kumade.exe list-vss --volume C: -o E:\Snapshots.csv
 .\kumade.exe list-vss --volume C: -t jsonl
 ```
@@ -37,6 +37,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade list-vss [OPTIONS]
 
     Options:
+          --all              List snapshots from all local volumes
           --volume <VOLUME>  Filter by local source volume; repeat for multiple volumes
       -o, --output <FILE>    Write a fresh CSV/JSON/JSONL file (otherwise display a table)
       -t, --format <FORMAT>  Structured output format; without -o write structured rows to stdout [possible values: csv, json, jsonl]

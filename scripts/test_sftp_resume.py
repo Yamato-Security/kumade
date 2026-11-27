@@ -150,7 +150,7 @@ async def exercise(binary, root, *, parallel=False, retries=True):
                     root / source / "metadata",
                     "--reserve-mib",
                     "0",
-                    "--yes",
+                    "--no-wizard",
                     "-T",
                     "4" if parallel else "1",
                     *(["--sftp-no-compression"] if parallel else []),

@@ -217,8 +217,7 @@ output, unattended operation, invalid-answer reprompting, raw/unknown estimates,
 overlap deduplication, an empty selection and explicit artifact restrictions.
 Embedded process-scan failure is retained, sealed and verified as partial;
 modifying its diagnostic file fails verification. Windows CI also runs its
-existing VSS, x86/x64 and native container regressions with the wizard bypassed
-automatically for redirected command invocation.
+existing VSS, x86/x64 and native container regressions with `--no-wizard`.
 
 
 ## Volatility ordering

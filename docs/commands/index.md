@@ -1,6 +1,6 @@
 # Commands
 
-Run `kumade.exe --help` for the root menu, or `kumade.exe COMMAND --help` for a command. With no arguments, Kumade displays help without starting a collection. Collection flags also work without writing the `collect` subcommand.
+Run `kumade.exe` or `kumade.exe -h` for the command list. Run a command by itself (for example, `kumade.exe collect`) or add `-h` to see its usage and options. Collection flags also work without writing the `collect` subcommand.
 
 | Command | Purpose |
 |---|---|

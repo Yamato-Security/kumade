@@ -8,7 +8,7 @@ change its attributes or take ownership of it. Use elevated, native Windows.
 ## List before collecting
 
 ```powershell
-.\kumade.exe list-vss
+.\kumade.exe list-vss --all
 .\kumade.exe list-vss --volume C:
 .\kumade.exe list-vss --volume C: -o E:\Snapshots.csv
 .\kumade.exe list-vss --volume C: -t jsonl
@@ -39,16 +39,16 @@ local devices. Listing does not export a snapshot or guarantee it remains availa
 
 ```powershell
 # Current artifacts plus all available snapshots of C:
-.\kumade.exe collect --yes --volume C: --vss-existing -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --vss-existing -o E:\Evidence
 
 # Newest historical snapshot of each selected source volume:
-.\kumade.exe collect --yes --vss-existing newest -o E:\Evidence
+.\kumade.exe collect --no-wizard --vss-existing newest -o E:\Evidence
 
 # Newest three historical snapshots per selected volume:
-.\kumade.exe collect --yes --volume C: --vss-existing 3 -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --vss-existing 3 -o E:\Evidence
 
 # Select a SnapshotId obtained from list-vss:
-.\kumade.exe collect --yes --volume C: --vss-existing 01234567-89ab-cdef-0123-456789abcdef -o E:\Evidence
+.\kumade.exe collect --no-wizard --volume C: --vss-existing 01234567-89ab-cdef-0123-456789abcdef -o E:\Evidence
 
 # Plan only; no payload copy or new snapshot:
 .\kumade.exe plan --volume C: --vss-existing all --artifact windows.eventlogs -o E:\Plans\History

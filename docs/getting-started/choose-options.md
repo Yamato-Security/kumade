@@ -4,19 +4,19 @@
 
 | Goal | Start with | Guide |
 |---|---|---|
-| Normal unattended artifact collection | `collect --yes -o E:\Evidence` | [First collection](first-collection.md) |
+| Normal unattended artifact collection | `collect --no-wizard -o E:\Evidence` | [First collection](first-collection.md) |
 | Current host state only | `live-info -o E:\Live-Inventory` | [Live inventory](../live-info.md) |
-| Select a single disk family | `collect --yes --artifact windows.prefetch -o E:\Evidence` | [Catalogue](../collection/catalogue.md) |
-| Add the hibernation file | `collect --yes --hibernation -o E:\Evidence` | [Hibernation](../hibernation-acquisition.md) |
-| Read selected artifacts from a snapshot | `collect --yes --vss --volume C: -o E:\Evidence` | [VSS](../vss.md) |
-| Collect from the newest existing snapshot on each selected volume | `collect --yes --vss-existing newest -o E:\Evidence` | [Historical VSS](../vss-existing.md) |
-| Acquire new RAM and active pagefiles | `collect --yes --memory --dumpit E:\Tools\DumpIt -o E:\Evidence` | [RAM](../memory-acquisition.md) |
-| Native NTFS container | `collect --yes --vhdx E:\Evidence` | [VHDX](../vhdx-output.md) |
-| Compressed forensic container | `collect --yes --e01 E:\Evidence` | [E01](../e01-output.md) |
+| Select a single disk family | `collect --no-wizard --artifact windows.prefetch -o E:\Evidence` | [Catalogue](../collection/catalogue.md) |
+| Add the hibernation file | `collect --no-wizard --hibernation -o E:\Evidence` | [Hibernation](../hibernation-acquisition.md) |
+| Read selected artifacts from a snapshot | `collect --no-wizard --vss --volume C: -o E:\Evidence` | [VSS](../vss.md) |
+| Collect from the newest existing snapshot on each selected volume | `collect --no-wizard --vss-existing newest -o E:\Evidence` | [Historical VSS](../vss-existing.md) |
+| Acquire new RAM and active pagefiles | `collect --no-wizard --memory --dumpit E:\Tools\DumpIt -o E:\Evidence` | [RAM](../memory-acquisition.md) |
+| Native NTFS container | `collect --no-wizard --vhdx E:\Evidence` | [VHDX](../vhdx-output.md) |
+| Compressed forensic container | `collect --no-wizard --e01 E:\Evidence` | [E01](../e01-output.md) |
 | Stream to a remote evidence server | `collect --sftp SERVER ...` | [SFTP](../SFTP.md) |
-| Deliver to an S3 bucket with a protected workspace on `E:` | `collect --yes --s3 s3://example-ir-evidence/cases/IR-042/ --s3-hybrid-dir E:\Evidence` | [S3 credentials and recovery](../S3.md) |
-| Add a process-memory hunt | `collect --yes --scan-processes -o E:\Evidence` | [YARA](../yara-process-scan.md) |
-| Collect possible packed PE binaries | `collect --yes --high-entropy -o E:\Evidence` | [Entropy](../high-entropy.md) |
+| Deliver to an S3 bucket with a protected workspace on `E:` | `collect --no-wizard --s3 s3://example-ir-evidence/cases/IR-042/ --s3-hybrid-dir E:\Evidence` | [S3 credentials and recovery](../S3.md) |
+| Add a process-memory hunt | `collect --no-wizard --scan-processes -o E:\Evidence` | [YARA](../yara-process-scan.md) |
+| Collect possible packed PE binaries | `collect --no-wizard --high-entropy -o E:\Evidence` | [Entropy](../high-entropy.md) |
 | Copy an entire logical partition | `forensic-copy -s C: -o E:\Evidence` | [Partition imaging](../forensic-copy.md) |
 
 These are example argument sets for `kumade.exe`. The SFTP row is abbreviated;

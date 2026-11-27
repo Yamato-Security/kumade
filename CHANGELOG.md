@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Show the command list at the top level and command-specific help for a bare
+  command or `-h`. Use `doctor --check`, `list --builtin` and `list-vss --all`
+  to run the default host, catalog and snapshot checks.
+
+- A collection needs an output (`-o DIR`, or `--vhdx`, `--e01`, `--sftp` or
+  `--s3`) and then runs the wizard, also when stdin is redirected.
+  `--no-wizard` collects the defaults without it; `--yes` remains an alias.
+  `--wizard` is removed. `--quiet` and `--sftp-password-stdin` need
+  `--no-wizard`.
+
+- Reject options that belong to an option that is not used, instead of ignoring
+  them: `--vhdx-size-gib`, `--e01-size-gib`, the `--s3-*` and `--sftp-*` options
+  next to another output, and `--vss-timeout` and the `--yara-*` options with
+  `-d`.
+
 - Default S3 collection to hybrid delivery with protected volatile staging beside
   the executable, direct disk streaming,
   per-file acknowledgements and recovery of completed files after a collector interruption.

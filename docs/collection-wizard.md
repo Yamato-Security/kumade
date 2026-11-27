@@ -1,33 +1,30 @@
 # Collection wizard
 
-Interactive `collect` runs ask which evidence and optional features to use,
-show estimated logical transfer sizes, and confirm before snapshots, entropy
-analysis, process scanning or evidence output. Running without arguments still
-shows help. `plan` remains a noninteractive planning command.
+A collection needs an output: `-o DIR`, or `--vhdx`, `--e01`, `--sftp` or `--s3`.
+Once an output is given, `collect` runs the wizard. It asks which evidence and
+optional features to use, shows estimated logical transfer sizes, and confirms
+before snapshots, entropy analysis, process scanning or evidence output.
+`collect` on its own shows help. `plan` remains a noninteractive planning command.
 
 ```powershell
-# Automatic wizard when stdin and stdout are terminals:
+# The wizard:
 .\kumade.exe collect -o E:\Evidence
 
-# Force the wizard, including explicitly piped answers:
-.\kumade.exe collect --wizard -o E:\Evidence
-
-# Scripted collection: accept safe defaults and explicit command-line options:
-.\kumade.exe collect --yes -o E:\Evidence
+# Scripted collection: the defaults and explicit command-line options, without the wizard:
+.\kumade.exe collect --no-wizard -o E:\Evidence
 .\kumade.exe collect --no-wizard --paging --vss --vhdx E:\Evidence
 
 # Optional process scan. The standard binary defaults to Core, bundled binaries to their embedded pack:
-.\kumade.exe collect --yes --scan-processes -o E:\Evidence
-.\kumade.exe collect --yes --scan-processes --yara-ruleset extended -o E:\Evidence
-.\kumade.exe collect --yes --scan-processes --yara-rules .\local.yar -o E:\Evidence
+.\kumade.exe collect --no-wizard --scan-processes -o E:\Evidence
+.\kumade.exe collect --no-wizard --scan-processes --yara-ruleset extended -o E:\Evidence
+.\kumade.exe collect --no-wizard --scan-processes --yara-rules .\local.yar -o E:\Evidence
 ```
 
-`--yes` does not mean yes to every optional feature. It suppresses questions and
-uses the defaults plus explicit flags. Piped/redirected invocations and `--quiet`
-do not prompt automatically. `--wizard` and `--yes` conflict; `--wizard` also
-conflicts with `--quiet`. When explicitly requesting `--wizard`, redirected stdin
-is treated as an answer script. EOF, `q`, or a declined final confirmation exits
-without starting collection. Invalid yes/no and numeric answers are reprompted.
+`--no-wizard` does not mean yes to every optional feature. It skips the questions
+and uses the defaults plus explicit flags. The wizard also runs when stdin is
+redirected, reading the answers from it. EOF, `q`, or a declined final
+confirmation exits without starting collection. Invalid yes/no and numeric
+answers are reprompted. `--quiet` and `--sftp-password-stdin` need `--no-wizard`.
 
 ## Defaults
 

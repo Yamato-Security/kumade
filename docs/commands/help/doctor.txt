@@ -10,7 +10,8 @@ Version: 0.1.0
 
 Inspect platform support and acquisition prerequisites
 
-Usage: kumade doctor
+Usage: kumade doctor [OPTIONS]
 
 Options:
-  -h, --help  Print help
+      --check  Check platform support and collection prerequisites
+  -h, --help   Print help
