@@ -14,9 +14,9 @@ Usage: kumade [OPTIONS]
        kumade <COMMAND>
 
 Commands:
-  collect          Collect just important DFIR artifacts
+  collect          Collect DFIR artifacts
   check-support    Check platform support and acquisition prerequisites
-  forensic-copy    Bit-for-bit copy a partition
+  forensic-copy    Create a bit-for-bit image of a logical Windows partition
   live-info        Capture live Windows response data
   list-artifacts   List supported DFIR artifacts
   list-vss         List local Volume Shadow Copies
@@ -27,7 +27,7 @@ Commands:
   verify-delivery  Verify an SFTP delivery locally and optionally reconstruct files
   verify-s3        Verify an S3 collection against its delivery hash and optionally restore it
   scan-processes   Scan running Windows processes with YARA Forge or local YARA rules
-  verify           Verify the integrity of collected data
+  verify           Verify the integrity of a local Kumade collection
   help             Print this message or the help of the given subcommand(s)
 
 Run `kumade <COMMAND> -h` for its options.

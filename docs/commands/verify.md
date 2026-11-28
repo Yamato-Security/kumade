@@ -1,6 +1,6 @@
 # `verify`
 
-Verify the integrity of collected data.
+Verify the integrity of a local Kumade collection.
 
 Read the saved collection, validate seals/accounting and compare retained
 payload hashes without reading original source evidence.
@@ -31,7 +31,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Version: 0.1.0
 
-    Verify the integrity of collected data
+    Verify the integrity of a local Kumade collection
 
     Usage: kumade verify <DIRECTORY>
 

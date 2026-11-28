@@ -8,7 +8,7 @@
 
 Version: 0.1.0
 
-Verify the integrity of collected data
+Verify the integrity of a local Kumade collection
 
 Usage: kumade verify <DIRECTORY>
 

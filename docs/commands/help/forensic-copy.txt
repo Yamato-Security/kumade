@@ -8,7 +8,7 @@
 
 Version: 0.1.0
 
-Bit-for-bit copy a partition
+Create a bit-for-bit image of a logical Windows partition
 
 Usage: kumade forensic-copy [OPTIONS] --source <VOLUME> --output <DIR>
 

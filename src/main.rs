@@ -46,11 +46,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Collect just important DFIR artifacts
+    /// Collect DFIR artifacts
     Collect(CollectionArgs),
     /// Check platform support and acquisition prerequisites
     CheckSupport,
-    /// Bit-for-bit copy a partition
+    /// Create a bit-for-bit image of a logical Windows partition
     ForensicCopy(ForensicCopyArgs),
     /// Capture live Windows response data
     LiveInfo(LiveInfoArgs),
@@ -78,7 +78,7 @@ enum Command {
     VerifyS3(kumade::s3::VerifyArgs),
     /// Scan running Windows processes with YARA Forge or local YARA rules
     ScanProcesses(kumade::yara_scan::Options),
-    /// Verify the integrity of collected data
+    /// Verify the integrity of a local Kumade collection
     Verify { directory: PathBuf },
 }
 

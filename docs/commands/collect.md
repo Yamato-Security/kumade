@@ -1,6 +1,6 @@
 # `collect`
 
-Collect just important DFIR artifacts.
+Collect DFIR artifacts.
 
 Use an elevated, native Windows build for live/raw evidence. With no source,
 Kumade discovers fixed volumes and uses its artifact catalog to select evidence.
@@ -42,7 +42,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Version: 0.1.0
 
-    Collect just important DFIR artifacts
+    Collect DFIR artifacts
 
     Usage: kumade collect [OPTIONS]
 

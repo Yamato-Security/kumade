@@ -17,7 +17,7 @@ It does not acquire evidence or guarantee that every protected source is readabl
 Use the native package for the host architecture. See
 [capabilities](../overview/capabilities.md) and [installation](../getting-started/index.md).
 '''),
-    'collect': ('Collect just important DFIR artifacts', r'''Use an elevated, native Windows build for live/raw evidence. With no source,
+    'collect': ('Collect DFIR artifacts', r'''Use an elevated, native Windows build for live/raw evidence. With no source,
 Kumade discovers fixed volumes and uses its artifact catalog to select evidence.
 Use `--artifact` to narrow the scope or `-d` to specify an offline source.
 The wizard also offers memory acquisition and partition imaging on supported systems.
@@ -40,7 +40,7 @@ Acquisition defaults to available logical CPUs capped at four. `-T` accepts
 1–128 workers, bounded by work items. `--reserve-mib` defaults to 2048.
 More workers need not improve a constrained disk or network path.
 '''),
-    'forensic-copy': ('Bit-for-bit copy a partition', r'''This is separate from artifact collection. It writes a logical partition image
+    'forensic-copy': ('Create a bit-for-bit image of a logical Windows partition', r'''This is separate from artifact collection. It writes a logical partition image
 and a receipt, not the physical whole disk and not only catalogue files.
 Use a destination on a different external physical disk.
 
@@ -155,7 +155,7 @@ Use the ZIP path printed by the command with `scan-processes --rules <ZIP>` or
 executable, without creating a subdirectory. Updating does not rewrite the embedded executable.
 See [compressed/offline rules](../yara-process-scan.md#compressedoffline-rule-inputs-and-updates).
 '''),
-    'verify': ('Verify the integrity of collected data', r'''Read the saved collection, validate seals/accounting and compare retained
+    'verify': ('Verify the integrity of a local Kumade collection', r'''Read the saved collection, validate seals/accounting and compare retained
 payload hashes without reading original source evidence.
 
 ```powershell

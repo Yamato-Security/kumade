@@ -8,7 +8,7 @@
 
 Version: 0.1.0
 
-Collect just important DFIR artifacts
+Collect DFIR artifacts
 
 Usage: kumade collect [OPTIONS]
 
