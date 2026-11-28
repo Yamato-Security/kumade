@@ -1,8 +1,8 @@
 {
   "Version": "kumade 0.1.0",
   "Commands": [
+    "check-support",
     "collect",
-    "doctor",
     "forensic-copy",
     "list",
     "list-vss",

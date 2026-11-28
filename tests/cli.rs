@@ -35,6 +35,12 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
     assert!(root.stderr.is_empty());
     let menu = String::from_utf8(root.stdout).unwrap();
     assert!(menu.contains("Commands:"));
+    assert!(
+        menu.lines()
+            .any(|line| line.trim_start().starts_with("check-support ")
+                && line.ends_with("Check platform support and acquisition prerequisites"))
+    );
+    assert!(!menu.contains("doctor"));
     assert!(!menu.contains("Options:"));
     assert!(!menu.contains("--vhdx"));
     for args in [["-h"], ["--help"], ["help"], ["--"]] {
@@ -50,7 +56,7 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
         .unwrap();
     for command in [
         "collect",
-        "doctor",
+        "check-support",
         "forensic-copy",
         "list",
         "list-vss",
@@ -93,6 +99,7 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
 #[test]
 fn explicit_flags_run_default_inspection_actions() {
     for (args, expected) in [
+        (["check-support", "--check"], "Raw NTFS acquisition"),
         (["doctor", "--check"], "Raw NTFS acquisition"),
         (["list", "--builtin"], "windows.prefetch"),
     ] {
@@ -264,7 +271,7 @@ fn memory_request_has_nonzero_partial_exit() {
 #[test]
 fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["doctor", "--check"])
+        .args(["check-support", "--check"])
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .output()
@@ -273,7 +280,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("\x1b[38;2;0;255;0mVersion:\x1b[0m \x1b[38;2;255;255;255m"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["doctor", "--check"])
+        .args(["check-support", "--check"])
         .env("CLICOLOR_FORCE", "1")
         .env("NO_COLOR", "1")
         .output()
@@ -283,7 +290,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     assert!(!text.contains('\x1b'));
     assert!(text.contains("by Yamato Security"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["doctor", "--check"])
+        .args(["check-support", "--check"])
         .env_remove("CLICOLOR_FORCE")
         .env_remove("NO_COLOR")
         .output()

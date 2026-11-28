@@ -15,7 +15,7 @@ Usage: kumade [OPTIONS]
 
 Commands:
   collect          Collect selected artifacts into a new, hash-verified run directory
-  doctor           Inspect platform support and acquisition prerequisites
+  check-support    Check platform support and acquisition prerequisites
   forensic-copy    Image a logical partition to a raw file on a different external drive
   live-info        Capture live Windows response inventory without copying forensic artifacts
   list             List the embedded or explicitly selected acquisition catalog

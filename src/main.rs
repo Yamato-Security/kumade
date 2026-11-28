@@ -48,8 +48,9 @@ struct Cli {
 enum Command {
     /// Collect selected artifacts into a new, hash-verified run directory
     Collect(CollectionArgs),
-    /// Inspect platform support and acquisition prerequisites
-    Doctor {
+    /// Check platform support and acquisition prerequisites
+    #[command(alias = "doctor")]
+    CheckSupport {
         /// Check platform support and collection prerequisites
         #[arg(long)]
         check: bool,
@@ -466,7 +467,7 @@ fn run() -> Result<u8> {
             }
             return Ok(if info.failures() > 0 { 3 } else { 0 });
         }
-        Some(Command::Doctor { .. }) => {
+        Some(Command::CheckSupport { .. }) => {
             ui::banner();
             ui::field(
                 "Platform",
@@ -1319,7 +1320,7 @@ mod tests {
                 "--sftp-password-stdin",
                 "--no-wizard",
             ],
-            vec!["kumade", "doctor", "--check"],
+            vec!["kumade", "check-support", "--check"],
             vec!["kumade", "list", "--builtin"],
         ] {
             assert!(Cli::try_parse_from(args).is_ok());

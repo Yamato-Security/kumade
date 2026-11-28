@@ -121,7 +121,7 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then extension='.exe'; fi
           binary="$GITHUB_WORKSPACE/target/$BUILD_TARGET/release/kumade$extension"
           "$binary" --version
-          "$binary" doctor --check
+          "$binary" check-support --check
           "$binary" list --builtin
       - name: Package ZIP and standalone executable
         shell: bash

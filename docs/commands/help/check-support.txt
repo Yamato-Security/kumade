@@ -8,9 +8,9 @@
 
 Version: 0.1.0
 
-Inspect platform support and acquisition prerequisites
+Check platform support and acquisition prerequisites
 
-Usage: kumade doctor [OPTIONS]
+Usage: kumade check-support [OPTIONS]
 
 Options:
       --check  Check platform support and collection prerequisites

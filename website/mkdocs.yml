@@ -113,8 +113,8 @@ nav:
       - Troubleshooting: getting-started/troubleshooting.md
   - Commands:
       - Command list: commands/index.md
+      - check-support: commands/check-support.md
       - collect: commands/collect.md
-      - doctor: commands/doctor.md
       - forensic-copy: commands/forensic-copy.md
       - list: commands/list.md
       - list-vss: commands/list-vss.md

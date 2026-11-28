@@ -1,12 +1,12 @@
-# `doctor`
+# `check-support`
 
-Inspect compiled capabilities.
+Check platform support and acquisition prerequisites.
 
 Use this before a collection to see platform capabilities and provider limits.
 It does not acquire evidence or guarantee that every protected source is readable.
 
 ```powershell
-.\kumade.exe doctor --check
+.\kumade.exe check-support --check
 ```
 
 Use the native package for the host architecture. See
@@ -29,13 +29,13 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Version: 0.1.0
 
-    Inspect platform support and acquisition prerequisites
+    Check platform support and acquisition prerequisites
 
-    Usage: kumade doctor [OPTIONS]
+    Usage: kumade check-support [OPTIONS]
 
     Options:
           --check  Check platform support and collection prerequisites
       -h, --help   Print help
     ```
 
-[Download plain-text help](help/doctor.txt).
+[Download plain-text help](help/check-support.txt).

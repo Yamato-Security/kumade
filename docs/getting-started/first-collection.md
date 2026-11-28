@@ -7,11 +7,11 @@ writes to the computer you are investigating.
 ## 1. Check the host and catalogue
 
 ```powershell
-.\kumade.exe doctor --check
+.\kumade.exe check-support --check
 .\kumade.exe list --builtin
 ```
 
-`doctor` describes available capabilities; it does not guarantee that every
+`check-support` describes available capabilities; it does not guarantee that every
 protected file or memory page will be readable.
 
 ## 2. Start the wizard

@@ -7,6 +7,16 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 PAGES = {
+    'check-support': ('Check platform support and acquisition prerequisites', r'''Use this before a collection to see platform capabilities and provider limits.
+It does not acquire evidence or guarantee that every protected source is readable.
+
+```powershell
+.\kumade.exe check-support --check
+```
+
+Use the native package for the host architecture. See
+[capabilities](../overview/capabilities.md) and [installation](../getting-started/index.md).
+'''),
     'collect': ('Collect forensic artifacts', r'''Use an elevated, native Windows build for live/raw evidence. With no source,
 Kumade discovers fixed volumes; `-d` selects explicit offline roots.
 
@@ -27,16 +37,6 @@ and [output guide](../output/index.md).
 Acquisition defaults to available logical CPUs capped at four. `-T` accepts
 1–128 workers, bounded by work items. `--reserve-mib` defaults to 2048.
 More workers need not improve a constrained disk or network path.
-'''),
-    'doctor': ('Inspect compiled capabilities', r'''Use this before a collection to see platform capabilities and provider limits.
-It does not acquire evidence or guarantee that every protected source is readable.
-
-```powershell
-.\kumade.exe doctor --check
-```
-
-Use the native package for the host architecture. See
-[capabilities](../overview/capabilities.md) and [installation](../getting-started/index.md).
 '''),
     'forensic-copy': ('Image a logical partition', r'''This is separate from artifact collection. It writes a logical partition image
 and a receipt, not the physical whole disk and not only catalogue files.

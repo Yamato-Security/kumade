@@ -83,7 +83,7 @@ Running `kumade.exe` without a subcommand aliases `collect`. With no `-o`, use a
 
 An Explorer launch should provide the Yamato-style logo, plain introduction, destination/scope summary and OS elevation prompt where needed. A normal elevated CLI run should not require a second generic confirmation. Noninteractive operation must not hang waiting for elevation or input.
 
-Proposed commands are listed alphabetically in help: `collect`, `compat`, `doctor`, `list`, `pack`, `plan`, `process`, `resume`, `upload`, `verify`. Expose commands only when their implementation is available; cloud commands remain future work. Keep flags consistent: `-o, --output`, `-T, --threads`, `-m, --memory`, `--profile`, `--source`, `--volume`, `--exclude`, `--vss`, `--limited`, `--debug`.
+Proposed commands are listed alphabetically in help: `check-support`, `collect`, `compat`, `list`, `pack`, `plan`, `process`, `resume`, `upload`, `verify`. Expose commands only when their implementation is available; cloud commands remain future work. Keep flags consistent: `-o, --output`, `-T, --threads`, `-m, --memory`, `--profile`, `--source`, `--volume`, `--exclude`, `--vss`, `--limited`, `--debug`.
 
 ### Progress and summary
 

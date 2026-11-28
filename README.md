@@ -204,7 +204,7 @@ Building from source requires Rust 1.99 or later.
 
 ```bash
 cargo build --release
-./target/release/kumade doctor --check
+./target/release/kumade check-support --check
 ./target/release/kumade list --builtin
 
 # SOURCE is a Windows volume root containing Windows/Users/ProgramData.

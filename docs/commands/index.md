@@ -4,8 +4,8 @@ Run `kumade.exe` or `kumade.exe -h` for the command list. Run a command by itsel
 
 | Command | Purpose |
 |---|---|
+| [`check-support`](check-support.md) | Check platform support and acquisition prerequisites |
 | [`collect`](collect.md) | Collect forensic artifacts |
-| [`doctor`](doctor.md) | Inspect compiled capabilities |
 | [`forensic-copy`](forensic-copy.md) | Image a logical partition |
 | [`list`](list.md) | List acquisition families |
 | [`list-vss`](list-vss.md) | List existing shadow copies |

@@ -13,7 +13,7 @@ verification. Splitting the stable modules into workspace crates remains possibl
 |---|---|
 | `collect` / collection options without a subcommand | Acquire selected artifacts in a directory, VHDX or E01, or deliver them over SFTP or S3 |
 | No arguments | Display help without starting collection |
-| `doctor` | Describe compiled capabilities and unfinished providers |
+| `check-support` | Describe compiled capabilities and unfinished providers |
 | `list` | List embedded or explicitly supplied acquisition definitions |
 | `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
 | `list-vss` | List existing local shadow copies and their UTC creation times |

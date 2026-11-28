@@ -16,7 +16,7 @@
 | SFTP | Concurrent collectors and automatic reconnect with the built-in receiver | Needs trusted receiver readback; RAM still needs staging |
 | Partition imaging | Logical partition to `.dd` on a separate physical disk | Not a physical whole-disk image or an atomic live acquisition |
 
-Use `kumade doctor --check` with the binary and architecture you intend to run.
+Use `kumade check-support --check` with the binary and architecture you intend to run.
 A successful cross-build is not qualification of every Windows version.
 The [validation history](../testing.md) and [benchmarks](../benchmarks/index.md)
 state the actual tested environments.
