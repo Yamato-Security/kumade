@@ -36,7 +36,8 @@ The wizard also offers memory acquisition and partition imaging on supported sys
 ```
 
 `-w` (`--no-wizard`) skips the questions and uses your explicit flags alongside the defaults.
-Enable RAM with `--memory`, paging with `--paging` or hibernation alone with `--hibernation`.
+Default disk collection includes hibernation, existing crash dumps and minidumps. `--paging` also collects paging and swap files as disk evidence.
+Use `-m` to acquire live RAM, active pagefiles and the system swapfile together. The two companions have independent opt-outs: `--no-memory-pagefile` and `--no-memory-swapfile`.
 Use `--vss` for a new snapshot, `--vss-existing` for historical snapshots,
 `--scan-processes` for YARA, and `--high-entropy` for PE entropy scanning. Directory (`-o`), VHDX, E01, SFTP and S3 are
 alternative outputs, and one of them is required. With an output, `collect` runs the wizard

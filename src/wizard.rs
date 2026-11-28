@@ -137,9 +137,7 @@ pub fn default_artifacts(rules: &Rules, explicit: &[String], paging: bool) -> Ve
         .catalog
         .artifacts
         .iter()
-        // The broad paging family already includes hiberfil.sys. Keep the dedicated
-        // hibernation family opt-in; --hibernation or an explicit ID selects it.
-        .filter(|d| d.id != "windows.hibernation" && (paging || d.id != "windows.paging"))
+        .filter(|d| paging || d.id != "windows.paging")
         .map(|d| d.id.clone())
         .collect()
 }
@@ -252,6 +250,7 @@ fn display_category(s: &str) -> &str {
         "OperatingSystem" => "Operating system logs",
         "Paging" => "Paging, swap, hibernation and existing memory dumps",
         "Hibernation" => "Hibernation file only (hiberfil.sys)",
+        "CrashDumps" => "Existing Windows crash dumps and minidumps",
         "Memory" => "Other memory artifacts",
         _ => s,
     }
@@ -287,7 +286,7 @@ pub fn run<R: BufRead, W: Write>(
     )?;
     writeln!(
         prompt.output,
-        "Physical RAM: opt-in with DumpIt; active pagefiles are copied concurrently by default (--no-memory-pagefile to skip). Hibernation can be selected separately; the broad Paging group also includes it."
+        "Physical RAM is opt-in. Active paging files and swapfile.sys are copied alongside DumpIt by default (--no-memory-pagefile and --no-memory-swapfile skip them independently). Hibernation and existing crash dumps are disk artifacts."
     )?;
     if windows
         && live
@@ -375,7 +374,7 @@ pub fn run<R: BufRead, W: Write>(
     if windows && live {
         choices.memory = prompt.yes(
             &format!(
-                "Physical RAM ({} plus active pagefiles by default; requires DumpIt, captured first)",
+                "Physical RAM ({} plus selected paging and swap files; requires DumpIt, captured first)",
                 choices
                     .memory_bytes
                     .map(crate::collect::human_bytes)

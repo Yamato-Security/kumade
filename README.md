@@ -55,11 +55,11 @@ are anonymized comparisons of documented collector capabilities, reviewed on
 
 1. **Speed:** ○ means designed for targeted triage, not a measured speed ranking. Kumade's default C:-only collection took **41s** in the documented Windows 11 ARM64 VM test. The run used 3.460 GiB of allocated output and reported partial source coverage. Other collectors were not benchmarked on that VM. See the benchmark methodology before comparing times.
 2. **Standalone:** Kumade and Tool A embed their base acquisition definitions. Tool B uses external definitions and a .NET Framework runtime; Tool C requires supporting DLLs; Tool D's self-contained package unpacks a bundled runtime into a cache. Optional memory providers and rule files are outside the standalone base-collection claim.
-3. **RAM and pagefiles:** Kumade invokes a separately supplied DumpIt provider; it does not bundle a memory driver. Tools A–C also integrate external memory utilities. Tool A can add paging files through custom definitions, and Tool B through targets/modules; those are marked △ for the paired capture workflow. Kumade's paired capture is coordinated but is not an atomic RAM/disk snapshot.
+3. **RAM and pagefiles:** Kumade invokes a separately supplied DumpIt provider; it does not bundle a memory driver. Tools A–C also integrate external memory utilities. Tool A can add paging files through custom definitions, and Tool B through targets/modules; those are marked △ for the paired capture workflow. Kumade reads active pagefiles and the Windows swapfile alongside RAM. Its capture is coordinated but is not an atomic RAM/disk snapshot.
 4. **Inventory and YARA:** Kumade provides structured live inventory and a built-in process-memory YARA engine. Tool A integrates an external YARA-X executable to scan persistence-linked files. Tool B can invoke external inventory/scanning tools through modules (△); this does not imply a bundled engine or managed YARA Forge downloads.
 5. **Commercial use:** This row means no collector license fee for paid third-party engagements, subject to each license. Kumade is RPL-1.5; external memory providers and downloaded rules keep their own terms. Tool B's published terms exclude third-party-network / paid-engagement use, although internal-company, educational and government uses are treated separately.
 6. **Development activity:** This row rates visible **collector-engine** activity as of 2026-11-25: ○ ongoing updates, △ intermittent updates, × no public engine update found within the preceding 12 months. Tool A's latest release reviewed was August 2026; Tool B's published engine changelog ends in December 2022; Tool C's latest release was October 2024; Tool D's latest release was February 2021. Tool B's community collection definitions still receive updates, including November 2026; its × does not mean those definitions or vendor support have ended.
-7. **Hibernation file:** Kumade can collect `hiberfil.sys` with `--hibernation` or the existing broad `--paging` option; both are off by default. Tool A supplies an opt-in paging/hibernation definition that must be loaded. Tool B includes the file in its supplied memory-files target. Tool C has no hibernation-file collection path in its shipped configuration/source. Tool D can use a user-specified path with its raw NTFS collector, but has no dedicated supplied hibernation definition (△). These ratings describe documented configurations; live locked-file acquisition was not benchmarked across the other tools. VSS excludes the hibernation file, so acquire it without `--vss`.
+7. **Hibernation file:** Kumade includes `hiberfil.sys` in its default disk collection. Tool A supplies an opt-in paging/hibernation definition that must be loaded. Tool B includes the file in its supplied memory-files target. Tool C has no hibernation-file collection path in its shipped configuration/source. Tool D can use a user-specified path with its raw NTFS collector, but has no dedicated supplied hibernation definition (△). These ratings describe documented configurations; live locked-file acquisition was not benchmarked across the other tools. VSS excludes the hibernation file, so acquire it without `--vss`.
 
 See the **[comparison guide](https://yamato-security.github.io/kumade/tool-comparison/)**
 for capability details and the **[collection benchmarks](#collection-benchmarks)**
@@ -69,9 +69,9 @@ for Kumade's measurements.
 
 - [Volatility-aware acquisition](docs/acquisition-order.md): preserve fast live state and hot disk artifacts before bulk data, entropy analysis and compression.
 
-- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. Use `-w` (`--no-wizard`) to skip the prompts and apply your explicit flags. For example, `-w --paging` adds paging, hibernation and existing memory dumps to the default collection.
+- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. Use `-w` (`--no-wizard`) to skip the prompts and apply your explicit flags. For example, `-w --paging` also selects the disk paging family.
 
-- Optional [hibernation-file acquisition](docs/hibernation-acquisition.md): `--hibernation` adds `hiberfil.sys` without enabling other paging/dump files. The dedicated wizard choice shows its estimated size; existing broad `--paging` selections keep their scope. Uses verified copying and raw NTFS fallback without changing Windows power settings.
+- Default disk collection includes the [hibernation file](docs/hibernation-acquisition.md), an existing `Windows/MEMORY.DMP`, and files under `Windows/Minidump`. `--hibernation` adds the hibernation family to a restricted selection. The dedicated wizard choice shows its estimated size; existing broad `--paging` selections keep their scope. Uses verified copying and raw NTFS fallback without changing Windows power settings.
 
 - Optional [high-entropy binary collection](docs/high-entropy.md): `--high-entropy` scans selected source drives for PE executable-section packing candidates, copies them through normal acquisition, and records sealed CSV/JSONL analysis with source hashes.
 
@@ -83,7 +83,7 @@ for Kumade's measurements.
 
 - [Live-response inventory](docs/live-info.md): 59 structured Windows data sets in CSV, JSON or JSONL, with UTC observation times, PascalCase fields and sealed provenance. Included automatically in live collections; inventory-only `live-info` is also available.
 
-- Embedded acquisition catalog with 44 artifact families, including event logs,
+- Embedded acquisition catalog with 45 artifact families, including event logs,
   registry, Prefetch, Jump Lists, SRUM recovery families, browsers, Outlook,
   local GPO/SYSVOL, Defender and standard paging-file locations.
 - Offline collection from Windows volume directories on Linux, macOS and Windows.
@@ -146,7 +146,7 @@ Default output had **5.180 GiB of logical file lengths but used 3.460 GiB on
 disk** because of sparse data. Small size differences also reflect live-log and
 filesystem growth; they are not isolated feature-payload sizes. RAM was acquired
 with an external DumpIt toolkit; paired pagefiles are enabled by default with
-`--memory`, while the RAM-only row uses `--no-memory-pagefile`.
+`--memory`, while the historical RAM-only row used `--no-memory-pagefile`. To reproduce RAM-only capture with this build, add `--no-memory-swapfile` as well. The measurements predate default disk collection of hibernation and crash dumps.
 
 VSS here reads selected artifacts from a crash-consistent snapshot. VHDX/E01
 also add NTFS metadata and selected ADS coverage, so these modes are not simply
@@ -314,9 +314,9 @@ collector restart. Direct S3 and SFTP require a new run after the collector exit
 ## Physical RAM acquisition
 
 `--memory` acquires physical RAM first using a separately supplied, hash-checked
-DumpIt toolkit. Active pagefiles are copied concurrently by default; use
-`--no-memory-pagefile` for RAM alone. Use `--dumpit <toolkit-directory>`; optionally
-add `--paging` for other cataloged swap/hibernation/existing dump files. No vendor binaries are bundled.
+DumpIt toolkit. Active pagefiles and the Windows system-volume `swapfile.sys` are copied alongside RAM by default.
+Use `--no-memory-pagefile` or `--no-memory-swapfile` to skip either companion, or both switches for RAM alone during this phase.
+Use `--dumpit <toolkit-directory>` to select the provider. No vendor binaries are bundled.
 See [RAM acquisition](docs/memory-acquisition.md) for setup, staging requirements,
 architecture selection, verification, failures, containers and remote delivery.
 

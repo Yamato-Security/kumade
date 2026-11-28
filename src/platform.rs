@@ -384,7 +384,7 @@ pub(crate) const METADATA_PRIVILEGES: &[&str] = &[
 ];
 
 #[cfg(windows)]
-pub(crate) use windows::check_privileges;
+pub(crate) use windows::{check_privileges, system_windows_directory};
 
 #[cfg(not(windows))]
 pub fn enable_backup_privilege() -> Result<()> {
@@ -691,7 +691,7 @@ mod windows {
         result
     }
 
-    pub(super) fn windows_volume_name() -> Result<String> {
+    pub(crate) fn system_windows_directory() -> Result<PathBuf> {
         let mut directory = vec![0u16; 32768];
         // SAFETY: writable buffer with its actual UTF-16 capacity.
         let length = unsafe {
@@ -704,8 +704,12 @@ mod windows {
             length > 0 && length < directory.len(),
             "Cannot resolve the Windows directory"
         );
-        let path = PathBuf::from(String::from_utf16(&directory[..length])?);
-        volume_for_path(&path)?.context("The running Windows volume must be local")
+        Ok(PathBuf::from(String::from_utf16(&directory[..length])?))
+    }
+
+    pub(super) fn windows_volume_name() -> Result<String> {
+        volume_for_path(&system_windows_directory()?)?
+            .context("The running Windows volume must be local")
     }
 
     /// Resolve the actual volume, including junctions, mounted folders, GUID

@@ -15,6 +15,35 @@ use std::{
 pub const INVENTORY: &str = "Memory/Pagefiles.json";
 pub const ARTIFACT: &str = "windows.memory.pagefile";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Pagefile,
+    Swapfile,
+}
+impl Kind {
+    fn artifact(self) -> &'static str {
+        match self {
+            Self::Pagefile => ARTIFACT,
+            Self::Swapfile => "windows.memory.swapfile",
+        }
+    }
+    fn payload(self, index: usize) -> String {
+        match self {
+            Self::Pagefile => format!("Memory/Pagefile{index}.sys"),
+            Self::Swapfile => "Memory/Swapfile.sys".into(),
+        }
+    }
+    pub fn failure(self, computer: &str, error: String) -> Record {
+        let mut row = failure(computer, error);
+        if self == Self::Swapfile {
+            row.artifact_ids = self.artifact().into();
+            row.source_path = "Windows system-volume swapfile.sys".into();
+            row.method = "SwapfileDiscovery".into();
+        }
+        row
+    }
+}
+
 pub fn load(root: &Path) -> Result<Vec<Record>> {
     let path = root.join(INVENTORY);
     if !path.exists() {
@@ -24,16 +53,22 @@ pub fn load(root: &Path) -> Result<Vec<Record>> {
     let mut ids = std::collections::HashSet::new();
     for row in &rows {
         ensure!(
-            row.artifact_ids == ARTIFACT
-                && row.source_id == "Memory"
+            matches!(
+                row.artifact_ids.as_str(),
+                ARTIFACT | "windows.memory.swapfile"
+            ) && row.source_id == "Memory"
                 && ids.insert(&row.observation_id),
             "Invalid paired-pagefile inventory"
         );
         if let Some(name) = &row.relative_output_path {
             ensure!(
-                name.starts_with("Memory/Pagefile")
-                    && name.ends_with(".sys")
-                    && !name[7..].contains(['/', '\\']),
+                if row.artifact_ids == Kind::Swapfile.artifact() {
+                    name == "Memory/Swapfile.sys"
+                } else {
+                    name.strip_prefix("Memory/Pagefile")
+                        .and_then(|n| n.strip_suffix(".sys"))
+                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+                },
                 "Invalid paired-pagefile payload path"
             );
         }
@@ -74,11 +109,7 @@ pub struct Input {
 
 /// Query active pagefiles, rather than only configured next-boot registry values.
 #[cfg(windows)]
-pub fn discover(computer: &str) -> Result<Vec<Input>> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
-    };
+fn active_pagefiles() -> Result<Vec<PathBuf>> {
     #[link(name = "ntdll")]
     unsafe extern "system" {
         fn NtQuerySystemInformation(
@@ -119,80 +150,130 @@ pub fn discover(computer: &str) -> Result<Vec<Input>> {
     ensure!(used <= buffer.len() * 8, "Invalid paging-file query length");
     // SAFETY: initialized aligned storage is alive throughout parsing; only used bytes are exposed.
     let data = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), used) };
-    let mut paths = active_paths(data, buffer.as_ptr() as usize, std::mem::size_of::<usize>())?;
+    active_paths(data, buffer.as_ptr() as usize, std::mem::size_of::<usize>())
+}
+
+#[cfg(windows)]
+fn mount_point(path: &Path) -> Result<PathBuf> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetVolumePathNameW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut mount = vec![0u16; 32768];
+    ensure!(
+        // SAFETY: NUL-terminated input and writable UTF-16 output buffer.
+        unsafe { GetVolumePathNameW(wide.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } != 0,
+        "Cannot locate paging-file volume: {}",
+        io::Error::last_os_error()
+    );
+    let end = mount
+        .iter()
+        .position(|c| *c == 0)
+        .context("Unterminated volume path")?;
+    Ok(PathBuf::from(String::from_utf16(&mount[..end])?))
+}
+
+#[cfg(windows)]
+fn input(computer: &str, kind: Kind, path: &Path) -> Result<Option<Input>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeNameForVolumeMountPointW;
+    let root = mount_point(path)?;
+    let mount: Vec<_> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut guid = vec![0u16; 32768];
+    ensure!(
+        // SAFETY: NUL-terminated volume mount point and writable UTF-16 buffer.
+        unsafe {
+            GetVolumeNameForVolumeMountPointW(mount.as_ptr(), guid.as_mut_ptr(), guid.len() as u32)
+        } != 0,
+        "Cannot resolve paging-file raw volume: {}",
+        io::Error::last_os_error()
+    );
+    let end = guid
+        .iter()
+        .position(|c| *c == 0)
+        .context("Unterminated volume GUID")?;
+    let raw = String::from_utf16(&guid[..end])?;
+    let relative = path.strip_prefix(&root)?.to_path_buf();
+    let source = Source {
+        id: "Memory".into(),
+        root: crate::platform::canonicalize(&root)?,
+        computer: computer.into(),
+        live: true,
+        raw_device: Some(raw.trim_end_matches('\\').into()),
+        profile_roots: Vec::new(),
+        excluded_profiles: Vec::new(),
+        metadata_only: false,
+        snapshot: None,
+    };
+    let mut volume = crate::raw::RawVolume::open(source.raw_device.as_ref().unwrap())?;
+    let stat = match volume.stat(&relative, None) {
+        Ok(stat) => stat,
+        Err(e) if kind == Kind::Swapfile && crate::raw::is_missing(&e) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let file = PlannedFile {
+        id: uuid::Uuid::new_v4().to_string(),
+        source_id: "Memory".into(),
+        source_path: path.to_owned(),
+        relative_path: relative,
+        stream: None,
+        artifacts: vec![kind.artifact().into()],
+        before: Some(Fingerprint {
+            size: stat.size,
+            identity: Some(stat.identity),
+            ..Default::default()
+        }),
+        expected_sha256: None,
+    };
+    Ok(Some(Input { source, file }))
+}
+#[cfg(windows)]
+pub fn discover(computer: &str, kind: Kind, records: &mut Vec<Record>) -> Result<Vec<Input>> {
+    let swap_path = || {
+        Ok::<_, anyhow::Error>(
+            mount_point(&crate::platform::system_windows_directory()?)?.join("swapfile.sys"),
+        )
+    };
+    let mut paths = match kind {
+        Kind::Swapfile => vec![swap_path()?],
+        Kind::Pagefile => {
+            let mut paths = active_pagefiles()?;
+            if paths.iter().any(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(std::ffi::OsStr::new("swapfile.sys")))
+            }) {
+                let swap = swap_path()?;
+                paths.retain(|p| !p.as_os_str().eq_ignore_ascii_case(swap.as_os_str()));
+            }
+            paths
+        }
+    };
     let mut seen = std::collections::HashSet::new();
     paths.retain(|p| seen.insert(p.to_string_lossy().to_ascii_lowercase()));
-    paths
-        .into_iter()
-        .map(|path| {
-            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-            let mut mount = vec![0u16; 32768];
-            ensure!(
-                // SAFETY: NUL-terminated input and writable UTF-16 output buffer.
-                unsafe {
-                    GetVolumePathNameW(wide.as_ptr(), mount.as_mut_ptr(), mount.len() as u32)
-                } != 0,
-                "Cannot locate paging-file volume: {}",
-                io::Error::last_os_error()
-            );
-            let end = mount
-                .iter()
-                .position(|c| *c == 0)
-                .context("Unterminated volume path")?;
-            let root = PathBuf::from(String::from_utf16(&mount[..end])?);
-            let mut guid = vec![0u16; 32768];
-            ensure!(
-                // SAFETY: NUL-terminated volume mount point and writable UTF-16 buffer.
-                unsafe {
-                    GetVolumeNameForVolumeMountPointW(
-                        mount.as_ptr(),
-                        guid.as_mut_ptr(),
-                        guid.len() as u32,
-                    )
-                } != 0,
-                "Cannot resolve paging-file raw volume: {}",
-                io::Error::last_os_error()
-            );
-            let end = guid
-                .iter()
-                .position(|c| *c == 0)
-                .context("Unterminated volume GUID")?;
-            let raw = String::from_utf16(&guid[..end])?;
-            let relative = path.strip_prefix(&root)?.to_path_buf();
-            let source = Source {
-                id: "Memory".into(),
-                root: crate::platform::canonicalize(&root)?,
-                computer: computer.into(),
-                live: true,
-                raw_device: Some(raw.trim_end_matches('\\').into()),
-                profile_roots: Vec::new(),
-                excluded_profiles: Vec::new(),
-                metadata_only: false,
-                snapshot: None,
-            };
-            let stat = crate::raw::RawVolume::open(source.raw_device.as_ref().unwrap())?
-                .stat(&relative, None)?;
-            let file = PlannedFile {
-                id: uuid::Uuid::new_v4().to_string(),
-                source_id: "Memory".into(),
-                source_path: path,
-                relative_path: relative,
-                stream: None,
-                artifacts: vec![ARTIFACT.into()],
-                before: Some(Fingerprint {
-                    size: stat.size,
-                    identity: Some(stat.identity),
-                    ..Default::default()
-                }),
-                expected_sha256: None,
-            };
-            Ok(Input { source, file })
-        })
-        .collect()
+    let mut inputs = Vec::new();
+    for path in paths {
+        let mut row = match input(computer, kind, &path) {
+            Ok(Some(file)) => {
+                inputs.push(file);
+                continue;
+            }
+            Ok(None) => {
+                let mut row = kind.failure(
+                    computer,
+                    "No swapfile.sys on the running Windows volume".into(),
+                );
+                row.status = "NotPresent".into();
+                row
+            }
+            Err(e) => kind.failure(computer, format!("{e:#}")),
+        };
+        row.source_path = path.display().to_string();
+        records.push(row);
+    }
+    Ok(inputs)
 }
 #[cfg(not(windows))]
-pub fn discover(_computer: &str) -> Result<Vec<Input>> {
-    anyhow::bail!("Active pagefile acquisition requires live Windows")
+pub fn discover(_computer: &str, _kind: Kind, _records: &mut Vec<Record>) -> Result<Vec<Input>> {
+    anyhow::bail!("Paired acquisition requires live Windows")
 }
 
 /// Checked SYSTEM_PAGEFILE_INFORMATION parser. UNICODE_STRING pointers must fall inside the returned buffer.
@@ -316,6 +397,7 @@ impl Write for GuardedWriter {
 pub fn acquire(
     root: &Path,
     computer: &str,
+    kind: Kind,
     inputs: Vec<Input>,
     reserve: u64,
     timeout: Duration,
@@ -324,12 +406,12 @@ pub fn acquire(
     let mut cache = std::collections::HashMap::new();
     let mut rows = Vec::new();
     for (index, input) in inputs.into_iter().enumerate() {
-        let mut row = failure(computer, String::new());
+        let mut row = kind.failure(computer, String::new());
         row.observation_id = input.file.id.clone();
         row.source_path = input.file.source_path.display().to_string();
         row.method = "Native".into();
         row.logical_size = input.file.before.as_ref().map(|f| f.size);
-        let name = format!("Memory/Pagefile{index}.sys");
+        let name = kind.payload(index);
         let target = root.join(&name);
         let outcome = (|| -> Result<()> {
             let output = fs::OpenOptions::new()
@@ -368,7 +450,7 @@ pub fn acquire(
                     .is_some_and(|planned| !crate::discovery::same_version(planned, &before));
             // The pagefile contents can change without an NTFS timestamp update.
             row.status = "Acquired".into();
-            row.reason = "Live paging-file bytes preserved and hashed; captured concurrently with RAM, not atomically. NTFS metadata stability does not establish content stability. PagefileN output numbering is acquisition order, not a proven Windows paging-file index.".into();
+            row.reason = "Live file read during the RAM acquisition phase. See the read intervals; Windows can change content without updating NTFS timestamps.".into();
             if row.changed_during_read {
                 row.status = "Partial".into();
                 row.reason
@@ -407,19 +489,29 @@ pub fn deduplicate_plan(plan: &mut Plan, rows: &[Record]) {
     }
     let paths: std::collections::HashSet<_> = rows
         .iter()
-        .filter(|r| r.artifact_ids == ARTIFACT)
+        .filter(|r| {
+            matches!(
+                r.artifact_ids.as_str(),
+                ARTIFACT | "windows.memory.swapfile"
+            ) && r.relative_output_path.is_some()
+        })
         .map(|r| key(Path::new(&r.source_path)))
         .collect();
+    if paths.is_empty() {
+        return;
+    }
     let sources = &plan.sources;
     plan.files.retain(|file| {
+        let source = sources.iter().find(|s| s.id == file.source_id);
+        let historical = source
+            .and_then(|s| s.snapshot.as_ref())
+            .is_some_and(|s| s.owned_by_collector != Some(true));
         let paired = file.stream.is_none()
+            && !historical
             && (paths.contains(&key(&file.source_path))
-                || sources
-                    .iter()
-                    .find(|s| s.id == file.source_id)
-                    .is_some_and(|s| {
-                        paths.contains(&key(&s.live_root().join(&file.relative_path)))
-                    }));
+                || source.is_some_and(|s| {
+                    paths.contains(&key(&s.live_root().join(&file.relative_path)))
+                }));
         if paired {
             if let Some(before) = &file.before {
                 plan.known_bytes = plan.known_bytes.saturating_sub(before.size);
@@ -509,6 +601,7 @@ mod tests {
         };
         let mut row = failure("HOST", String::new());
         row.source_path = r"c:\PAGEFILE.sys".into();
+        row.relative_output_path = Some("Memory/Pagefile0.sys".into());
         deduplicate_plan(&mut plan, &[row]);
         assert_eq!(
             plan.files.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
@@ -550,16 +643,60 @@ mod tests {
                 expected_sha256: None,
             },
         };
-        let rows = acquire(&output, "TEST", vec![make()], 0, Duration::from_secs(10)).unwrap();
+        let rows = acquire(
+            &output,
+            "TEST",
+            Kind::Pagefile,
+            vec![make()],
+            0,
+            Duration::from_secs(10),
+        )
+        .unwrap();
         assert_eq!(rows[0].status, "Acquired", "{}", rows[0].reason);
         assert_eq!(rows[0].bytes_read, 18);
         assert_eq!(
             fs::read(output.join("Memory/Pagefile0.sys")).unwrap(),
             b"paged out evidence"
         );
+        fs::write(source.join("swapfile.sys"), b"swap evidence").unwrap();
+        let mut swap = make();
+        swap.file.source_path = source.join("swapfile.sys");
+        swap.file.relative_path = "swapfile.sys".into();
+        swap.file.id = "SWAP".into();
+        swap.file.artifacts = vec![Kind::Swapfile.artifact().into()];
+        swap.file.before.as_mut().unwrap().size = 13;
+        let swaps = acquire(
+            &output,
+            "TEST",
+            Kind::Swapfile,
+            vec![swap],
+            0,
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert_eq!(swaps[0].status, "Acquired");
+        assert_eq!(
+            swaps[0].relative_output_path.as_deref(),
+            Some("Memory/Swapfile.sys")
+        );
+        assert_eq!(
+            fs::read(output.join("Memory/Swapfile.sys")).unwrap(),
+            b"swap evidence"
+        );
+        let inventory: Vec<_> = rows.iter().chain(&swaps).collect();
+        collect::write_json_new(&output.join(INVENTORY), &inventory).unwrap();
+        assert_eq!(load(&output).unwrap().len(), 2);
         let output2 = temp.path().join("expired");
         fs::create_dir_all(output2.join("Memory")).unwrap();
-        let rows = acquire(&output2, "TEST", vec![make()], 0, Duration::ZERO).unwrap();
+        let rows = acquire(
+            &output2,
+            "TEST",
+            Kind::Pagefile,
+            vec![make()],
+            0,
+            Duration::ZERO,
+        )
+        .unwrap();
         assert_eq!(rows[0].status, "Failed");
         assert!(rows[0].relative_output_path.is_some());
         assert!(
@@ -571,7 +708,15 @@ mod tests {
         fs::create_dir_all(output3.join("Memory")).unwrap();
         let mut input = make();
         input.file.before.as_mut().unwrap().size = 10;
-        let rows = acquire(&output3, "TEST", vec![input], 0, Duration::from_secs(10)).unwrap();
+        let rows = acquire(
+            &output3,
+            "TEST",
+            Kind::Pagefile,
+            vec![input],
+            0,
+            Duration::from_secs(10),
+        )
+        .unwrap();
         assert_eq!(rows[0].status, "Partial", "{}", rows[0].reason);
         assert!(rows[0].changed_during_read && rows[0].verified);
         assert_eq!((rows[0].bytes_read, rows[0].logical_size), (18, Some(18)));

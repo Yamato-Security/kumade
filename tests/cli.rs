@@ -116,9 +116,15 @@ fn collection_help_keeps_provider_options_with_their_acquisition_method() {
         for (heading, options) in [
             ("Options", &["--quiet", "--verbose"][..]),
             ("Input", &["--source", "--volume"]),
-            ("Artifact Selection", &["--catalog", "--artifact"]),
+            (
+                "Artifact Selection",
+                &["--catalog", "--artifact", "--paging", "--hibernation"],
+            ),
             ("Local Output", &["--output", "--vhdx", "--e01"]),
-            ("Memory and Paging", &["--memory", "--dumpit", "--paging"]),
+            (
+                "RAM Acquisition",
+                &["--memory", "--dumpit", "--no-memory-swapfile"],
+            ),
             ("Live Response", &["--no-live-info", "--live-info-format"]),
             ("Volume Shadow Copies", &["--vss", "--vss-existing"]),
             (

@@ -1,7 +1,7 @@
 # Hibernation-file acquisition
 
-Use **`--hibernation`** to add the existing `hiberfil.sys` file to a collection.
-It is off by default because it can be large. Kumade copies the saved bytes;
+Kumade collects an existing `hiberfil.sys` by default during disk acquisition.
+Use **`--hibernation`** to add it to a restricted artifact selection. Kumade copies the saved bytes;
 it does not enable or disable hibernation, change Fast Startup, suspend the
 computer, resize the file or create a new hibernation image.
 
@@ -11,8 +11,8 @@ Run live acquisition from an elevated, native Windows terminal. Prefer an
 external evidence destination:
 
 ```powershell
-# Normal collection plus hiberfil.sys; other paging/dump files stay off:
-.\kumade.exe collect --no-wizard --volume C: --hibernation -o E:\Evidence
+# Normal disk collection includes hibernation and existing crash dumps:
+.\kumade.exe collect -w --volume C: -o E:\Evidence
 
 # Just the hibernation family, without live-system inventory:
 .\kumade.exe collect --no-wizard --volume C: --artifact windows.hibernation --no-live-info -o E:\Evidence
@@ -29,8 +29,7 @@ external evidence destination:
 file. A custom `--catalog` must define `windows.hibernation` for the flag to work.
 
 The wizard has a separate **Hibernation file only (hiberfil.sys)** question,
-showing estimated logical bytes and file/stream count. Its default is No unless
-the dedicated family is explicitly selected. `--paging` and
+showing estimated logical bytes and file/stream count. Its default is Yes within the normal disk scope. `--paging` and
 `--artifact windows.paging` retain their existing broad scope, including
 `hiberfil.sys`; selecting both families still copies each source file once.
 The wizard's broad Paging group also includes hibernation, as its label states.

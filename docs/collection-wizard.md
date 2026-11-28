@@ -30,9 +30,9 @@ answers are reprompted. `--quiet` and `--sftp-password-stdin` need `--no-wizard`
 
 | Feature | Default |
 |---|---|
-| Catalogue artifact categories | On, except the paging and dedicated hibernation families |
-| Hibernation file only | Off; `--hibernation` or explicit `--artifact windows.hibernation` enables it |
-| Paging/swap/hibernation/existing memory dumps | Off; `--paging` or explicit `--artifact windows.paging` enables them |
+| Catalogue artifact categories | On, except the broad paging family |
+| Hibernation file and existing crash dumps | On in the disk phase when present. The families are `windows.hibernation` and `windows.crashdumps`. |
+| Broad disk paging family (also covers hibernation and existing dumps) | Opt-in; `--paging` or explicit `--artifact windows.paging` enables them |
 | Live inventory | On for live collection, with at most two query workers |
 | Native/raw locked-file reads | Enabled where supported; not an optional integrity shortcut |
 | SHA-256 and destination readback | Local copies are checked by the collector. Remote readback uses the SFTP receiver or `verify-s3` on the analyst workstation. |
@@ -44,7 +44,7 @@ answers are reprompted. `--quiet` and `--sftp-password-stdin` need `--no-wizard`
 | Acquisition workers | Available logical CPUs, capped at four; `-T` accepts 1–128 |
 | Full partition imaging | Off; a separate guided mode using `forensic-copy` |
 | New physical RAM capture | Off; `--memory` requires a separately supplied DumpIt toolkit |
-| Active pagefiles paired with new RAM | On when `--memory` is enabled; `--no-memory-pagefile` skips them |
+| Paging files and swapfile paired with new RAM | Both on with `-m`. Skip each independently with `--no-memory-pagefile` or `--no-memory-swapfile`. |
 
 The paging change also applies to unattended collection and ordinary `collect-test`.
 The catalogue still defines paging paths. Existing explicit artifact selections

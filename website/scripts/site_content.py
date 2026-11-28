@@ -45,9 +45,9 @@ def catalogue():
                     lines.append('| '+label+' | '+'<br>'.join(code(p)for p in item[key])+' |')
             if item['Id'] == 'windows.paging':
                 lines += ['', 'Off by default. Add `--paging` or select `--artifact windows.paging`. '
-                          'This is distinct from the active pagefiles paired with a new `--memory` capture.']
+                          'The live `--memory` phase separately reads active pagefiles and the Windows swapfile.']
             if item['Id'] == 'windows.hibernation':
-                lines += ['', 'Off by default. Add `--hibernation` or select `--artifact windows.hibernation`. '
+                lines += ['', 'Included in default disk collection. Add `--hibernation` within a restricted scope or select `--artifact windows.hibernation`. '
                           'The broad paging family also includes this file; overlapping selections are deduplicated. '
                           'See [hibernation acquisition](../hibernation-acquisition.md) for VSS and saved-memory limitations.']
             lines += ['']

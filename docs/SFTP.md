@@ -174,7 +174,7 @@ re-reads source candidates; mismatches with the earlier streamed version are
 reported as partial and `HashMatchesAnalysis=false`, rather than attributing a
 later classification to earlier bytes. Live RAM capture is supported with an
 external DumpIt toolkit and an explicit `--memory-staging-dir` on a protected
-filesystem. RAM and the paired pagefiles need local staging before streaming;
+filesystem. RAM and the paired paging and swap files need local staging before streaming;
 see [RAM acquisition](memory-acquisition.md) for setup and integrity limits.
 
 References: [OpenSSH sftp-server](https://man.openbsd.org/sftp-server),

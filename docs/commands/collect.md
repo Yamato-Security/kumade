@@ -14,7 +14,8 @@ The wizard also offers memory acquisition and partition imaging on supported sys
 ```
 
 `-w` (`--no-wizard`) skips the questions and uses your explicit flags alongside the defaults.
-Enable RAM with `--memory`, paging with `--paging` or hibernation alone with `--hibernation`.
+Default disk collection includes hibernation, existing crash dumps and minidumps. `--paging` also collects paging and swap files as disk evidence.
+Use `-m` to acquire live RAM, active pagefiles and the system swapfile together. The two companions have independent opt-outs: `--no-memory-pagefile` and `--no-memory-swapfile`.
 Use `--vss` for a new snapshot, `--vss-existing` for historical snapshots,
 `--scan-processes` for YARA, and `--high-entropy` for PE entropy scanning. Directory (`-o`), VHDX, E01, SFTP and S3 are
 alternative outputs, and one of them is required. With an output, `collect` runs the wizard
@@ -64,6 +65,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Artifact Selection:
           --catalog <CATALOG>  Explicit acquisition catalog; executable-directory configs are never auto-loaded
           --artifact <ID>      Limit scope to an artifact ID; repeat to include several
+          --paging             Add the broad disk paging family (pagefile, swapfile, hibernation and existing crash dumps)
+          --hibernation        Include hiberfil.sys in a restricted disk selection (included by default)
 
     Local Output:
       -o, --output <DIR>               Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
@@ -73,15 +76,14 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --e01 [<FILE_OR_DIR>]        Save to compressed E01 segments; a directory (or no value: Kumade-Results beside the executable) names them by hostname and UTC start time
           --e01-size-gib <GIB>         NTFS capacity in GiB before E01 compression (default: automatic)
 
-    Memory and Paging:
+    RAM Acquisition:
       -m, --memory                           Acquire physical RAM first with a separately supplied DumpIt toolkit
           --no-memory-pagefile               Do not copy active pagefiles during RAM capture (default: copy)
+          --no-memory-swapfile               Skip swapfile.sys during RAM capture (default: copy if present)
           --dumpit <FILE_OR_DIR>             DumpIt toolkit directory or executable (otherwise tools/DumpIt beside Kumade)
           --dumpit-sha256 <SHA256>           Trust a different DumpIt release by its independently verified SHA-256
           --memory-timeout <MEMORY_TIMEOUT>  RAM capture deadline in seconds [default: 1800]
           --memory-staging-dir <DIR>         Explicit RAM staging parent (required with --memory and remote delivery; prefer external storage)
-          --paging                           Include paging, swap, hibernation and existing memory dumps (default: off)
-          --hibernation                      Include hiberfil.sys without other paging/dump files (default: off)
 
     Live Response:
           --no-live-info                           Skip the automatic live-response inventory (offline sources always skip it)

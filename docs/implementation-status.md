@@ -123,8 +123,8 @@ files or interpret entropy as a malware verdict. See [the guide](high-entropy.md
 
 
 Interactive collection now has a [size-estimating wizard](collection-wizard.md).
-The paging and dedicated hibernation families are off by default; `--paging`
-enables the broad paging family, and `--hibernation` adds just `hiberfil.sys`.
+Hibernation and existing crash dumps are included in default disk collection. `--paging`
+adds the broad paging family. `--hibernation` adds the hibernation file to a restricted scope.
 Explicit artifact selection is also supported. See [hibernation acquisition](hibernation-acquisition.md).
 `--no-wizard` suppresses prompts for automation. Optional embedded
 process-memory YARA runs use the existing engine and are sealed with the
@@ -132,7 +132,7 @@ collection, including native container output.
 
 ## RAM, live inventory and remote delivery
 
-External DumpIt acquisition captures RAM first and pairs active pagefiles by
+External DumpIt acquisition captures RAM first and pairs active pagefiles and the Windows swapfile by
 default. Live inventory supplies 59 structured datasets. SFTP streams disk
 payloads with metadata staging; RAM additionally requires an explicit protected
 staging parent. The receiver revokes its temporary credential and validates

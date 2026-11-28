@@ -188,15 +188,15 @@ struct CollectionArgs {
     e01_size_gib: Option<u64>,
 
     /// Acquire physical RAM first with a separately supplied DumpIt toolkit
-    #[arg(help_heading = "Memory and Paging", short = 'm', long)]
+    #[arg(help_heading = "RAM Acquisition", short = 'm', long)]
     memory: bool,
-    #[command(flatten, next_help_heading = "Memory and Paging")]
+    #[command(flatten, next_help_heading = "RAM Acquisition")]
     memory_options: kumade::memory::Args,
-    /// Include paging, swap, hibernation and existing memory dumps (default: off)
-    #[arg(help_heading = "Memory and Paging", long)]
+    /// Add the broad disk paging family (pagefile, swapfile, hibernation and existing crash dumps)
+    #[arg(help_heading = "Artifact Selection", long)]
     paging: bool,
-    /// Include hiberfil.sys without other paging/dump files (default: off)
-    #[arg(help_heading = "Memory and Paging", long)]
+    /// Include hiberfil.sys in a restricted disk selection (included by default)
+    #[arg(help_heading = "Artifact Selection", long)]
     hibernation: bool,
 
     /// Skip the automatic live-response inventory (offline sources always skip it)
@@ -1583,10 +1583,24 @@ mod tests {
             panic!("collect")
         };
         assert!(!options.memory);
-        assert!(!options.memory_options.no_memory_pagefile);
-        let cli = parse_args(["kumade", "--memory", "--no-memory-pagefile"]).unwrap();
-        assert!(cli.options.memory && cli.options.memory_options.no_memory_pagefile);
-        assert!(parse_args(["kumade", "--no-memory-pagefile"]).is_err());
+        for (flags, skip_page, skip_swap) in [
+            (vec![], false, false),
+            (vec!["--no-memory-pagefile"], true, false),
+            (vec!["--no-memory-swapfile"], false, true),
+            (
+                vec!["--no-memory-pagefile", "--no-memory-swapfile"],
+                true,
+                true,
+            ),
+        ] {
+            let args = ["kumade", "-m"].into_iter().chain(flags);
+            let selected = parse_args(args).unwrap().options.memory_options;
+            assert_eq!(selected.no_memory_pagefile, skip_page);
+            assert_eq!(selected.no_memory_swapfile, skip_swap);
+        }
+        for option in ["--no-memory-pagefile", "--no-memory-swapfile"] {
+            assert!(parse_args(["kumade", option]).is_err());
+        }
     }
     #[test]
     fn containers_accept_automatic_names_and_destination_directories() {

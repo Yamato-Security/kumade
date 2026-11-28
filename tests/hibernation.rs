@@ -24,6 +24,8 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
     fs::write(source.join("pagefile.sys"), b"pagefile").unwrap();
     fs::write(source.join("swapfile.sys"), b"swapfile").unwrap();
     fs::write(source.join("Windows/MEMORY.DMP"), b"existing crash dump").unwrap();
+    fs::create_dir_all(source.join("Windows/Minidump")).unwrap();
+    fs::write(source.join("Windows/Minidump/001.dmp"), b"minidump").unwrap();
     (temp, source)
 }
 
@@ -83,14 +85,12 @@ fn records(temp: &Path) -> (PathBuf, Vec<Record>) {
 }
 
 #[test]
-fn defaults_do_not_collect_hibernation_and_paging_keeps_its_existing_scope() {
+fn defaults_collect_disk_memory_artifacts_and_paging_keeps_its_existing_scope() {
     let rules = Rules::load(DEFAULT_CATALOG).unwrap();
     let defaults = wizard::default_artifacts(&rules, &[], false);
-    assert!(
-        !defaults
-            .iter()
-            .any(|id| matches!(id.as_str(), "windows.hibernation" | "windows.paging"))
-    );
+    assert!(defaults.iter().any(|id| id == "windows.hibernation"));
+    assert!(defaults.iter().any(|id| id == "windows.crashdumps"));
+    assert!(!defaults.iter().any(|id| id == "windows.paging"));
     let paging = wizard::default_artifacts(&rules, &[], true);
     assert!(paging.iter().any(|id| id == "windows.paging"));
     // --paging still matches hiberfil.sys through the original broad family.
@@ -145,35 +145,37 @@ fn hibernation_flag_adds_only_hiberfil_to_an_explicit_scope_and_sizes_it() {
 }
 
 #[test]
-fn hibernation_flag_also_augments_the_normal_default_scope() {
+fn default_disk_collection_recovers_hibernation_and_crash_dumps_without_ram() {
     let (temp, source) = fixture();
-    let out = invoke(
-        temp.path(),
-        &source,
-        "collect-test",
-        &["--hibernation"],
-        None,
-    );
+    let out = invoke(temp.path(), &source, "collect", &["-w"], None);
     assert!(
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let plan = read_plan(temp.path());
-    assert!(
-        plan.files
+    let (root, rows) = records(temp.path());
+    for path in [
+        "hiberfil.sys",
+        "Windows/MEMORY.DMP",
+        "Windows/Minidump/001.dmp",
+    ] {
+        let row = rows
             .iter()
-            .any(|f| f.relative_path == Path::new("hiberfil.sys"))
-    );
-    assert!(
-        plan.files
-            .iter()
-            .any(|f| f.relative_path.ends_with("ONE.pf"))
-    );
-    assert!(!plan.files.iter().any(|f| matches!(
-        f.relative_path.to_str(),
-        Some("pagefile.sys" | "swapfile.sys" | "Windows/MEMORY.DMP")
-    )));
+            .find(|r| Path::new(&r.source_path).ends_with(path))
+            .unwrap();
+        assert_eq!(row.status, "Acquired");
+        assert_ne!(row.source_id, "Memory");
+        let payload = root.join(row.relative_output_path.as_ref().unwrap());
+        assert_eq!(
+            fs::read(payload).unwrap(),
+            fs::read(source.join(path)).unwrap()
+        );
+    }
+    assert!(!root.join("Memory").exists());
+    assert!(!rows.iter().any(
+        |r| r.source_path.ends_with("pagefile.sys") || r.source_path.ends_with("swapfile.sys")
+    ));
+    assert!(kumade::verify::verify(&root).unwrap().1);
 }
 
 #[test]
@@ -229,7 +231,7 @@ fn broad_paging_and_hibernation_capture_one_verified_copy() {
             .split(';')
             .any(|id| id == "windows.paging")
     );
-    assert_eq!(kumade::verify::verify(&root).unwrap(), (4, true));
+    assert_eq!(kumade::verify::verify(&root).unwrap(), (5, true));
 }
 
 #[test]
