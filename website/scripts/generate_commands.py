@@ -8,7 +8,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 PAGES = {
     'check-support': ('Check platform support and acquisition prerequisites', r'''Use this before a collection to see platform capabilities and provider limits.
-It does not acquire evidence or guarantee that every protected source is readable.
+On Windows, the live acquisition row checks the current session for elevation and the backup privilege.
+If it says `Not available (run as administrator)`, reopen the terminal as administrator and run the check again.
 
 ```powershell
 .\kumade.exe check-support

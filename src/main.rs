@@ -469,14 +469,10 @@ fn run() -> Result<u8> {
                 "Platform",
                 format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH),
             );
-            ui::field(
-                "Live acquisition",
-                if cfg!(windows) {
-                    "Available; elevated privileges required"
-                } else {
-                    "Use offline --source directories"
-                },
-            );
+            match platform::live_acquisition_support() {
+                Ok(status) => ui::field("Live acquisition", status),
+                Err(error) => ui::field("Live acquisition", format!("Unknown ({error:#})")),
+            }
             ui::field("Raw NTFS acquisition", "Available");
             ui::field(
                 "Bundled YARA Forge",
