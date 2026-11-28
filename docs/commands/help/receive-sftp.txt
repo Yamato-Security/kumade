@@ -10,7 +10,7 @@ Version: 0.1.0
 
 Receive evidence through a temporary upload-only SFTP account
 
-Usage: kumade receive [OPTIONS] --output <OUTPUT>
+Usage: kumade receive-sftp [OPTIONS] --output <OUTPUT>
 
 Options:
       --listen <LISTEN>

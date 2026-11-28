@@ -190,7 +190,7 @@ plans, copy/seal verification and same-size analysis/acquisition changes, the
 extension sets (`standard`, `broad`, `comprehensive`, `--entropy-extension`,
 `--entropy-all-files`), non-image
 and malformed PE handling, a managed assembly whose CLR resources are left out of
-the section measurement, and `plan` mode writing the report files beside a
+the section measurement, and `collect-test` mode writing the report files beside a
 `Plan.json` that carries no per-file rows. CLI
 tests reject invalid thresholds, missing opt-in and overflowing limits. Unit
 tests also exercise the raw inspection fallback without extracting a file;

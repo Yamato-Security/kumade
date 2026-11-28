@@ -8,7 +8,7 @@ writes to the computer you are investigating.
 
 ```powershell
 .\kumade.exe check-support
-.\kumade.exe list --builtin
+.\kumade.exe list-artifacts --builtin
 ```
 
 `check-support` describes available capabilities; it does not guarantee that every

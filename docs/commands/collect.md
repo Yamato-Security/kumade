@@ -1,9 +1,11 @@
 # `collect`
 
-Collect forensic artifacts.
+Collect just important DFIR artifacts.
 
 Use an elevated, native Windows build for live/raw evidence. With no source,
-Kumade discovers fixed volumes; `-d` selects explicit offline roots.
+Kumade discovers fixed volumes and uses its artifact catalog to select evidence.
+Use `--artifact` to narrow the scope or `-d` to specify an offline source.
+The wizard also offers memory acquisition and partition imaging on supported systems.
 
 ```powershell
 .\kumade.exe collect -o E:\Evidence
@@ -40,7 +42,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Version: 0.1.0
 
-    Collect selected artifacts into a new, hash-verified run directory
+    Collect just important DFIR artifacts
 
     Usage: kumade collect [OPTIONS]
 
@@ -70,7 +72,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --vss-timeout <SECONDS>
               VSS snapshot creation deadline in seconds
       -o, --output <DIR>
-              Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
+              Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
           --vhdx [<FILE_OR_DIR>]
               Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
           --vhdx-size-gib <GIB>

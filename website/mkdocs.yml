@@ -116,11 +116,11 @@ nav:
       - check-support: commands/check-support.md
       - collect: commands/collect.md
       - forensic-copy: commands/forensic-copy.md
-      - list: commands/list.md
+      - list-artifacts: commands/list-artifacts.md
       - list-vss: commands/list-vss.md
       - live-info: commands/live-info.md
-      - plan: commands/plan.md
-      - receive: commands/receive.md
+      - collect-test: commands/collect-test.md
+      - receive-sftp: commands/receive-sftp.md
       - scan-processes: commands/scan-processes.md
       - update-rules: commands/update-rules.md
       - verify: commands/verify.md

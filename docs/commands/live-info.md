@@ -1,6 +1,6 @@
 # `live-info`
 
-Capture current host state.
+Capture live Windows response data.
 
 Collect current process, network, account, service, security and regional
 configuration observations without ordinary disk-artifact acquisition.
@@ -33,7 +33,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Version: 0.1.0
 
-    Capture live Windows response inventory without copying forensic artifacts
+    Capture live Windows response data
 
     Usage: kumade live-info [OPTIONS]
 

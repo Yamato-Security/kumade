@@ -10,7 +10,7 @@ Version: 0.1.0
 
 Discover files and write a plan without copying evidence
 
-Usage: kumade plan [OPTIONS]
+Usage: kumade collect-test [OPTIONS]
 
 Options:
       --no-wizard
@@ -38,7 +38,7 @@ Options:
       --vss-timeout <SECONDS>
           VSS snapshot creation deadline in seconds
   -o, --output <DIR>
-          Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
+          Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
       --vhdx [<FILE_OR_DIR>]
           Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
       --vhdx-size-gib <GIB>

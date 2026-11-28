@@ -95,7 +95,7 @@ fn defaults_do_not_collect_hibernation_and_paging_keeps_its_existing_scope() {
     assert!(paging.iter().any(|id| id == "windows.paging"));
     // --paging still matches hiberfil.sys through the original broad family.
     let (temp, source) = fixture();
-    let out = invoke(temp.path(), &source, "plan", &["--paging"], None);
+    let out = invoke(temp.path(), &source, "collect-test", &["--paging"], None);
     assert!(
         out.status.success(),
         "{}",
@@ -120,7 +120,7 @@ fn hibernation_flag_adds_only_hiberfil_to_an_explicit_scope_and_sizes_it() {
     let out = invoke(
         temp.path(),
         &source,
-        "plan",
+        "collect-test",
         &["--artifact", "windows.prefetch", "--hibernation"],
         None,
     );
@@ -147,7 +147,13 @@ fn hibernation_flag_adds_only_hiberfil_to_an_explicit_scope_and_sizes_it() {
 #[test]
 fn hibernation_flag_also_augments_the_normal_default_scope() {
     let (temp, source) = fixture();
-    let out = invoke(temp.path(), &source, "plan", &["--hibernation"], None);
+    let out = invoke(
+        temp.path(),
+        &source,
+        "collect-test",
+        &["--hibernation"],
+        None,
+    );
     assert!(
         out.status.success(),
         "{}",
@@ -285,7 +291,7 @@ fn flag_rejects_a_custom_catalog_that_cannot_supply_the_requested_family() {
     let out = invoke(
         temp.path(),
         &source,
-        "plan",
+        "collect-test",
         &["--hibernation", "--catalog", "custom.yaml"],
         None,
     );

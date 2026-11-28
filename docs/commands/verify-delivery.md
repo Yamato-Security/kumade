@@ -1,6 +1,6 @@
 # `verify-delivery`
 
-Verify or restore an SFTP delivery.
+Verify an SFTP delivery locally and optionally reconstruct files.
 
 Use the trusted receiver's files after the upload credential is revoked.
 Obtain the final delivery object's name and SHA256 independently from the

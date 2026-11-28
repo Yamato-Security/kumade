@@ -205,10 +205,10 @@ Building from source requires Rust 1.99 or later.
 ```bash
 cargo build --release
 ./target/release/kumade check-support
-./target/release/kumade list --builtin
+./target/release/kumade list-artifacts --builtin
 
 # SOURCE is a Windows volume root containing Windows/Users/ProgramData.
-./target/release/kumade plan -d /cases/host/C -o /cases/plans/host --computer HOST01
+./target/release/kumade collect-test -d /cases/host/C -o /cases/plans/host --computer HOST01
 ./target/release/kumade -d /cases/host/C -o /cases/collected --computer HOST01
 # Use the run directory printed by collect, for example:
 ./target/release/kumade verify /cases/collected/HOST01_2026-11-25_09-00-00
@@ -390,6 +390,6 @@ Choose `--s3-recovery-dir E:\Evidence` to stage the full collection, or
 
 ## Remote SFTP delivery
 
-Start a built-in receiver with `kumade receive --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. Add `--sources 6` to collect from six computers on the same port. Give each computer its own temporary credentials. Each gets a separate inbox and verified receipt. If the network drops while both Kumade processes are running, the collector automatically tries to reconnect and continues from the last byte the receiver accepted. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).
+Start a built-in receiver with `kumade receive-sftp --listen 0.0.0.0:2222 --output <DIR> --expires 2h`. Add `--sources 6` to collect from six computers on the same port. Give each computer its own temporary credentials. Each gets a separate inbox and verified receipt. If the network drops while both Kumade processes are running, the collector automatically tries to reconnect and continues from the last byte the receiver accepted. See [built-in receiver setup and native restoration](docs/SFTP-Receiver.md).
 
 Use `collect --sftp HOST --sftp-user USER --sftp-host-key "SHA256:..."` to stream payloads without local copies. A hardened temporary upload-only account and trusted server readback are required. See [setup, integrity verification and forensic footprint](docs/SFTP.md).

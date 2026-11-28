@@ -1,14 +1,14 @@
-# `plan`
+# `collect-test`
 
-Inspect scope and size estimates.
+Discover files and write a plan without copying evidence.
 
 Write a fresh `Plan.json` from the selected paths without copying payloads.
 The plan is a point-in-time discovery result, not a frozen promise about a
-future collection. `plan` does not create VSS snapshots.
+future collection. `collect-test` does not create VSS snapshots.
 
 ```powershell
-.\kumade.exe plan --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
-.\kumade.exe plan -d D:\Case\C --computer HOST01 -o E:\Plans\Offline
+.\kumade.exe collect-test --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
+.\kumade.exe collect-test -d D:\Case\C --computer HOST01 -o E:\Plans\Offline
 ```
 
 Logical estimates can overlap by family. Locked/raw-only sizes may be unknown
@@ -34,7 +34,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Discover files and write a plan without copying evidence
 
-    Usage: kumade plan [OPTIONS]
+    Usage: kumade collect-test [OPTIONS]
 
     Options:
           --no-wizard
@@ -62,7 +62,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --vss-timeout <SECONDS>
               VSS snapshot creation deadline in seconds
       -o, --output <DIR>
-              Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
+              Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
           --vhdx [<FILE_OR_DIR>]
               Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
           --vhdx-size-gib <GIB>
@@ -167,4 +167,4 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Print help
     ```
 
-[Download plain-text help](help/plan.txt).
+[Download plain-text help](help/collect-test.txt).

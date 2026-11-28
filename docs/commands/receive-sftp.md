@@ -1,6 +1,6 @@
-# `receive`
+# `receive-sftp`
 
-Receive upload-only SFTP evidence.
+Receive evidence through a temporary upload-only SFTP account.
 
 Start one listener for a single collector or add `--sources N` for multiple
 computers. Each source gets a temporary upload-only credential, separate storage
@@ -8,7 +8,7 @@ and independent readback verification. The receiver prints one host-key
 fingerprint shared by all sources.
 
 ```powershell
-.\kumade.exe receive --listen 0.0.0.0:2222 --allow-ip 192.0.2.20 --output D:\Evidence --expires 2h
+.\kumade.exe receive-sftp --listen 0.0.0.0:2222 --allow-ip 192.0.2.20 --output D:\Evidence --expires 2h
 ```
 
 Replace the example source address with the collector's actual address.
@@ -39,7 +39,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Receive evidence through a temporary upload-only SFTP account
 
-    Usage: kumade receive [OPTIONS] --output <OUTPUT>
+    Usage: kumade receive-sftp [OPTIONS] --output <OUTPUT>
 
     Options:
           --listen <LISTEN>
@@ -66,4 +66,4 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Print help
     ```
 
-[Download plain-text help](help/receive.txt).
+[Download plain-text help](help/receive-sftp.txt).

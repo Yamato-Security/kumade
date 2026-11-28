@@ -46,30 +46,30 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Collect selected artifacts into a new, hash-verified run directory
+    /// Collect just important DFIR artifacts
     Collect(CollectionArgs),
     /// Check platform support and acquisition prerequisites
     CheckSupport,
-    /// Image a logical partition to a raw file on a different external drive
+    /// Bit-for-bit copy a partition
     ForensicCopy(ForensicCopyArgs),
-    /// Capture live Windows response inventory without copying forensic artifacts
+    /// Capture live Windows response data
     LiveInfo(LiveInfoArgs),
-    /// List the embedded or explicitly selected acquisition catalog
-    List {
+    /// List supported DFIR artifacts
+    ListArtifacts {
         /// Show the embedded acquisition catalog
         #[arg(long, conflicts_with = "catalog")]
         builtin: bool,
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
-    /// List existing local Volume Shadow Copies without creating or deleting them
+    /// List local Volume Shadow Copies
     ListVss(kumade::vss_history::ListOptions),
     /// Download or update a compressed YARA Forge rule package
     UpdateRules(kumade::yara_rules::UpdateOptions),
     /// Discover files and write a plan without copying evidence
-    Plan(CollectionArgs),
+    CollectTest(CollectionArgs),
     /// Receive evidence through a temporary upload-only SFTP account
-    Receive(kumade::sftp_receive::Options),
+    ReceiveSftp(kumade::sftp_receive::Options),
     /// Resume phased S3 uploads from a protected workspace without reading original sources
     ResumeS3(kumade::s3_phases::ResumeArgs),
     /// Verify an SFTP delivery locally and optionally reconstruct files
@@ -78,7 +78,7 @@ enum Command {
     VerifyS3(kumade::s3::VerifyArgs),
     /// Scan running Windows processes with YARA Forge or local YARA rules
     ScanProcesses(kumade::yara_scan::Options),
-    /// Verify the seal and every stored payload; never reads original sources
+    /// Verify the integrity of collected data
     Verify { directory: PathBuf },
 }
 
@@ -152,7 +152,7 @@ struct CollectionArgs {
     /// VSS snapshot creation deadline in seconds
     #[arg(long, value_name = "SECONDS", requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
     vss_timeout: Option<u64>,
-    /// Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
+    /// Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
     #[arg(short, long, value_name = "DIR", required_unless_present_any = ["vhdx", "e01", "sftp", "s3"])]
     output: Option<PathBuf>,
     /// Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
@@ -403,7 +403,7 @@ fn run() -> Result<u8> {
         Err(error) => error.exit(),
     };
     let (mut options, plan_only) = match cli.command {
-        Some(Command::Receive(args)) => return kumade::sftp_receive::run(&args),
+        Some(Command::ReceiveSftp(args)) => return kumade::sftp_receive::run(&args),
         Some(Command::ResumeS3(args)) => return kumade::s3_phases::resume(&args),
         Some(Command::VerifyS3(args)) => return kumade::s3::verify(&args),
         Some(Command::VerifyDelivery(args)) => return kumade::sftp_verify::run(&args),
@@ -520,7 +520,7 @@ fn run() -> Result<u8> {
             );
             return Ok(0);
         }
-        Some(Command::List { catalog, .. }) => {
+        Some(Command::ListArtifacts { catalog, .. }) => {
             ui::banner();
             let rules = rules(catalog.as_deref())?;
             ui::heading(&format!(
@@ -554,7 +554,7 @@ fn run() -> Result<u8> {
             );
             return Ok(if complete { 0 } else { 3 });
         }
-        Some(Command::Plan(options)) => (options, true),
+        Some(Command::CollectTest(options)) => (options, true),
         Some(Command::Collect(options)) => (options, false),
         None => (cli.options, false),
     };
@@ -567,11 +567,11 @@ fn run() -> Result<u8> {
     );
     ensure!(
         !plan_only || !options.remote(),
-        "Remote uploads are a collect destination; plan uses -o DIR"
+        "Remote uploads are a collect destination; collect-test uses -o DIR"
     );
     ensure!(
         !plan_only || !options.vss,
-        "plan does not create VSS snapshots; use collect --vss"
+        "collect-test does not create VSS snapshots; use collect --vss"
     );
     if options.vss || options.vss_existing.is_some() {
         kumade::vss::check_host()?;
@@ -582,7 +582,7 @@ fn run() -> Result<u8> {
     );
     ensure!(
         !plan_only || (options.vhdx.is_none() && options.e01.is_none()),
-        "plan does not create containers; use -o DIR for a plan"
+        "collect-test does not create containers; use -o DIR for a plan"
     );
     ensure!(
         options.vhdx.is_none() || cfg!(windows),
@@ -1288,7 +1288,7 @@ mod tests {
         for args in [
             vec!["kumade", "collect", "--no-wizard"],
             vec!["kumade", "--no-wizard"],
-            vec!["kumade", "plan", "--artifact", "windows.prefetch"],
+            vec!["kumade", "collect-test", "--artifact", "windows.prefetch"],
             vec!["kumade", "collect", "-o", "results", "--wizard"],
             vec![
                 "kumade",
@@ -1317,7 +1317,7 @@ mod tests {
                 "--no-wizard",
             ],
             vec!["kumade", "check-support"],
-            vec!["kumade", "list", "--builtin"],
+            vec!["kumade", "list-artifacts", "--builtin"],
         ] {
             assert!(Cli::try_parse_from(args).is_ok());
         }
@@ -1512,7 +1512,7 @@ mod tests {
             vec!["kumade", "--high-entropy", "--entropy-threshold", "8"],
             vec![
                 "kumade",
-                "plan",
+                "collect-test",
                 "--high-entropy",
                 "--entropy-scope",
                 "either",

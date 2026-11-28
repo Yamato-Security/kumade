@@ -16,11 +16,11 @@ is a collection candidate, not a conclusion about malicious activity.
 ## Plan a narrower collection
 
 ```powershell
-.\kumade.exe plan --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
+.\kumade.exe collect-test --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
 .\kumade.exe collect --no-wizard --volume C: --artifact windows.prefetch -o E:\Evidence
 ```
 
-`plan` writes a fresh plan without copying payloads or creating VSS snapshots.
+`collect-test` writes a fresh plan without copying payloads or creating VSS snapshots.
 Files can change before a later collection. An explicit disk scope does not
 implicitly turn off live inventory.
 

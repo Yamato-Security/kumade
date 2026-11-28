@@ -1,6 +1,6 @@
 # `forensic-copy`
 
-Image a logical partition.
+Bit-for-bit copy a partition.
 
 This is separate from artifact collection. It writes a logical partition image
 and a receipt, not the physical whole disk and not only catalogue files.
@@ -32,7 +32,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Version: 0.1.0
 
-    Image a logical partition to a raw file on a different external drive
+    Bit-for-bit copy a partition
 
     Usage: kumade forensic-copy [OPTIONS] --source <VOLUME> --output <DIR>
 

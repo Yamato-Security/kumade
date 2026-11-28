@@ -8,7 +8,7 @@
 
 Version: 0.1.0
 
-Capture live Windows response inventory without copying forensic artifacts
+Capture live Windows response data
 
 Usage: kumade live-info [OPTIONS]
 

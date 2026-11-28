@@ -1,6 +1,6 @@
 # `verify-s3`
 
-Verify or restore an S3 delivery.
+Verify an S3 collection against its delivery hash and optionally restore it.
 
 Use a separate read role to verify the full delivery or an individual phase using its URI and SHA-256 printed
 by the collector. Choose a new local receipt path. Add `--restore DIR` to

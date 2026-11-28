@@ -27,7 +27,7 @@ def receiver(
 ):
     arguments = [
         str(binary),
-        "receive",
+        "receive-sftp",
         "--listen",
         listen,
         "--output",

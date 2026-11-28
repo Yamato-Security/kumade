@@ -122,7 +122,7 @@ jobs:
           binary="$GITHUB_WORKSPACE/target/$BUILD_TARGET/release/kumade$extension"
           "$binary" --version
           "$binary" check-support
-          "$binary" list --builtin
+          "$binary" list-artifacts --builtin
       - name: Package ZIP and standalone executable
         shell: bash
         run: python3 "$RUNNER_TEMP/kumade-package-release.py" --target ${{ matrix.target }} --platform ${{ matrix.platform }}

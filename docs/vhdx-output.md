@@ -17,7 +17,7 @@ holding the output is excluded unless it is the running Windows volume.
 .\kumade.exe -d C:\OfflineVolume --computer HOST01 --vhdx E:\Evidence\HOST01.vhdx
 ```
 
-`--vhdx` replaces the `-o` directory destination. `plan` continues to write a
+`--vhdx` replaces the `-o` directory destination. `collect-test` continues to write a
 plan with `-o DIR` and does not create containers. Existing images are never
 overwritten or reformatted. Directory output remains the default.
 

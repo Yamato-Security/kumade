@@ -14,14 +14,14 @@ verification. Splitting the stable modules into workspace crates remains possibl
 | `collect` / collection options without a subcommand | Acquire selected artifacts in a directory, VHDX or E01, or deliver them over SFTP or S3 |
 | No arguments | Display help without starting collection |
 | `check-support` | Describe compiled capabilities and unfinished providers |
-| `list` | List embedded or explicitly supplied acquisition definitions |
-| `plan` | Discover matching files and write a fresh `Plan.json` without copying payloads |
+| `list-artifacts` | List embedded or explicitly supplied acquisition definitions |
+| `collect-test` | Discover matching files and write a fresh `Plan.json` without copying payloads |
 | `list-vss` | List existing local shadow copies and their UTC creation times |
 | `verify` | Verify sealed metadata, observation accounting and every referenced payload |
 | `forensic-copy` | Copy a logical partition to a verified image on a separate external drive; optional VSS |
 | `live-info` | Capture structured current host state without ordinary artifact acquisition |
 | `scan-processes` | Scan readable live process memory with YARA Forge or local rules |
-| `receive` | Run a temporary upload-only SFTP receiver with automatic trusted readback |
+| `receive-sftp` | Run a temporary upload-only SFTP receiver with automatic trusted readback |
 | `update-rules` | Download and validate a compressed YARA Forge ruleset |
 | `resume-s3` | Resume uploads from a retained hybrid or fully staged S3 workspace |
 | `verify-s3` | Verify an S3 collection independently and optionally restore its files |
@@ -109,7 +109,7 @@ and independent comparison before a release claims broad production coverage.
 
 `--high-entropy` adds an optional selected-source PE walk. During collection,
 selected artifacts are preserved first and entropy analysis is deferred until
-after that acquisition; `plan` can inspect candidates without copying payloads.
+after that acquisition; `collect-test` can inspect candidates without copying payloads.
 The scanner opens files whose extension is on the selected list (`standard`
 PE names by default, `broad` and `comprehensive` levels, added names, or every
 file with `--entropy-all-files`), recognizes PE32/PE32+ by header signatures

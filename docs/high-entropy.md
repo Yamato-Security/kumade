@@ -28,7 +28,7 @@ evidence drive:
 .\kumade.exe collect --volume C: --high-entropy --e01 E:\Evidence
 
 # Review the plan without copying evidence; analysis still reads source files:
-.\kumade.exe plan --volume C: --high-entropy -o E:\EntropyPlan
+.\kumade.exe collect-test --volume C: --high-entropy -o E:\EntropyPlan
 ```
 
 Without `--volume` or `--source`, live mode uses Kumade's normal fixed-volume
@@ -166,7 +166,7 @@ Three additional run-root files are sealed:
 
 `Plan.json` stores the settings, the counters and the expected hash of every
 selected file; the per-file inventory is only in the two report files, so the
-plan stays small on drives with 100,000 or more PE files. `plan` mode writes
+plan stays small on drives with 100,000 or more PE files. `collect-test` mode writes
 the same three report files beside `Plan.json`, without the acquisition columns,
 and creates no collection. Default collections without the flag do not gain
 entropy fields or report files.
@@ -231,7 +231,7 @@ disagrees with the analysis hash.
   an unsnapshotted live read atomic. Prefer `--vss` when appropriate.
 - During collection, entropy discovery runs after the selected artifacts have
   been acquired. Already captured files use their verified collected copies.
-  Standalone `plan --high-entropy` still analyzes sources directly. See
+  Standalone `collect-test --high-entropy` still analyzes sources directly. See
   [acquisition order](acquisition-order.md).
 - All valid discovered PEs are fully read and hashed, regardless of whether
   they pass the heuristic. Qualifying files are then read again for collection

@@ -1,6 +1,6 @@
 # `scan-processes`
 
-Hunt in live process memory.
+Scan running Windows processes with YARA Forge or local YARA rules.
 
 Run a native Windows build with suitable privileges. This is a live memory
 scan, not disk-file scanning or an offline RAM-image parser.

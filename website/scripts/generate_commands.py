@@ -17,8 +17,10 @@ It does not acquire evidence or guarantee that every protected source is readabl
 Use the native package for the host architecture. See
 [capabilities](../overview/capabilities.md) and [installation](../getting-started/index.md).
 '''),
-    'collect': ('Collect forensic artifacts', r'''Use an elevated, native Windows build for live/raw evidence. With no source,
-Kumade discovers fixed volumes; `-d` selects explicit offline roots.
+    'collect': ('Collect just important DFIR artifacts', r'''Use an elevated, native Windows build for live/raw evidence. With no source,
+Kumade discovers fixed volumes and uses its artifact catalog to select evidence.
+Use `--artifact` to narrow the scope or `-d` to specify an offline source.
+The wizard also offers memory acquisition and partition imaging on supported systems.
 
 ```powershell
 .\kumade.exe collect -o E:\Evidence
@@ -38,7 +40,7 @@ Acquisition defaults to available logical CPUs capped at four. `-T` accepts
 1–128 workers, bounded by work items. `--reserve-mib` defaults to 2048.
 More workers need not improve a constrained disk or network path.
 '''),
-    'forensic-copy': ('Image a logical partition', r'''This is separate from artifact collection. It writes a logical partition image
+    'forensic-copy': ('Bit-for-bit copy a partition', r'''This is separate from artifact collection. It writes a logical partition image
 and a receipt, not the physical whole disk and not only catalogue files.
 Use a destination on a different external physical disk.
 
@@ -51,19 +53,19 @@ The command enforces source/destination separation, reserve checks and readback
 hashing. Review [partition imaging](../forensic-copy.md) before running it;
 live bytes can change and VSS remains crash-consistent.
 '''),
-    'list': ('List acquisition families', r'''Inspect the embedded catalogue before narrowing a collection. This lists
+    'list-artifacts': ('List supported DFIR artifacts', r'''Inspect the embedded catalogue before narrowing a collection. This lists
 acquisition definitions, not every matching file on the computer.
 
 ```powershell
-.\kumade.exe list --builtin
-.\kumade.exe list --catalog .\custom-catalogue.yaml
+.\kumade.exe list-artifacts --builtin
+.\kumade.exe list-artifacts --catalog .\custom-catalogue.yaml
 ```
 
 Use an explicit `--catalog` to select custom definitions. Kumade does not
 silently load a catalogue found beside the executable. See the
 [generated catalogue reference](../collection/catalogue.md).
 '''),
-    'list-vss': ('List existing shadow copies', r'''List local VSS snapshots without creating or deleting them.
+    'list-vss': ('List local Volume Shadow Copies', r'''List local VSS snapshots without creating or deleting them.
 
 ```powershell
 .\kumade.exe list-vss --all
@@ -76,7 +78,7 @@ IDs and UTC creation times. CSV/JSON/JSONL output has PascalCase fields;
 `-t` without `-o` writes structured stdout without a banner.
 See [historical collection](../vss-existing.md).
 '''),
-    'live-info': ('Capture current host state', r'''Collect current process, network, account, service, security and regional
+    'live-info': ('Capture live Windows response data', r'''Collect current process, network, account, service, security and regional
 configuration observations without ordinary disk-artifact acquisition.
 
 ```powershell
@@ -90,26 +92,26 @@ workers; the collection integration also uses at most two. Provider failures
 are explicit rather than empty success. See [live inventory](../live-info.md)
 and its [generated field reference](../collection/live-datasets.md).
 '''),
-    'plan': ('Inspect scope and size estimates', r'''Write a fresh `Plan.json` from the selected paths without copying payloads.
+    'collect-test': ('Discover files and write a plan without copying evidence', r'''Write a fresh `Plan.json` from the selected paths without copying payloads.
 The plan is a point-in-time discovery result, not a frozen promise about a
-future collection. `plan` does not create VSS snapshots.
+future collection. `collect-test` does not create VSS snapshots.
 
 ```powershell
-.\kumade.exe plan --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
-.\kumade.exe plan -d D:\Case\C --computer HOST01 -o E:\Plans\Offline
+.\kumade.exe collect-test --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
+.\kumade.exe collect-test -d D:\Case\C --computer HOST01 -o E:\Plans\Offline
 ```
 
 Logical estimates can overlap by family. Locked/raw-only sizes may be unknown
 or require metadata reads; planning does not hash every payload to estimate it.
 Read [size estimation](../collection-wizard.md#size-estimation).
 '''),
-    'receive': ('Receive upload-only SFTP evidence', r'''Start one listener for a single collector or add `--sources N` for multiple
+    'receive-sftp': ('Receive evidence through a temporary upload-only SFTP account', r'''Start one listener for a single collector or add `--sources N` for multiple
 computers. Each source gets a temporary upload-only credential, separate storage
 and independent readback verification. The receiver prints one host-key
 fingerprint shared by all sources.
 
 ```powershell
-.\kumade.exe receive --listen 0.0.0.0:2222 --allow-ip 192.0.2.20 --output D:\Evidence --expires 2h
+.\kumade.exe receive-sftp --listen 0.0.0.0:2222 --allow-ip 192.0.2.20 --output D:\Evidence --expires 2h
 ```
 
 Replace the example source address with the collector's actual address.
@@ -121,7 +123,7 @@ The receiver can also be built from source on Linux. Follow the complete
 [receiver guide](../SFTP-Receiver.md) for quotas, expiry, receipts and recovery.
 Keep both the collector and receiver running for automatic reconnect after a network interruption.
 '''),
-    'scan-processes': ('Hunt in live process memory', r'''Run a native Windows build with suitable privileges. This is a live memory
+    'scan-processes': ('Scan running Windows processes with YARA Forge or local YARA rules', r'''Run a native Windows build with suitable privileges. This is a live memory
 scan, not disk-file scanning or an offline RAM-image parser.
 
 ```powershell
@@ -139,7 +141,7 @@ chunk boundaries and rule-selection limitations.
 Integrated collection uses `--scan-processes --yara-ruleset full`, not the
 standalone `--ruleset` spelling. Its result files are sealed with the collection.
 '''),
-    'update-rules': ('Download compressed YARA Forge rules', r'''Download one versioned Core, Extended or Full ZIP and validate its release-asset
+    'update-rules': ('Download or update a compressed YARA Forge rule package', r'''Download one versioned Core, Extended or Full ZIP and validate its release-asset
 SHA-256 and compilation before saving it. Existing different contents are refused.
 
 ```powershell
@@ -153,7 +155,7 @@ Use the ZIP path printed by the command with `scan-processes --rules <ZIP>` or
 executable, without creating a subdirectory. Updating does not rewrite the embedded executable.
 See [compressed/offline rules](../yara-process-scan.md#compressedoffline-rule-inputs-and-updates).
 '''),
-    'verify': ('Check a retained local collection', r'''Read the saved collection, validate seals/accounting and compare retained
+    'verify': ('Verify the integrity of collected data', r'''Read the saved collection, validate seals/accounting and compare retained
 payload hashes without reading original source evidence.
 
 ```powershell
@@ -165,7 +167,7 @@ For containers, inspect a read-only mounted run directory using the
 `verify-s3` with the collector’s printed URI and SHA-256. A verified partial collection remains partial.
 Read [verification semantics](../output/verification.md).
 '''),
-    'verify-delivery': ('Verify or restore an SFTP delivery', r'''Use the trusted receiver's files after the upload credential is revoked.
+    'verify-delivery': ('Verify an SFTP delivery locally and optionally reconstruct files', r'''Use the trusted receiver's files after the upload credential is revoked.
 Obtain the final delivery object's name and SHA256 independently from the
 collector. A new receipt is required; restoration is optional and needs extra space.
 
@@ -183,9 +185,9 @@ prove source authenticity or atomic acquisition.
 See [SFTP receiver verification/restoration](../SFTP-Receiver.md#independent-readback-and-restoration)
 and [remote output](../SFTP.md).
 '''),
-    'resume-s3': ('Resume a hybrid or fully staged S3 delivery', r'''Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
+    'resume-s3': ('Resume phased S3 uploads from a protected workspace without reading original sources', r'''Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
 '''),
-    'verify-s3': ('Verify or restore an S3 delivery', r'''Use a separate read role to verify the full delivery or an individual phase using its URI and SHA-256 printed
+    'verify-s3': ('Verify an S3 collection against its delivery hash and optionally restore it', r'''Use a separate read role to verify the full delivery or an individual phase using its URI and SHA-256 printed
 by the collector. Choose a new local receipt path. Add `--restore DIR` to
 reconstruct the collection. See [S3 setup and verification](../S3.md).
 '''),

@@ -18,7 +18,7 @@ external evidence destination:
 .\kumade.exe collect --no-wizard --volume C: --artifact windows.hibernation --no-live-info -o E:\Evidence
 
 # Inspect the scope before copying any payload:
-.\kumade.exe plan --volume C: --artifact windows.hibernation -o E:\Plans\Hibernation
+.\kumade.exe collect-test --volume C: --artifact windows.hibernation -o E:\Plans\Hibernation
 
 # An existing hibernation file in an offline Windows volume directory:
 .\kumade.exe collect --no-wizard -d D:\Case\C --artifact windows.hibernation -o E:\Evidence

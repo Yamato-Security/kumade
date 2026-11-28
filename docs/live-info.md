@@ -1,6 +1,6 @@
 # Live-response inventory
 
-Kumade captures live Windows system state using 59 independent read-only providers. During collection, fast process/network/logon providers run before VSS and disk planning; slower configuration providers run after the hottest disk artifacts. Standalone `live-info` also orders volatile providers before stable inventory. See [acquisition order](acquisition-order.md). It runs automatically for live collection and is stored inside the directory, VHDX or E01 collection under `LiveInfo/`. Offline `--source` collections do not query the analyst's machine. `plan` never queries live inventory.
+Kumade captures live Windows system state using 59 independent read-only providers. During collection, fast process/network/logon providers run before VSS and disk planning; slower configuration providers run after the hottest disk artifacts. Standalone `live-info` also orders volatile providers before stable inventory. See [acquisition order](acquisition-order.md). It runs automatically for live collection and is stored inside the directory, VHDX or E01 collection under `LiveInfo/`. Offline `--source` collections do not query the analyst's machine. `collect-test` never queries live inventory.
 
 ```powershell
 # Full collection: CSV live inventory is included by default

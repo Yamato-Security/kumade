@@ -95,7 +95,7 @@ No pre-existing directory is accepted as an owned staging capture.
 ## Deferred entropy and container capacity
 
 With deferred discovery, `InitialPlan.json` records the initial selection and
-`Plan.json` records the final plan. Both are sealed. `plan --high-entropy` remains
+`Plan.json` records the final plan. Both are sealed. `collect-test --high-entropy` remains
 an explicit standalone analysis/planning action; it does not acquire live data.
 Library callers supplying precomputed entropy results are identified separately
 as `EntropyPreplanned` in `Run.json`; they control work done before collection.

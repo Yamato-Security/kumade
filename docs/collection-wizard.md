@@ -4,7 +4,7 @@ A collection needs an output: `-o DIR`, or `--vhdx`, `--e01`, `--sftp` or `--s3`
 Once an output is given, `collect` runs the wizard. It asks which evidence and
 optional features to use, shows estimated logical transfer sizes, and confirms
 before snapshots, entropy analysis, process scanning or evidence output.
-`collect` on its own shows help. `plan` remains a noninteractive planning command.
+`collect` on its own shows help. `collect-test` remains a noninteractive planning command.
 
 ```powershell
 # The wizard:
@@ -45,7 +45,7 @@ answers are reprompted. `--quiet` and `--sftp-password-stdin` need `--no-wizard`
 | New physical RAM capture | Off; `--memory` requires a separately supplied DumpIt toolkit |
 | Active pagefiles paired with new RAM | On when `--memory` is enabled; `--no-memory-pagefile` skips them |
 
-The paging change also applies to unattended collection and ordinary `plan`.
+The paging change also applies to unattended collection and ordinary `collect-test`.
 The catalogue still defines paging paths. Existing explicit artifact selections
 are preserved, including paging, and `--paging` adds the paging family to an
 explicit scope when the catalogue contains it, and the preflight sizes that

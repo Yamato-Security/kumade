@@ -57,11 +57,11 @@ fn root_lists_commands_and_bare_commands_with_options_print_help() {
     for command in [
         "collect",
         "forensic-copy",
-        "list",
+        "list-artifacts",
         "list-vss",
         "live-info",
-        "plan",
-        "receive",
+        "collect-test",
+        "receive-sftp",
         "resume-s3",
         "scan-processes",
         "update-rules",
@@ -84,7 +84,7 @@ fn root_lists_commands_and_bare_commands_with_options_print_help() {
         assert!(help.contains("--help"), "{command}");
         assert_eq!(
             help.contains("--vhdx "),
-            matches!(command, "collect" | "plan")
+            matches!(command, "collect" | "collect-test")
         );
         for option in ["-h", "--"] {
             let explicit = run(&[command, option]);
@@ -121,7 +121,7 @@ fn check_support_runs_directly_and_help_is_explicit() {
 
 #[test]
 fn explicit_flags_run_default_inspection_actions() {
-    let catalog = run(&["list", "--builtin"]);
+    let catalog = run(&["list-artifacts", "--builtin"]);
     assert!(catalog.status.success());
     assert!(String::from_utf8_lossy(&catalog.stdout).contains("windows.prefetch"));
     assert_eq!(
@@ -216,7 +216,7 @@ fn verbose_and_quiet_conflict_and_zero_workers_are_rejected() {
 }
 #[test]
 fn root_and_subcommand_options_cannot_silently_conflict() {
-    let o = run(&["--computer", "IGNORED", "plan"]);
+    let o = run(&["--computer", "IGNORED", "collect-test"]);
     assert!(!o.status.success());
 }
 #[test]
@@ -227,7 +227,7 @@ fn cli_can_plan_collect_and_verify_offline() {
     fs::write(source.join("Windows/Prefetch/EXAMPLE.pf"), b"fixture").unwrap();
     let planned = temp.path().join("planned");
     let out = run(&[
-        "plan",
+        "collect-test",
         "-d",
         arg(&source),
         "-o",
@@ -335,7 +335,7 @@ fn vhdx_options_reject_ambiguous_destinations_and_invalid_capacity() {
         vec!["--vhdx-size-gib", "1"],
         vec!["--vhdx", "evidence.vhdx", "--vhdx-size-gib", "0"],
         vec!["--vhdx", "evidence.vhdx", "--vhdx-size-gib", "65537"],
-        vec!["plan", "--vhdx", "evidence.vhdx"],
+        vec!["collect-test", "--vhdx", "evidence.vhdx"],
     ] {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -350,7 +350,7 @@ fn e01_options_reject_conflicts_and_invalid_capacity() {
         vec!["--e01-size-gib", "1"],
         vec!["--e01", "case.E01", "--e01-size-gib", "0"],
         vec!["--e01", "case.E01", "--e01-size-gib", "65537"],
-        vec!["plan", "--e01", "case.E01"],
+        vec!["collect-test", "--e01", "case.E01"],
     ] {
         assert_eq!(run(&args).status.code(), Some(2), "{args:?}");
     }
@@ -444,7 +444,7 @@ fn vss_flags_reject_offline_plans_and_invalid_timeouts_without_writing() {
     let temp = tempfile::tempdir().unwrap();
     let output = temp.path().join("no-output");
     for extra in [
-        vec!["plan", "--vss"],
+        vec!["collect-test", "--vss"],
         vec!["collect", "--vss", "-d", "offline"],
         vec!["collect", "--vss-timeout", "30"],
         vec!["collect", "--vss", "--vss-timeout", "0"],
