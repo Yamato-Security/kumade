@@ -49,12 +49,7 @@ enum Command {
     /// Collect selected artifacts into a new, hash-verified run directory
     Collect(CollectionArgs),
     /// Check platform support and acquisition prerequisites
-    #[command(alias = "doctor")]
-    CheckSupport {
-        /// Check platform support and collection prerequisites
-        #[arg(long)]
-        check: bool,
-    },
+    CheckSupport,
     /// Image a logical partition to a raw file on a different external drive
     ForensicCopy(ForensicCopyArgs),
     /// Capture live Windows response inventory without copying forensic artifacts
@@ -388,6 +383,7 @@ fn run() -> Result<u8> {
     };
     let show_help = match supplied {
         [] => true,
+        [command] if command == "check-support" => false,
         [command] => command
             .to_str()
             .is_some_and(|name| Cli::command().find_subcommand(name).is_some()),
@@ -467,7 +463,7 @@ fn run() -> Result<u8> {
             }
             return Ok(if info.failures() > 0 { 3 } else { 0 });
         }
-        Some(Command::CheckSupport { .. }) => {
+        Some(Command::CheckSupport) => {
             ui::banner();
             ui::field(
                 "Platform",
@@ -1320,7 +1316,7 @@ mod tests {
                 "--sftp-password-stdin",
                 "--no-wizard",
             ],
-            vec!["kumade", "check-support", "--check"],
+            vec!["kumade", "check-support"],
             vec!["kumade", "list", "--builtin"],
         ] {
             assert!(Cli::try_parse_from(args).is_ok());

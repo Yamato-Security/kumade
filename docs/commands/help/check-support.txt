@@ -10,8 +10,7 @@ Version: 0.1.0
 
 Check platform support and acquisition prerequisites
 
-Usage: kumade check-support [OPTIONS]
+Usage: kumade check-support
 
 Options:
-      --check  Check platform support and collection prerequisites
-  -h, --help   Print help
+  -h, --help  Print help

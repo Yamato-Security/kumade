@@ -7,7 +7,7 @@ writes to the computer you are investigating.
 ## 1. Check the host and catalogue
 
 ```powershell
-.\kumade.exe check-support --check
+.\kumade.exe check-support
 .\kumade.exe list --builtin
 ```
 

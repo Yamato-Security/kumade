@@ -29,7 +29,7 @@ fn arg(path: &Path) -> &str {
 }
 
 #[test]
-fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
+fn root_lists_commands_and_bare_commands_with_options_print_help() {
     let root = run(&[]);
     assert!(root.status.success());
     assert!(root.stderr.is_empty());
@@ -56,7 +56,6 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
         .unwrap();
     for command in [
         "collect",
-        "check-support",
         "forensic-copy",
         "list",
         "list-vss",
@@ -97,22 +96,42 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
 }
 
 #[test]
-fn explicit_flags_run_default_inspection_actions() {
-    for (args, expected) in [
-        (["check-support", "--check"], "Raw NTFS acquisition"),
-        (["doctor", "--check"], "Raw NTFS acquisition"),
-        (["list", "--builtin"], "windows.prefetch"),
+fn check_support_runs_directly_and_help_is_explicit() {
+    let report = run(&["check-support"]);
+    assert!(report.status.success());
+    assert!(report.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&report.stdout).contains("Raw NTFS acquisition:"));
+    let terminated = run(&["check-support", "--"]);
+    assert!(terminated.status.success());
+    assert_eq!(terminated.stdout, report.stdout);
+
+    for args in [
+        ["check-support", "-h"],
+        ["check-support", "--help"],
+        ["help", "check-support"],
     ] {
-        let output = run(&args);
-        assert!(output.status.success());
-        assert!(String::from_utf8(output.stdout).unwrap().contains(expected));
+        let help = run(&args);
+        assert!(help.status.success());
+        let text = String::from_utf8(help.stdout).unwrap();
+        assert!(text.contains("Usage:"));
+        assert!(!text.contains("Raw NTFS acquisition:"));
+        assert!(!text.contains("--check"));
     }
+}
+
+#[test]
+fn explicit_flags_run_default_inspection_actions() {
+    let catalog = run(&["list", "--builtin"]);
+    assert!(catalog.status.success());
+    assert!(String::from_utf8_lossy(&catalog.stdout).contains("windows.prefetch"));
     assert_eq!(
         run(&["list-vss", "--all", "--volume", "C:"]).status.code(),
         Some(2)
     );
     for args in [
         &["unknown-command"][..],
+        &["doctor"],
+        &["check-support", "--check"],
         &["collect", "--unknown"],
         &["verify", "--unknown"],
     ] {
@@ -271,7 +290,7 @@ fn memory_request_has_nonzero_partial_exit() {
 #[test]
 fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["check-support", "--check"])
+        .arg("check-support")
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .output()
@@ -280,7 +299,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("\x1b[38;2;0;255;0mVersion:\x1b[0m \x1b[38;2;255;255;255m"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["check-support", "--check"])
+        .arg("check-support")
         .env("CLICOLOR_FORCE", "1")
         .env("NO_COLOR", "1")
         .output()
@@ -290,7 +309,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     assert!(!text.contains('\x1b'));
     assert!(text.contains("by Yamato Security"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["check-support", "--check"])
+        .arg("check-support")
         .env_remove("CLICOLOR_FORCE")
         .env_remove("NO_COLOR")
         .output()

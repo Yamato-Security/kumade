@@ -11,7 +11,7 @@ PAGES = {
 It does not acquire evidence or guarantee that every protected source is readable.
 
 ```powershell
-.\kumade.exe check-support --check
+.\kumade.exe check-support
 ```
 
 Use the native package for the host architecture. See
@@ -218,7 +218,7 @@ def main():
         (destination/(name+'.md')).write_text(page)
     index = ['# Commands', '',
              'Run `kumade.exe` or `kumade.exe -h` for the command list. '
-             'Run a command by itself (for example, `kumade.exe collect`) or add `-h` to see its usage and options. '
+             'Run `kumade.exe check-support` for the support report. Add `-h` to any command to see its usage and options. '
              'Collection flags also work without writing the `collect` subcommand.', '',
              '| Command | Purpose |', '|---|---|']
     for name, (title, _) in PAGES.items():

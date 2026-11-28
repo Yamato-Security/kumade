@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- Show the command list at the top level and command-specific help for a bare
-  command or `-h`. Use `check-support --check`, `list --builtin` and `list-vss --all`
-  to run the default host, catalog and snapshot checks. The former command name
-  `doctor` remains available as an alias.
+- Show the command list at the top level and command-specific help with `-h`.
+  Run `check-support` directly for the host support report. Other bare commands
+  display help. Use `list --builtin` and `list-vss --all` for the catalog and
+  snapshot listings.
 
 - A collection needs an output (`-o DIR`, or `--vhdx`, `--e01`, `--sftp` or
   `--s3`) and then runs the wizard, also when stdin is redirected.
