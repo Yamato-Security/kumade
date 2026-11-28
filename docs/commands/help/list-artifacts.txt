@@ -14,5 +14,5 @@ Usage: kumade list-artifacts [OPTIONS]
 
 Options:
       --builtin            Show the embedded acquisition catalog
-      --catalog <CATALOG>
+      --catalog <CATALOG>  Load an acquisition catalog from this file
   -h, --help               Print help

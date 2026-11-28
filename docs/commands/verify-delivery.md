@@ -51,12 +51,9 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
           --uploader-revoked     Confirm upload credentials have been revoked and existing sessions ended
 
     Output and Restore:
-          --receipt <RECEIPT>
-              New readback receipt path (will not overwrite an existing file)
-          --restore <RESTORE>
-              Optional new directory in which to reconstruct files (extra server disk space)
-          --max-decoded-gib <MAX_DECODED_GIB>
-              Maximum total decoded GiB, including sparse logical zero ranges [default: 1024]
+          --receipt <RECEIPT>                  New readback receipt path (will not overwrite an existing file)
+          --restore <RESTORE>                  Optional new directory in which to reconstruct files (extra server disk space)
+          --max-decoded-gib <MAX_DECODED_GIB>  Maximum total decoded GiB, including sparse logical zero ranges [default: 1024]
     ```
 
 [Download plain-text help](help/verify-delivery.txt).

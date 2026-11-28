@@ -13,7 +13,7 @@ Verify the integrity of a local Kumade collection
 Usage: kumade verify <DIRECTORY>
 
 Arguments:
-  <DIRECTORY>
+  <DIRECTORY>  Collection directory containing the manifest
 
 Options:
   -h, --help  Print help

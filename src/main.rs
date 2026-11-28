@@ -32,6 +32,7 @@ use std::{
 #[command(
     name = "kumade",
     version,
+    term_width = 0,
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
     help_template = "{about}\n\n{usage-heading} {usage}\n\nCommands:\n{subcommands}\n\nRun `kumade <COMMAND> -h` for its options.",
@@ -59,6 +60,7 @@ enum Command {
         /// Show the embedded acquisition catalog
         #[arg(long, conflicts_with = "catalog")]
         builtin: bool,
+        /// Load an acquisition catalog from this file
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
@@ -79,7 +81,10 @@ enum Command {
     /// Scan running Windows processes with YARA Forge or local YARA rules
     ScanProcesses(kumade::yara_scan::Options),
     /// Verify the integrity of a local Kumade collection
-    Verify { directory: PathBuf },
+    Verify {
+        /// Collection directory containing the manifest
+        directory: PathBuf,
+    },
 }
 
 // clap treats a required option as satisfied when it conflicts with an option that is present,

@@ -37,7 +37,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 
     Options:
           --builtin            Show the embedded acquisition catalog
-          --catalog <CATALOG>
+          --catalog <CATALOG>  Load an acquisition catalog from this file
       -h, --help               Print help
     ```
 

@@ -86,7 +86,20 @@ fn root_lists_commands_and_bare_commands_with_options_print_help() {
             help.contains("--vhdx "),
             matches!(command, "collect" | "collect-test")
         );
-        for option in ["-h", "--"] {
+        for line in help.lines().skip_while(|line| !line.starts_with("Usage:")) {
+            if !line.starts_with(' ') {
+                continue;
+            }
+            let row = line.trim_start();
+            assert!(
+                row.starts_with(['-', '<'])
+                    && row
+                        .split_once("  ")
+                        .is_some_and(|(_, text)| !text.trim().is_empty()),
+                "{command} should show the argument and its description on one line: {row}"
+            );
+        }
+        for option in ["-h", "--help", "--"] {
             let explicit = run(&[command, option]);
             assert!(explicit.status.success());
             assert_eq!(help.as_bytes(), explicit.stdout, "{command} {option}");

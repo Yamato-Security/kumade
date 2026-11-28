@@ -36,7 +36,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade verify <DIRECTORY>
 
     Arguments:
-      <DIRECTORY>
+      <DIRECTORY>  Collection directory containing the manifest
 
     Options:
       -h, --help  Print help
