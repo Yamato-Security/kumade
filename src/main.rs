@@ -33,6 +33,7 @@ use std::{
     name = "kumade",
     version,
     term_width = 0,
+    next_display_order = None,
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
     help_template = "{about}\n\n{usage-heading} {usage}\n\nCommands:\n{subcommands}\n\nRun `kumade <COMMAND> -h` for its options.",

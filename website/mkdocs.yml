@@ -115,17 +115,17 @@ nav:
       - Command list: commands/index.md
       - check-support: commands/check-support.md
       - collect: commands/collect.md
+      - collect-test: commands/collect-test.md
       - forensic-copy: commands/forensic-copy.md
       - list-artifacts: commands/list-artifacts.md
       - list-vss: commands/list-vss.md
       - live-info: commands/live-info.md
-      - collect-test: commands/collect-test.md
       - receive-sftp: commands/receive-sftp.md
+      - resume-s3: commands/resume-s3.md
       - scan-processes: commands/scan-processes.md
       - update-rules: commands/update-rules.md
       - verify: commands/verify.md
       - verify-delivery: commands/verify-delivery.md
-      - resume-s3: commands/resume-s3.md
       - verify-s3: commands/verify-s3.md
   - Collection:
       - Collection guide: collection/index.md

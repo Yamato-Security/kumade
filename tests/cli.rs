@@ -34,7 +34,15 @@ fn root_lists_commands_and_bare_commands_with_options_print_help() {
     assert!(root.status.success());
     assert!(root.stderr.is_empty());
     let menu = String::from_utf8(root.stdout).unwrap();
-    assert!(menu.contains("Commands:"));
+    let names: Vec<_> = menu
+        .lines()
+        .skip_while(|line| *line != "Commands:")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert!(names.contains(&"help"));
+    assert!(names.is_sorted(), "command list is out of order: {names:?}");
     assert!(
         menu.lines()
             .any(|line| line.trim_start().starts_with("check-support ")

@@ -233,13 +233,13 @@ def main():
              'Run `kumade.exe check-support` for the support report. Add `-h` to any command to see its usage and options. '
              'Collection flags also work without writing the `collect` subcommand.', '',
              '| Command | Purpose |', '|---|---|']
-    for name, (title, _) in PAGES.items():
+    for name, (title, _) in sorted(PAGES.items()):
         index.append('| [`'+name+'`]('+name+'.md) | '+title+' |')
     index += ['', '[Root help snapshot](help/kumade.txt). '
               'These pages describe current source behavior. A release sharing the same version label may predate recent flags.', '',
               'Start with [installation](../getting-started/index.md) or [your first collection](../getting-started/first-collection.md).', '']
     (destination/'index.md').write_text('\n'.join(index))
-    (ROOT/'website/command-reference.json').write_text(json.dumps({'Version':version, 'Commands':list(PAGES)},indent=2)+'\n')
+    (ROOT/'website/command-reference.json').write_text(json.dumps({'Version':version, 'Commands':sorted(PAGES)},indent=2)+'\n')
     print('Generated',len(PAGES),'command pages and help snapshots from',version)
 
 

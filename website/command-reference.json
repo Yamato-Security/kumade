@@ -3,17 +3,17 @@
   "Commands": [
     "check-support",
     "collect",
+    "collect-test",
     "forensic-copy",
     "list-artifacts",
     "list-vss",
     "live-info",
-    "collect-test",
     "receive-sftp",
+    "resume-s3",
     "scan-processes",
     "update-rules",
     "verify",
     "verify-delivery",
-    "resume-s3",
     "verify-s3"
   ]
 }
