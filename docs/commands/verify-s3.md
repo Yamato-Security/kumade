@@ -28,22 +28,20 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade verify-s3 [OPTIONS] --s3 <S3> --sha256 <SHA256> --receipt <RECEIPT>
 
     Options:
-          --s3 <S3>
-              Full s3:// URI of the delivery or phase manifest printed by the collector
-          --s3-region <S3_REGION>
-              AWS region (default: AWS_REGION, AWS_DEFAULT_REGION or us-east-1)
-          --s3-endpoint <S3_ENDPOINT>
-              Explicit S3-compatible HTTPS endpoint (HTTP allowed on loopback for testing)
-          --sha256 <SHA256>
-              SHA-256 recorded independently from the collector
-          --receipt <RECEIPT>
-              New local receipt file
-          --restore <RESTORE>
-              Optional new local directory for restored evidence
-          --max-decoded-gib <MAX_DECODED_GIB>
-              Maximum total decoded GiB [default: 1024]
-      -h, --help
-              Print help
+      -h, --help  Print help
+
+    Delivery Verification:
+          --s3 <S3>          Full s3:// URI of the delivery or phase manifest printed by the collector
+          --sha256 <SHA256>  SHA-256 recorded independently from the collector
+
+    S3 Connection:
+          --s3-region <S3_REGION>      AWS region (default: AWS_REGION, AWS_DEFAULT_REGION or us-east-1)
+          --s3-endpoint <S3_ENDPOINT>  Explicit S3-compatible HTTPS endpoint (HTTP allowed on loopback for testing)
+
+    Output and Restore:
+          --receipt <RECEIPT>                  New local receipt file
+          --restore <RESTORE>                  Optional new local directory for restored evidence
+          --max-decoded-gib <MAX_DECODED_GIB>  Maximum total decoded GiB [default: 1024]
     ```
 
 [Download plain-text help](help/verify-s3.txt).

@@ -44,35 +44,40 @@ use zeroize::Zeroizing;
 #[derive(clap::Args, Clone)]
 pub struct Options {
     /// Bind address (explicitly select a network interface for remote collection)
-    #[arg(long, default_value = "127.0.0.1:2222")]
+    #[arg(
+        help_heading = "Listener and Access",
+        long,
+        default_value = "127.0.0.1:2222"
+    )]
     pub listen: SocketAddr,
-    /// Evidence parent; creates a new protected session directory
-    #[arg(short, long)]
-    pub output: PathBuf,
     /// Number of independent collectors to issue temporary credentials to
-    #[arg(long, default_value_t=1, value_parser=clap::value_parser!(u32).range(1..=64))]
+    #[arg(help_heading = "Listener and Access", long, default_value_t=1, value_parser=clap::value_parser!(u32).range(1..=64))]
     pub sources: u32,
     /// Credential lifetime: seconds, or a suffix s/m/h (maximum: 7 days)
-    #[arg(long, default_value="2h", value_parser=parse_duration)]
+    #[arg(help_heading = "Listener and Access", long, default_value="2h", value_parser=parse_duration)]
     pub expires: Duration,
+    /// Accept connections only from these exact IP addresses; repeat
+    #[arg(help_heading = "Listener and Access", long = "allow-ip")]
+    pub allow_ips: Vec<IpAddr>,
+    /// Maximum simultaneous SSH connections (authenticated or not)
+    #[arg(help_heading = "Listener and Access", long, default_value_t=8, value_parser=clap::value_parser!(u32).range(1..=64))]
+    pub max_connections: u32,
+
+    /// Evidence parent; creates a new protected session directory
+    #[arg(help_heading = "Storage and Limits", short, long)]
+    pub output: PathBuf,
+    /// Keep this much free disk space in MiB
+    #[arg(help_heading = "Storage and Limits", long, default_value_t = 2048)]
+    pub reserve_mib: u64,
     /// Maximum stored upload bytes per source in GiB (compressed bytes)
-    #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u64).range(1..=65536))]
+    #[arg(help_heading = "Storage and Limits", long, default_value_t=100, value_parser=clap::value_parser!(u64).range(1..=65536))]
     pub max_gib: u64,
     /// Maximum decoded bytes per source during readback in GiB
-    #[arg(long, default_value_t=1024, value_parser=clap::value_parser!(u64).range(1..=1048576))]
+    #[arg(help_heading = "Storage and Limits", long, default_value_t=1024, value_parser=clap::value_parser!(u64).range(1..=1048576))]
     pub max_decoded_gib: u64,
     /// Maximum upload objects per source, including journals and probes
-    #[arg(long, default_value_t=100000, value_parser=clap::value_parser!(u32).range(1..=1000000))]
+    #[arg(help_heading = "Storage and Limits", long, default_value_t=100000, value_parser=clap::value_parser!(u32).range(1..=1000000))]
     pub max_files: u32,
-    /// Maximum simultaneous SSH connections (authenticated or not)
-    #[arg(long, default_value_t=8, value_parser=clap::value_parser!(u32).range(1..=64))]
-    pub max_connections: u32,
-    /// Accept connections only from these exact IP addresses; repeat
-    #[arg(long = "allow-ip")]
-    pub allow_ips: Vec<IpAddr>,
-    /// Keep this much free disk space in MiB
-    #[arg(long, default_value_t = 2048)]
-    pub reserve_mib: u64,
 }
 pub fn parse_duration(value: &str) -> std::result::Result<Duration, String> {
     let (number, multiplier) = match value.as_bytes().last() {

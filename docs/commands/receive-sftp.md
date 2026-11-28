@@ -42,28 +42,31 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade receive-sftp [OPTIONS] --output <OUTPUT>
 
     Options:
+      -h, --help  Print help
+
+    Listener and Access:
           --listen <LISTEN>
               Bind address (explicitly select a network interface for remote collection) [default: 127.0.0.1:2222]
-      -o, --output <OUTPUT>
-              Evidence parent; creates a new protected session directory
           --sources <SOURCES>
               Number of independent collectors to issue temporary credentials to [default: 1]
           --expires <EXPIRES>
               Credential lifetime: seconds, or a suffix s/m/h (maximum: 7 days) [default: 2h]
+          --allow-ip <ALLOW_IPS>
+              Accept connections only from these exact IP addresses; repeat
+          --max-connections <MAX_CONNECTIONS>
+              Maximum simultaneous SSH connections (authenticated or not) [default: 8]
+
+    Storage and Limits:
+      -o, --output <OUTPUT>
+              Evidence parent; creates a new protected session directory
+          --reserve-mib <RESERVE_MIB>
+              Keep this much free disk space in MiB [default: 2048]
           --max-gib <MAX_GIB>
               Maximum stored upload bytes per source in GiB (compressed bytes) [default: 100]
           --max-decoded-gib <MAX_DECODED_GIB>
               Maximum decoded bytes per source during readback in GiB [default: 1024]
           --max-files <MAX_FILES>
               Maximum upload objects per source, including journals and probes [default: 100000]
-          --max-connections <MAX_CONNECTIONS>
-              Maximum simultaneous SSH connections (authenticated or not) [default: 8]
-          --allow-ip <ALLOW_IPS>
-              Accept connections only from these exact IP addresses; repeat
-          --reserve-mib <RESERVE_MIB>
-              Keep this much free disk space in MiB [default: 2048]
-      -h, --help
-              Print help
     ```
 
 [Download plain-text help](help/receive-sftp.txt).

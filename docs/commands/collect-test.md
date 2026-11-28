@@ -37,58 +37,31 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade collect-test [OPTIONS]
 
     Options:
-          --no-wizard
-              Collect the default selection without the wizard (for scripts)
-          --paging
-              Include paging, swap, hibernation and existing memory dumps (default: off)
-          --hibernation
-              Include hiberfil.sys without other paging/dump files (default: off)
-          --scan-processes
-              Scan live process memory after hot disk artifacts (default: off)
-          --yara-ruleset <YARA_RULESET>
-              YARA Forge package (bundled selection by default, otherwise core) [possible values: core, extended, full]
-          --yara-rules <YARA_RULES>
-              Use a local Forge ZIP or YARA source for the process scan
-          --yara-release <YARA_RELEASE>
-              YARA Forge release for the process scan (default: latest)
-      -d, --source <DIR>
-              Mounted Windows volume directory; repeat for additional volumes
-          --volume <VOLUME>
-              Select a live volume such as C:; repeat (default: all discovered fixed volumes)
-          --vss
-              Acquire live files from owned, crash-consistent VSS snapshots
-          --vss-existing [<SELECTION>]
-              Also collect existing snapshots: all, newest, newest N per volume, or a GUID
-          --vss-timeout <SECONDS>
-              VSS snapshot creation deadline in seconds
-      -o, --output <DIR>
-              Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
-          --vhdx [<FILE_OR_DIR>]
-              Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
-          --vhdx-size-gib <GIB>
-              Virtual capacity in GiB (default: automatic, dynamically allocated)
-          --e01 [<FILE_OR_DIR>]
-              Save to compressed E01 segments; a directory (or no value: Kumade-Results beside the executable) names them by hostname and UTC start time
-          --e01-size-gib <GIB>
-              NTFS capacity in GiB before E01 compression (default: automatic)
-          --no-live-info
-              Skip the automatic live-response inventory (offline sources always skip it)
-          --live-info-format <LIVE_INFO_FORMAT>
-              Live-response inventory output format [default: csv] [possible values: csv, json, jsonl]
-          --live-info-timeout <LIVE_INFO_TIMEOUT>
-              Per-provider live-response deadline in seconds [default: 90]
-          --computer <COMPUTER>
-              Computer name for offline evidence
-          --catalog <CATALOG>
-              Explicit acquisition catalog; executable-directory configs are never auto-loaded
-          --artifact <ID>
-              Limit scope to an artifact ID; repeat to include several
-          --profile-root <DIR>
-              Additional local profile root under a selected source
-      -T, --threads <THREADS>
-              Maximum acquisition workers (default: available logical CPUs, at most 4) [default: 4]
-          --reserve-mib <RESERVE_MIB>
-              Keep this much destination space free (MiB) [default: 2048]
+          --no-wizard          Collect the default selection without the wizard (for scripts)
+      -T, --threads <THREADS>  Maximum acquisition workers (default: available logical CPUs, at most 4) [default: 4]
+      -q, --quiet              Suppress progress and routine console messages
+      -v, --verbose            List each file being copied instead of displaying a progress bar
+      -h, --help               Print help
+
+    Input:
+      -d, --source <DIR>         Mounted Windows volume directory; repeat for additional volumes
+          --volume <VOLUME>      Select a live volume such as C:; repeat (default: all discovered fixed volumes)
+          --computer <COMPUTER>  Computer name for offline evidence
+          --profile-root <DIR>   Additional local profile root under a selected source
+
+    Artifact Selection:
+          --catalog <CATALOG>  Explicit acquisition catalog; executable-directory configs are never auto-loaded
+          --artifact <ID>      Limit scope to an artifact ID; repeat to include several
+
+    Local Output:
+      -o, --output <DIR>               Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
+          --reserve-mib <RESERVE_MIB>  Keep this much destination space free (MiB) [default: 2048]
+          --vhdx [<FILE_OR_DIR>]       Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
+          --vhdx-size-gib <GIB>        Virtual capacity in GiB (default: automatic, dynamically allocated)
+          --e01 [<FILE_OR_DIR>]        Save to compressed E01 segments; a directory (or no value: Kumade-Results beside the executable) names them by hostname and UTC start time
+          --e01-size-gib <GIB>         NTFS capacity in GiB before E01 compression (default: automatic)
+
+    Memory and Paging:
       -m, --memory
               Acquire physical RAM first with a separately supplied DumpIt toolkit
           --no-memory-pagefile
@@ -101,8 +74,31 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               RAM capture deadline in seconds [default: 1800]
           --memory-staging-dir <DIR>
               Explicit RAM staging parent (required with --memory and remote delivery; prefer external storage)
-      -q, --quiet
-              Suppress progress and routine console messages
+          --paging
+              Include paging, swap, hibernation and existing memory dumps (default: off)
+          --hibernation
+              Include hiberfil.sys without other paging/dump files (default: off)
+
+    Live Response:
+          --no-live-info
+              Skip the automatic live-response inventory (offline sources always skip it)
+          --live-info-format <LIVE_INFO_FORMAT>
+              Live-response inventory output format [default: csv] [possible values: csv, json, jsonl]
+          --live-info-timeout <LIVE_INFO_TIMEOUT>
+              Per-provider live-response deadline in seconds [default: 90]
+
+    Volume Shadow Copies:
+          --vss                         Acquire live files from owned, crash-consistent VSS snapshots
+          --vss-existing [<SELECTION>]  Also collect existing snapshots: all, newest, newest N per volume, or a GUID
+          --vss-timeout <SECONDS>       VSS snapshot creation deadline in seconds
+
+    YARA Process Scanning:
+          --scan-processes               Scan live process memory after hot disk artifacts (default: off)
+          --yara-ruleset <YARA_RULESET>  YARA Forge package (bundled selection by default, otherwise core) [possible values: core, extended, full]
+          --yara-rules <YARA_RULES>      Use a local Forge ZIP or YARA source for the process scan
+          --yara-release <YARA_RELEASE>  YARA Forge release for the process scan (default: latest)
+
+    High-Entropy File Scanning:
           --high-entropy
               Scan selected source drives for high-entropy PE candidates and collect them
           --entropy-threshold <ENTROPY_THRESHOLD>
@@ -125,6 +121,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Also open files with this extension (case-insensitive, dot optional); repeat as needed
           --entropy-all-files
               Open every regular file instead of only the built-in extension list
+
+    SFTP Upload:
           --sftp <HOST>
               Stream evidence to this SFTP host (no local payload copies)
           --sftp-user <SFTP_USER>
@@ -145,6 +143,8 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Maximum reconnect attempts per collection with a resume-capable receiver (default: 3)
           --sftp-no-compression
               Disable gzip payload compression (sparse zero ranges will use network bandwidth)
+
+    S3 Upload:
           --s3 <S3>
               Collect to s3://BUCKET/PREFIX using hybrid delivery by default
           --s3-direct
@@ -161,10 +161,6 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
               Existing staging parent for hybrid evidence or direct-mode metadata
           --s3-part-mib <S3_PART_MIB>
               Multipart buffer or recovery chunk size in MiB (default 8, range 5–256)
-      -v, --verbose
-              List each file being copied instead of displaying a progress bar
-      -h, --help
-              Print help
     ```
 
 [Download plain-text help](help/collect-test.txt).

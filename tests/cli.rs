@@ -96,6 +96,47 @@ fn root_lists_commands_and_bare_commands_with_options_print_help() {
 }
 
 #[test]
+fn collection_help_keeps_provider_options_with_their_acquisition_method() {
+    for command in ["collect", "collect-test"] {
+        let output = run(&[command, "-h"]);
+        let help = String::from_utf8(output.stdout).unwrap();
+        for (heading, options) in [
+            ("Options", &["--quiet", "--verbose"][..]),
+            ("Input", &["--source", "--volume"]),
+            ("Artifact Selection", &["--catalog", "--artifact"]),
+            ("Local Output", &["--output", "--vhdx", "--e01"]),
+            ("Memory and Paging", &["--memory", "--dumpit", "--paging"]),
+            ("Live Response", &["--no-live-info", "--live-info-format"]),
+            ("Volume Shadow Copies", &["--vss", "--vss-existing"]),
+            (
+                "YARA Process Scanning",
+                &["--scan-processes", "--yara-rules"],
+            ),
+            (
+                "High-Entropy File Scanning",
+                &["--high-entropy", "--entropy-scope"],
+            ),
+            ("SFTP Upload", &["--sftp", "--sftp-user"]),
+            ("S3 Upload", &["--s3", "--s3-region", "--s3-part-mib"]),
+        ] {
+            let section = help
+                .split("\n\n")
+                .find(|section| section.lines().next() == Some(&format!("{heading}:")))
+                .unwrap_or_else(|| panic!("{command} is missing {heading}"));
+            for option in options {
+                assert!(
+                    section.lines().any(|line| {
+                        line.trim_start().starts_with('-')
+                            && line.split_whitespace().any(|word| word == *option)
+                    }),
+                    "{command} should show {option} under {heading}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn check_support_runs_directly_and_help_is_explicit() {
     let report = run(&["check-support"]);
     assert!(report.status.success());
