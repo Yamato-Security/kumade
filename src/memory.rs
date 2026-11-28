@@ -138,6 +138,12 @@ fn tool_path(args: &Args, arch: Architecture) -> Result<PathBuf> {
         )
     })
 }
+/// Validate the default provider exactly as capture would, without starting it.
+#[cfg(windows)]
+pub(crate) fn check_default_tool() -> Result<()> {
+    trusted_tool(&Args::default(), native_architecture()?).map(|_| ())
+}
+
 /// Keep the verified executable open with write/delete sharing denied until the child exits.
 fn trusted_tool(args: &Args, arch: Architecture) -> Result<(PathBuf, fs::File, String)> {
     let path = tool_path(args, arch)?;

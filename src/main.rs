@@ -464,56 +464,7 @@ fn run() -> Result<u8> {
             return Ok(if info.failures() > 0 { 3 } else { 0 });
         }
         Some(Command::CheckSupport) => {
-            ui::banner();
-            ui::field(
-                "Platform",
-                format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH),
-            );
-            match platform::live_acquisition_support() {
-                Ok(status) => ui::field("Live acquisition", status),
-                Err(error) => ui::field("Live acquisition", format!("Unknown ({error:#})")),
-            }
-            ui::field("Raw NTFS acquisition", "Available");
-            ui::field(
-                "Bundled YARA Forge",
-                kumade::yara_rules::bundle_description(),
-            );
-            ui::field(
-                "Partition imaging",
-                if cfg!(windows) {
-                    "forensic-copy; external destination and elevation required"
-                } else {
-                    "Requires Windows"
-                },
-            );
-            ui::field(
-                "RAM acquisition",
-                "External DumpIt (--memory; toolkit required)",
-            );
-            ui::field(
-                "VSS acquisition",
-                "--vss; native elevated Windows, crash-consistent snapshots without application writers",
-            );
-            ui::field(
-                "Remote transport",
-                "--sftp (pinned host key) or --s3 (temporary upload credentials)",
-            );
-            ui::field(
-                "VHDX output",
-                if cfg!(windows) {
-                    "Available; elevated Windows and Storage cmdlets required"
-                } else {
-                    "Requires Windows"
-                },
-            );
-            ui::field(
-                "E01 output",
-                if cfg!(windows) {
-                    "Available; NTFS staging, native compression and hash verification"
-                } else {
-                    "Collection requires Windows"
-                },
-            );
+            kumade::support::print();
             return Ok(0);
         }
         Some(Command::ListArtifacts { catalog, .. }) => {

@@ -8,8 +8,14 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 PAGES = {
     'check-support': ('Check platform support and acquisition prerequisites', r'''Use this before a collection to see platform capabilities and provider limits.
-On Windows, the live acquisition row checks the current session for elevation and the backup privilege.
-If it says `Not available (run as administrator)`, reopen the terminal as administrator and run the check again.
+Unavailable capabilities and checks that could not be completed appear in red. If a row says
+`Not available (run as administrator)`, reopen the terminal as administrator and run the check again.
+On Windows, Kumade checks the token privileges used by live collection, raw NTFS reads, partition imaging,
+VSS, RAM capture, container output and collection uploads. VSS also needs a native-architecture build.
+For RAM it validates the default DumpIt executable without launching it. A custom toolkit can be supplied
+with `--dumpit` during collection. The container check looks for Windows PowerShell and its Storage module.
+Destination space, driver policy, volume eligibility and remote credentials still need to be checked at collection time.
+An empty bundled YARA ruleset is informational because local and downloadable rules are supported.
 
 ```powershell
 .\kumade.exe check-support

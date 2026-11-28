@@ -25,6 +25,7 @@ use unicode_width::UnicodeWidthStr;
 
 pub const LOGO: &str = include_str!("../art/logo.txt");
 const GREEN: Color = Color::TrueColor(0, 255, 0);
+const RED: Color = Color::TrueColor(255, 0, 0);
 const WHITE: Color = Color::TrueColor(255, 255, 255);
 static PRINTED_HUMAN_OUTPUT: AtomicBool = AtomicBool::new(false);
 
@@ -47,11 +48,11 @@ fn safe_text(text: &str) -> String {
         .collect()
 }
 
-fn field_line(label: &str, value: &str, enabled: bool) -> String {
+fn field_line(label: &str, value: &str, color: Color, enabled: bool) -> String {
     format!(
         "{} {}",
         paint(&format!("{}:", safe_text(label)), GREEN, enabled),
-        paint(&safe_text(value), WHITE, enabled)
+        paint(&safe_text(value), color, enabled)
     )
 }
 
@@ -68,7 +69,16 @@ pub fn finish() {
 }
 
 pub fn field(label: &str, value: impl Display) {
-    print_line(field_line(label, &value.to_string(), colors_enabled()));
+    print_line(field_line(
+        label,
+        &value.to_string(),
+        WHITE,
+        colors_enabled(),
+    ));
+}
+
+pub(crate) fn error_field(label: &str, value: &str) {
+    print_line(field_line(label, value, RED, colors_enabled()));
 }
 
 pub fn heading(text: &str) {
@@ -183,20 +193,20 @@ mod tests {
 
     #[test]
     fn labels_are_green_and_values_are_white_without_color_bleed() {
-        let line = field_line("Unknown sizes", "28", true);
+        let line = field_line("Unknown sizes", "28", WHITE, true);
         assert_eq!(
             line,
             "\x1b[38;2;0;255;0mUnknown sizes:\x1b[0m \x1b[38;2;255;255;255m28\x1b[0m"
         );
         assert_eq!(
-            field_line("Unknown sizes", "28", false),
+            field_line("Unknown sizes", "28", WHITE, false),
             "Unknown sizes: 28"
         );
     }
 
     #[test]
     fn untrusted_field_values_cannot_inject_terminal_commands() {
-        let line = field_line("Results saved", "test\x1b[2J\npath", false);
+        let line = field_line("Results saved", "test\x1b[2J\npath", RED, false);
         assert!(!line.contains('\x1b'));
         assert!(!line.contains('\n'));
     }

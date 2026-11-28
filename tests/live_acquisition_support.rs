@@ -25,17 +25,44 @@ fn support_report_matches_the_live_acquisition_privilege_gate() {
         .unwrap();
     assert!(report.status.success(), "{:?}", report.stderr);
     let stdout = String::from_utf8(report.stdout).unwrap();
-    let status = stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("Live acquisition: "))
-        .unwrap();
+    let row = |label: &str| {
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(label))
+            .unwrap()
+    };
+    let status = row("Live acquisition: ");
 
     // Exercise the collection gate in this isolated test process, after running
     // the CLI so its child sees the original state of SeBackupPrivilege.
     match kumade::platform::enable_backup_privilege() {
-        Ok(()) => assert_eq!(status, "Available"),
+        Ok(()) => {
+            assert_eq!(status, "Available");
+            assert!(row("Partition imaging: ").contains("external destination"));
+            let vss = row("VSS acquisition: ");
+            if kumade::platform::require_native_build("VSS acquisition").is_ok() {
+                assert!(vss.contains("--vss"), "{vss}");
+            } else {
+                assert!(
+                    vss.starts_with("Not available (") || vss.starts_with("Unknown ("),
+                    "{vss}"
+                );
+            }
+        }
         Err(error) if error.to_string().contains("elevated local administrator") => {
-            assert_eq!(status, "Not available (run as administrator)");
+            for label in [
+                "Live acquisition: ",
+                "Raw NTFS acquisition: ",
+                "Partition imaging: ",
+                "VSS acquisition: ",
+                "RAM acquisition: ",
+            ] {
+                assert_eq!(
+                    row(label),
+                    "Not available (run as administrator)",
+                    "{label}"
+                );
+            }
         }
         Err(error)
             if error

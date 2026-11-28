@@ -163,6 +163,9 @@ pub(crate) fn read_staged_disk<T>(
 }
 
 #[cfg(windows)]
+pub(crate) use windows::powershell;
+
+#[cfg(windows)]
 mod windows {
     use super::*;
     use crate::{
@@ -337,7 +340,7 @@ mod windows {
         image.attached = false;
         Ok(result)
     }
-    fn powershell() -> Result<PathBuf> {
+    pub(crate) fn powershell() -> Result<PathBuf> {
         let mut directory = [0u16; 260];
         // SAFETY: writable UTF-16 buffer; obtain the trusted OS path rather than caller environment.
         let length = unsafe {

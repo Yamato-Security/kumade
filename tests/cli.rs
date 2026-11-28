@@ -319,6 +319,44 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
 }
 
 #[test]
+fn support_colors_every_unavailable_value_and_keeps_the_plain_text_readable() {
+    let bin = env!("CARGO_BIN_EXE_kumade");
+    let plain = Command::new(bin)
+        .arg("check-support")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let colored = Command::new(bin)
+        .arg("check-support")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .unwrap();
+    assert!(plain.status.success() && colored.status.success());
+    let plain = String::from_utf8(plain.stdout).unwrap();
+    let colored = String::from_utf8(colored.stdout).unwrap();
+    assert!(!plain.contains('\x1b'));
+    assert_eq!(console::strip_ansi_codes(&colored), plain);
+    for line in plain.lines() {
+        if let Some((label, value)) = line.split_once(": ") {
+            let line = colored
+                .lines()
+                .find(|text| console::strip_ansi_codes(text).starts_with(&format!("{label}: ")))
+                .unwrap();
+            let unavailable =
+                value.starts_with("Not available (") || value.starts_with("Unknown (");
+            assert_eq!(line.contains("\x1b[38;2;255;0;0m"), unavailable, "{label}");
+            if unavailable {
+                assert!(
+                    line.ends_with(&format!("\x1b[38;2;255;0;0m{value}\x1b[0m")),
+                    "{label}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn version_remains_a_single_machine_readable_line() {
     let output = run(&["--version"]);
     assert!(output.status.success());

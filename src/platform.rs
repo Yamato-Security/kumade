@@ -373,13 +373,18 @@ pub fn live_sources(destination: Option<&Path>) -> Result<SourceDiscovery> {
     windows::live_sources(destination)
 }
 
-#[cfg(not(windows))]
-pub fn live_acquisition_support() -> Result<&'static str> {
-    Ok("Use offline --source directories")
-}
+#[cfg(windows)]
+pub(crate) const BACKUP_PRIVILEGE: &str = "SeBackupPrivilege";
+#[cfg(windows)]
+pub(crate) const METADATA_PRIVILEGES: &[&str] = &[
+    BACKUP_PRIVILEGE,
+    "SeRestorePrivilege",
+    "SeSecurityPrivilege",
+    "SeManageVolumePrivilege",
+];
 
 #[cfg(windows)]
-pub use windows::live_acquisition_support;
+pub(crate) use windows::check_privileges;
 
 #[cfg(not(windows))]
 pub fn enable_backup_privilege() -> Result<()> {
@@ -509,14 +514,12 @@ mod windows {
         Ok(elevation.TokenIsElevated != 0)
     }
 
-    fn enable_backup_on(token: &OwnedHandle) -> Result<bool> {
+    fn enable_privilege_on(token: &OwnedHandle, name: &str) -> Result<bool> {
         let mut luid = LUID::default();
         // SAFETY: the privilege name is NUL-terminated and the LUID is writable.
-        if unsafe {
-            LookupPrivilegeValueW(ptr::null(), wide("SeBackupPrivilege").as_ptr(), &mut luid)
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error()).context("Cannot resolve backup privilege");
+        if unsafe { LookupPrivilegeValueW(ptr::null(), wide(name).as_ptr(), &mut luid) } == 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("Cannot resolve {name}"));
         }
         let state = TOKEN_PRIVILEGES {
             PrivilegeCount: 1,
@@ -539,16 +542,21 @@ mod windows {
             ) == 0
             {
                 return Err(std::io::Error::last_os_error())
-                    .context("Cannot enable backup privilege");
+                    .with_context(|| format!("Cannot enable {name}"));
             }
             Ok(GetLastError() != ERROR_NOT_ALL_ASSIGNED)
         }
     }
 
-    pub fn live_acquisition_support() -> Result<&'static str> {
+    /// Return the first unmet prerequisite, or an error if the token cannot be inspected.
+    pub(crate) fn check_privileges(
+        names: &[&str],
+        require_elevation: bool,
+    ) -> Result<Option<String>> {
         let token = process_token(TOKEN_QUERY | TOKEN_DUPLICATE)?;
-        if !is_elevated(&token)? {
-            return Ok("Not available (run as administrator)");
+        let elevated = is_elevated(&token)?;
+        if require_elevation && !elevated {
+            return Ok(Some("run as administrator".into()));
         }
 
         // Exercise the same privilege check as collection on a disposable token.
@@ -566,15 +574,20 @@ mod windows {
             )
         } == 0
         {
-            return Err(std::io::Error::last_os_error()).context("Cannot check backup privilege");
+            return Err(std::io::Error::last_os_error()).context("Cannot check token privileges");
         }
         // SAFETY: DuplicateTokenEx succeeded and transferred ownership of the new handle.
         let copy = unsafe { OwnedHandle::from_raw_handle(copy) };
-        Ok(if enable_backup_on(&copy)? {
-            "Available"
-        } else {
-            "Not available (SeBackupPrivilege is missing)"
-        })
+        for &name in names {
+            if !enable_privilege_on(&copy, name)? {
+                return Ok(Some(if elevated {
+                    format!("{name} is missing")
+                } else {
+                    "run as administrator".into()
+                }));
+            }
+        }
+        Ok(None)
     }
 
     pub fn enable_backup_privilege() -> Result<()> {
@@ -584,7 +597,7 @@ mod windows {
             "Full live collection needs an elevated local administrator; run as administrator or select an offline --source"
         );
         ensure!(
-            enable_backup_on(&token)?,
+            enable_privilege_on(&token, BACKUP_PRIVILEGE)?,
             "Token does not hold SeBackupPrivilege"
         );
         Ok(())
