@@ -1169,7 +1169,10 @@ fn run() -> Result<u8> {
 
 fn main() -> ExitCode {
     match run() {
-        Ok(code) => ExitCode::from(code),
+        Ok(code) => {
+            ui::finish();
+            ExitCode::from(code)
+        }
         Err(error) => {
             let _ = writeln!(std::io::stderr(), "Error: {error:#}");
             ExitCode::from(2)

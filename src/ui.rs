@@ -15,12 +15,18 @@
 //! Shared terminal presentation; evidence files never contain terminal styling.
 use console::{Color, Style, Term};
 use indicatif::{HumanCount, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use std::{fmt::Display, time::Duration};
+use std::{
+    fmt::Display,
+    io::{self, IsTerminal},
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use unicode_width::UnicodeWidthStr;
 
 pub const LOGO: &str = include_str!("../art/logo.txt");
 const GREEN: Color = Color::TrueColor(0, 255, 0);
 const WHITE: Color = Color::TrueColor(255, 255, 255);
+static PRINTED_HUMAN_OUTPUT: AtomicBool = AtomicBool::new(false);
 
 fn colors_enabled() -> bool {
     std::env::var_os("NO_COLOR").is_none() && console::colors_enabled()
@@ -49,19 +55,28 @@ fn field_line(label: &str, value: &str, enabled: bool) -> String {
     )
 }
 
+fn print_line(line: String) {
+    println!("{line}");
+    PRINTED_HUMAN_OUTPUT.store(true, Ordering::Relaxed);
+}
+
+/// Separate the final human-readable line from the next shell prompt.
+pub fn finish() {
+    if PRINTED_HUMAN_OUTPUT.load(Ordering::Relaxed) && io::stdout().is_terminal() {
+        println!();
+    }
+}
+
 pub fn field(label: &str, value: impl Display) {
-    println!(
-        "{}",
-        field_line(label, &value.to_string(), colors_enabled())
-    );
+    print_line(field_line(label, &value.to_string(), colors_enabled()));
 }
 
 pub fn heading(text: &str) {
-    println!("{}", paint(&safe_text(text), GREEN, colors_enabled()));
+    print_line(paint(&safe_text(text), GREEN, colors_enabled()));
 }
 
 pub fn status(text: &str) {
-    println!("{}", paint(&safe_text(text), WHITE, colors_enabled()));
+    print_line(paint(&safe_text(text), WHITE, colors_enabled()));
 }
 
 pub fn banner() {
