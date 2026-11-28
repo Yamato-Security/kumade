@@ -177,7 +177,7 @@ try {
     # Discover this real, unlettered NTFS image through the default live path.
     # Planning reads source state but does not run live inventory or acquire files.
     $scopeDirectory = Join-Path $WorkDirectory 'live-volume-plan'
-    $scopeCode = Invoke-Collector @('plan','-o',$scopeDirectory,'--artifact','windows.ntfs.mft','--reserve-mib','0') 'live-volume-plan.txt'
+    $scopeCode = Invoke-Collector @('collect-test','-o',$scopeDirectory,'--artifact','windows.ntfs.mft','--reserve-mib','0') 'live-volume-plan.txt'
     if ($scopeCode -notin @(0,3)) { throw ('Live volume planning failed: '+$scopeCode) }
     $scope = Get-Content -Raw -LiteralPath (Join-Path $scopeDirectory 'Plan.json') | ConvertFrom-Json
     $volumeName = $volumes[0].UniqueId.TrimEnd('\')

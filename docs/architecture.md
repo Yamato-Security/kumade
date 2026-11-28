@@ -67,7 +67,7 @@ kumade.exe -o E:\Kumade-Results
 kumade.exe -o E:\Kumade-Results --memory
 
 # Inspect scope, estimates, privileges and unsupported items before collecting.
-kumade.exe plan -o E:\Kumade-Results --memory
+kumade.exe collect-test -o E:\Kumade-Results --memory
 
 # Explicitly choose a smaller scope.
 kumade.exe collect -o E:\Kumade-Results --profile quick
@@ -83,7 +83,7 @@ Running `kumade.exe` without a subcommand aliases `collect`. With no `-o`, use a
 
 An Explorer launch should provide the Yamato-style logo, plain introduction, destination/scope summary and OS elevation prompt where needed. A normal elevated CLI run should not require a second generic confirmation. Noninteractive operation must not hang waiting for elevation or input.
 
-Proposed commands are listed alphabetically in help: `collect`, `compat`, `doctor`, `list`, `pack`, `plan`, `process`, `resume`, `upload`, `verify`. Expose commands only when their implementation is available; cloud commands remain future work. Keep flags consistent: `-o, --output`, `-T, --threads`, `-m, --memory`, `--profile`, `--source`, `--volume`, `--exclude`, `--vss`, `--limited`, `--debug`.
+Proposed commands are listed alphabetically in help: `check-support`, `collect`, `collect-test`, `compat`, `list-artifacts`, `pack`, `process`, `resume`, `upload`, `verify`. Expose commands only when their implementation is available; cloud commands remain future work. Keep flags consistent: `-o, --output`, `-T, --threads`, `-m, --memory`, `--profile`, `--source`, `--volume`, `--exclude`, `--vss`, `--limited`, `--debug`.
 
 ### Progress and summary
 

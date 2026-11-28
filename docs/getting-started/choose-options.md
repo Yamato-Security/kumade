@@ -7,7 +7,7 @@
 | Normal unattended artifact collection | `collect --no-wizard -o E:\Evidence` | [First collection](first-collection.md) |
 | Current host state only | `live-info -o E:\Live-Inventory` | [Live inventory](../live-info.md) |
 | Select a single disk family | `collect --no-wizard --artifact windows.prefetch -o E:\Evidence` | [Catalogue](../collection/catalogue.md) |
-| Add the hibernation file | `collect --no-wizard --hibernation -o E:\Evidence` | [Hibernation](../hibernation-acquisition.md) |
+| Include hibernation in a restricted disk selection | `collect --no-wizard --hibernation -o E:\Evidence` | [Hibernation](../hibernation-acquisition.md) |
 | Read selected artifacts from a snapshot | `collect --no-wizard --vss --volume C: -o E:\Evidence` | [VSS](../vss.md) |
 | Collect from the newest existing snapshot on each selected volume | `collect --no-wizard --vss-existing newest -o E:\Evidence` | [Historical VSS](../vss-existing.md) |
 | Acquire new RAM and active pagefiles | `collect --no-wizard --memory --dumpit E:\Tools\DumpIt -o E:\Evidence` | [RAM](../memory-acquisition.md) |

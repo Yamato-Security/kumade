@@ -19,7 +19,7 @@ installed Python, libewf, FUSE or external encoder. Windows x86, x64 and ARM64
 builds include this capability.
 
 `--e01 FILE`, `--vhdx FILE` and `-o DIR` are mutually exclusive. Directory output
-remains the default. `plan` does not create containers. `--e01-size-gib` sets
+remains the default. `collect-test` does not create containers. `--e01-size-gib` sets
 the **uncompressed NTFS disk capacity**, with the same sizing checks as VHDX;
 it does not set the compressed file size. Capacity is automatic when omitted.
 Collection, compression and verification respect `-T, --threads`. Verbose mode

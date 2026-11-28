@@ -1,6 +1,6 @@
 # `list-vss`
 
-List existing shadow copies.
+List local Volume Shadow Copies.
 
 List local VSS snapshots without creating or deleting them.
 
@@ -22,17 +22,17 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0
 
-    List existing local Volume Shadow Copies without creating or deleting them
+    List local Volume Shadow Copies
 
     Usage: kumade list-vss [OPTIONS]
 

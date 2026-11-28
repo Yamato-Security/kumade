@@ -4,11 +4,10 @@
 
 Kumade uses its embedded [artifact catalogue](catalogue.md) to discover supported
 files across selected local fixed volumes and profiles. Live-system inventory
-is included on a live host. The paging and dedicated hibernation families are off by default; `--paging`
-adds existing pagefile/swap/hibernation/dump artifacts. `--hibernation` adds just
-the hibernation file; see [hibernation acquisition](../hibernation-acquisition.md).
-New RAM capture is a
-separate `--memory` feature with paired active pagefiles on by default.
+is included on a live host. Disk collection includes `hiberfil.sys`, an existing
+`Windows/MEMORY.DMP`, and files under `Windows/Minidump` by default.
+`--paging` adds disk paging and swap files. New RAM capture requires `--memory`,
+which also reads active pagefiles and the Windows swapfile during the RAM phase.
 
 The default scope does not mean every file on the computer. A catalogue match
 is a collection candidate, not a conclusion about malicious activity.
@@ -16,11 +15,11 @@ is a collection candidate, not a conclusion about malicious activity.
 ## Plan a narrower collection
 
 ```powershell
-.\kumade.exe plan --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
+.\kumade.exe collect-test --volume C: --artifact windows.prefetch -o E:\Plans\Prefetch
 .\kumade.exe collect --no-wizard --volume C: --artifact windows.prefetch -o E:\Evidence
 ```
 
-`plan` writes a fresh plan without copying payloads or creating VSS snapshots.
+`collect-test` writes a fresh plan without copying payloads or creating VSS snapshots.
 Files can change before a later collection. An explicit disk scope does not
 implicitly turn off live inventory.
 

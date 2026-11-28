@@ -99,21 +99,23 @@ pub struct ConnectionArgs {
 #[derive(clap::Args)]
 pub struct VerifyArgs {
     /// Full s3:// URI of the delivery or phase manifest printed by the collector
-    #[arg(long)]
+    #[arg(help_heading = "Delivery Verification", long)]
     pub s3: Location,
-    #[command(flatten)]
-    pub connection: ConnectionArgs,
     /// SHA-256 recorded independently from the collector
-    #[arg(long)]
+    #[arg(help_heading = "Delivery Verification", long)]
     pub sha256: String,
+
+    #[command(flatten, next_help_heading = "S3 Connection")]
+    pub connection: ConnectionArgs,
+
     /// New local receipt file
-    #[arg(long)]
+    #[arg(help_heading = "Output and Restore", long)]
     pub receipt: PathBuf,
     /// Optional new local directory for restored evidence
-    #[arg(long)]
+    #[arg(help_heading = "Output and Restore", long)]
     pub restore: Option<PathBuf>,
     /// Maximum total decoded GiB
-    #[arg(long, default_value_t=1024, value_parser=clap::value_parser!(u64).range(1..=1048576))]
+    #[arg(help_heading = "Output and Restore", long, default_value_t=1024, value_parser=clap::value_parser!(u64).range(1..=1048576))]
     pub max_decoded_gib: u64,
 }
 

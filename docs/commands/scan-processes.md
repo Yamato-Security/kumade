@@ -1,6 +1,6 @@
 # `scan-processes`
 
-Hunt in live process memory.
+Scan running Windows processes with YARA Forge or local YARA rules.
 
 Run a native Windows build with suitable privileges. This is a live memory
 scan, not disk-file scanning or an offline RAM-image parser.
@@ -27,12 +27,12 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0
@@ -42,17 +42,23 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade scan-processes [OPTIONS] --output <DIR>
 
     Options:
-      -o, --output <DIR>                   New result directory (existing directories are refused)
+      -q, --quiet  Suppress progress and routine console messages
+      -h, --help   Print help
+
+    Process Selection and Scan Limits:
+          --pid <PID>              Limit scanning to a PID; repeat (default: all except this collector)
+      -T, --threads <THREADS>      Concurrent processes (default: 2 to limit live-system pressure) [default: 2]
+          --timeout <TIMEOUT>      Deadline per process in seconds; expired scans retain partial matches [default: 60]
+          --chunk-mib <CHUNK_MIB>  Memory read chunk size in MiB; patterns crossing chunks may be missed [default: 16]
+
+    YARA Rules:
           --ruleset <RULESET>              YARA Forge package (bundled selection by default, otherwise core) [default: core] [possible values: core, extended, full]
           --rules-release <RULES_RELEASE>  Forge release tag YYYYMMDD, or latest [default: latest]
           --rules <FILE>                   Local Forge ZIP or UTF-8 YARA source (offline; includes disabled)
-      -t, --format <FORMAT>                Result table format [default: csv] [possible values: csv, jsonl]
-          --pid <PID>                      Limit scanning to a PID; repeat (default: all except this collector)
-      -T, --threads <THREADS>              Concurrent processes (default: 2 to limit live-system pressure) [default: 2]
-          --timeout <TIMEOUT>              Deadline per process in seconds; expired scans retain partial matches [default: 60]
-          --chunk-mib <CHUNK_MIB>          Memory read chunk size in MiB; patterns crossing chunks may be missed [default: 16]
-      -q, --quiet                          Suppress progress and routine console messages
-      -h, --help                           Print help
+
+    Output:
+      -o, --output <DIR>     New result directory (existing directories are refused)
+      -t, --format <FORMAT>  Result table format [default: csv] [possible values: csv, jsonl]
     ```
 
 [Download plain-text help](help/scan-processes.txt).

@@ -221,17 +221,22 @@ fn cli_eof_and_cancellation_create_no_collection() {
 }
 #[test]
 fn unattended_mode_uses_safe_defaults_and_can_explicitly_include_paging() {
-    for paging in [false, true] {
+    for (args, paging) in [
+        (&["-w"][..], false),
+        (&["--no-wizard"][..], false),
+        (&["-w", "--paging"][..], true),
+        (&["--yes", "--paging"][..], true),
+    ] {
         let (t, _p, _r) = fixture();
-        let args = if paging {
-            vec!["--yes", "--paging"]
-        } else {
-            vec!["--no-wizard"]
-        };
-        let o = cli(t.path(), &args, "");
+        let o = cli(t.path(), args, "");
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         assert!(!String::from_utf8_lossy(&o.stdout).contains("(Y/n):"));
-        assert_eq!(manifest(t.path()).len(), if paging { 2 } else { 1 });
+        let rows = manifest(t.path());
+        assert_eq!(rows.len(), if paging { 2 } else { 1 });
+        assert_eq!(
+            rows.iter().any(|r| r.source_path.ends_with("pagefile.sys")),
+            paging
+        );
     }
 }
 #[test]
@@ -418,7 +423,7 @@ fn live_wizard_exposes_opt_in_ram_with_physical_size() {
     assert!(
         String::from_utf8(output)
             .unwrap()
-            .contains("Physical RAM (4.0 GiB plus active pagefiles by default; requires DumpIt, captured first) (y/N)")
+            .contains("Physical RAM (4.0 GiB plus selected paging and swap files; requires DumpIt, captured first) (y/N)")
     );
 }
 

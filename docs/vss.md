@@ -27,7 +27,7 @@ queried from the provider rather than inferred from a filesystem name; a support
 volume can still fail because its current shadow-storage configuration is inadequate.
 Such snapshot-set creation failures stop acquisition.
 
-Offline `--source` collection and `plan` cannot create VSS snapshots. Volume
+Offline `--source` collection and `collect-test` cannot create VSS snapshots. Volume
 selection without `--vss` is also available for normal live acquisition. An
 unavailable or destination-excluded explicit volume causes an error rather than
 silently collecting a different volume.

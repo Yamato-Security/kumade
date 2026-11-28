@@ -79,12 +79,7 @@ pub fn enable_privileges() -> Result<()> {
         std::io::Error::last_os_error()
     );
     let result = (|| {
-        for name in [
-            "SeBackupPrivilege",
-            "SeRestorePrivilege",
-            "SeSecurityPrivilege",
-            "SeManageVolumePrivilege",
-        ] {
+        for &name in crate::platform::METADATA_PRIVILEGES {
             let name_wide: Vec<_> = name.encode_utf16().chain(Some(0)).collect();
             let mut luid = LUID::default();
             // SAFETY: the name is terminated and luid is a writable output.

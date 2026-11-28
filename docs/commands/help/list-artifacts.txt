@@ -1,18 +1,18 @@
-┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
 ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
 ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
 ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
 ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
     by Yamato Security
 
 Version: 0.1.0
 
-List the embedded or explicitly selected acquisition catalog
+List supported DFIR artifacts
 
-Usage: kumade list [OPTIONS]
+Usage: kumade list-artifacts [OPTIONS]
 
 Options:
       --builtin            Show the embedded acquisition catalog
-      --catalog <CATALOG>
+      --catalog <CATALOG>  Load an acquisition catalog from this file
   -h, --help               Print help

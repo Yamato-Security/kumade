@@ -1,6 +1,6 @@
 # `live-info`
 
-Capture current host state.
+Capture live Windows response data.
 
 Collect current process, network, account, service, security and regional
 configuration observations without ordinary disk-artifact acquisition.
@@ -23,29 +23,33 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0
 
-    Capture live Windows response inventory without copying forensic artifacts
+    Capture live Windows response data
 
     Usage: kumade live-info [OPTIONS]
 
     Options:
-      -o, --output <DIR>       New output directory (existing directories are refused)
-          --list               List the embedded inventory data sets without querying the system
-      -t, --format <FORMAT>    Output format [default: csv] [possible values: csv, json, jsonl]
-          --dataset <NAME>     Select a named data set; repeat (default: all)
       -T, --threads <THREADS>  Concurrent PowerShell queries [default: 2]
           --timeout <TIMEOUT>  Deadline for each query in seconds [default: 90]
       -q, --quiet              Suppress progress
       -h, --help               Print help
+
+    Data Sets:
+          --list            List the embedded inventory data sets without querying the system
+          --dataset <NAME>  Select a named data set; repeat (default: all)
+
+    Output:
+      -o, --output <DIR>     New output directory (existing directories are refused)
+      -t, --format <FORMAT>  Output format [default: csv] [possible values: csv, json, jsonl]
     ```
 
 [Download plain-text help](help/live-info.txt).

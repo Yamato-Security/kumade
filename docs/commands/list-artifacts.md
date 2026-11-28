@@ -1,13 +1,13 @@
-# `list`
+# `list-artifacts`
 
-List acquisition families.
+List supported DFIR artifacts.
 
 Inspect the embedded catalogue before narrowing a collection. This lists
 acquisition definitions, not every matching file on the computer.
 
 ```powershell
-.\kumade.exe list --builtin
-.\kumade.exe list --catalog .\custom-catalogue.yaml
+.\kumade.exe list-artifacts --builtin
+.\kumade.exe list-artifacts --catalog .\custom-catalogue.yaml
 ```
 
 Use an explicit `--catalog` to select custom definitions. Kumade does not
@@ -21,24 +21,24 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0
 
-    List the embedded or explicitly selected acquisition catalog
+    List supported DFIR artifacts
 
-    Usage: kumade list [OPTIONS]
+    Usage: kumade list-artifacts [OPTIONS]
 
     Options:
           --builtin            Show the embedded acquisition catalog
-          --catalog <CATALOG>
+          --catalog <CATALOG>  Load an acquisition catalog from this file
       -h, --help               Print help
     ```
 
-[Download plain-text help](help/list.txt).
+[Download plain-text help](help/list-artifacts.txt).

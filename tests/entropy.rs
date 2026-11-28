@@ -602,7 +602,7 @@ fn plan_json_omits_the_inventory_and_plan_mode_writes_the_reports() {
     // Plan mode through the binary: Plan.json plus the three report files, no collection.
     let plan_dir = temp.path().join("plan-only");
     let status = std::process::Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["plan", "-d"])
+        .args(["collect-test", "-d"])
         .arg(&plan.sources[0].root)
         .args(["--computer", "HOST01", "--high-entropy", "-q", "-o"])
         .arg(&plan_dir)
@@ -788,7 +788,7 @@ fn cli_requires_comprehensive_coverage_for_a_renamed_dat_binary() {
             "standard"
         });
         let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_kumade"));
-        cmd.args(["plan", "-d"])
+        cmd.args(["collect-test", "-d"])
             .arg(source)
             .args([
                 "--artifact",

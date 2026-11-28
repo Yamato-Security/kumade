@@ -32,7 +32,7 @@ Options: `--sftp-port` (22), `--sftp-directory` (`/incoming`),
 `--sftp-timeout` (60 seconds per operation), `--sftp-retries` (3 reconnect attempts with a compatible Kumade receiver), `--sftp-no-compression`, and
 `--sftp-staging-dir` (system temporary directory). Set `-T` for upload workers;
 start with the conservative default, particularly on slow disks/networks.
-All normal selection, VSS and live-info options still apply. `plan` does not upload.
+All normal selection, VSS and live-info options still apply. `collect-test` does not upload.
 
 Kumade verifies the pinned host key **before password authentication**. It creates
 an isolated random probe and refuses collection unless reads, reopening/truncating
@@ -174,7 +174,7 @@ re-reads source candidates; mismatches with the earlier streamed version are
 reported as partial and `HashMatchesAnalysis=false`, rather than attributing a
 later classification to earlier bytes. Live RAM capture is supported with an
 external DumpIt toolkit and an explicit `--memory-staging-dir` on a protected
-filesystem. RAM and the paired pagefiles need local staging before streaming;
+filesystem. RAM and the paired paging and swap files need local staging before streaming;
 see [RAM acquisition](memory-acquisition.md) for setup and integrity limits.
 
 References: [OpenSSH sftp-server](https://man.openbsd.org/sftp-server),

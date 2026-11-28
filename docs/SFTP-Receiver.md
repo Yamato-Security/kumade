@@ -9,7 +9,7 @@ trusted filesystem with persistent access controls (NTFS on Windows).
 ## Start a receiver
 
 ```powershell
-.\kumade.exe receive --listen 0.0.0.0:2222 --output D:\Evidence --expires 2h
+.\kumade.exe receive-sftp --listen 0.0.0.0:2222 --output D:\Evidence --expires 2h
 ```
 
 The default bind address is `127.0.0.1:2222`. Select an explicit network interface
@@ -22,7 +22,7 @@ native IPv6 addresses remain distinct. The default is one collection.
 ### Collect from several computers
 
 ```powershell
-.\kumade.exe receive --listen 0.0.0.0:2222 --output D:\Evidence --sources 6 --expires 4h
+.\kumade.exe receive-sftp --listen 0.0.0.0:2222 --output D:\Evidence --sources 6 --expires 4h
 ```
 
 The receiver prints six numbered credential pairs. Distribute one pair per

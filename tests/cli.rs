@@ -29,12 +29,26 @@ fn arg(path: &Path) -> &str {
 }
 
 #[test]
-fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
+fn root_lists_commands_and_bare_commands_with_options_print_help() {
     let root = run(&[]);
     assert!(root.status.success());
     assert!(root.stderr.is_empty());
     let menu = String::from_utf8(root.stdout).unwrap();
-    assert!(menu.contains("Commands:"));
+    let names: Vec<_> = menu
+        .lines()
+        .skip_while(|line| *line != "Commands:")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert!(names.contains(&"help"));
+    assert!(names.is_sorted(), "command list is out of order: {names:?}");
+    assert!(
+        menu.lines()
+            .any(|line| line.trim_start().starts_with("check-support ")
+                && line.ends_with("Check platform support and acquisition prerequisites"))
+    );
+    assert!(!menu.contains("doctor"));
     assert!(!menu.contains("Options:"));
     assert!(!menu.contains("--vhdx"));
     for args in [["-h"], ["--help"], ["help"], ["--"]] {
@@ -50,13 +64,12 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
         .unwrap();
     for command in [
         "collect",
-        "doctor",
         "forensic-copy",
-        "list",
+        "list-artifacts",
         "list-vss",
         "live-info",
-        "plan",
-        "receive",
+        "collect-test",
+        "receive-sftp",
         "resume-s3",
         "scan-processes",
         "update-rules",
@@ -79,9 +92,22 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
         assert!(help.contains("--help"), "{command}");
         assert_eq!(
             help.contains("--vhdx "),
-            matches!(command, "collect" | "plan")
+            matches!(command, "collect" | "collect-test")
         );
-        for option in ["-h", "--"] {
+        for line in help.lines().skip_while(|line| !line.starts_with("Usage:")) {
+            if !line.starts_with(' ') {
+                continue;
+            }
+            let row = line.trim_start();
+            assert!(
+                row.starts_with(['-', '<'])
+                    && row
+                        .split_once("  ")
+                        .is_some_and(|(_, text)| !text.trim().is_empty()),
+                "{command} should show the argument and its description on one line: {row}"
+            );
+        }
+        for option in ["-h", "--help", "--"] {
             let explicit = run(&[command, option]);
             assert!(explicit.status.success());
             assert_eq!(help.as_bytes(), explicit.stdout, "{command} {option}");
@@ -91,21 +117,89 @@ fn root_lists_commands_and_each_bare_command_prints_its_own_help() {
 }
 
 #[test]
-fn explicit_flags_run_default_inspection_actions() {
-    for (args, expected) in [
-        (["doctor", "--check"], "Raw NTFS acquisition"),
-        (["list", "--builtin"], "windows.prefetch"),
-    ] {
-        let output = run(&args);
-        assert!(output.status.success());
-        assert!(String::from_utf8(output.stdout).unwrap().contains(expected));
+fn collection_help_keeps_provider_options_with_their_acquisition_method() {
+    for command in ["collect", "collect-test"] {
+        let output = run(&[command, "-h"]);
+        let help = String::from_utf8(output.stdout).unwrap();
+        for (heading, options) in [
+            ("Options", &["--quiet", "--verbose"][..]),
+            ("Input", &["--source", "--volume"]),
+            (
+                "Artifact Selection",
+                &["--catalog", "--artifact", "--paging", "--hibernation"],
+            ),
+            ("Local Output", &["--output", "--vhdx", "--e01"]),
+            (
+                "RAM Acquisition",
+                &["--memory", "--dumpit", "--no-memory-swapfile"],
+            ),
+            ("Live Response", &["--no-live-info", "--live-info-format"]),
+            ("Volume Shadow Copies", &["--vss", "--vss-existing"]),
+            (
+                "YARA Process Scanning",
+                &["--scan-processes", "--yara-rules"],
+            ),
+            (
+                "High-Entropy File Scanning",
+                &["--high-entropy", "--entropy-scope"],
+            ),
+            ("SFTP Upload", &["--sftp", "--sftp-user"]),
+            ("S3 Upload", &["--s3", "--s3-region", "--s3-part-mib"]),
+        ] {
+            let section = help
+                .split("\n\n")
+                .find(|section| section.lines().next() == Some(&format!("{heading}:")))
+                .unwrap_or_else(|| panic!("{command} is missing {heading}"));
+            for option in options {
+                assert!(
+                    section.lines().any(|line| {
+                        line.trim_start().starts_with('-')
+                            && line.split_whitespace().any(|word| word == *option)
+                    }),
+                    "{command} should show {option} under {heading}"
+                );
+            }
+        }
     }
+}
+
+#[test]
+fn check_support_runs_directly_and_help_is_explicit() {
+    let report = run(&["check-support"]);
+    assert!(report.status.success());
+    assert!(report.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&report.stdout).contains("Raw NTFS acquisition:"));
+    let terminated = run(&["check-support", "--"]);
+    assert!(terminated.status.success());
+    assert_eq!(terminated.stdout, report.stdout);
+
+    for args in [
+        ["check-support", "-h"],
+        ["check-support", "--help"],
+        ["help", "check-support"],
+    ] {
+        let help = run(&args);
+        assert!(help.status.success());
+        let text = String::from_utf8(help.stdout).unwrap();
+        assert!(text.contains("Usage:"));
+        assert!(!text.contains("Raw NTFS acquisition:"));
+        assert!(!text.contains("--check"));
+    }
+}
+
+#[test]
+fn explicit_flags_run_default_inspection_actions() {
+    let catalog = run(&["list-artifacts", "--builtin"]);
+    assert!(catalog.status.success());
+    assert!(String::from_utf8_lossy(&catalog.stdout).contains("windows.prefetch"));
     assert_eq!(
         run(&["list-vss", "--all", "--volume", "C:"]).status.code(),
         Some(2)
     );
     for args in [
         &["unknown-command"][..],
+        &["doctor"],
+        &["check-support", "--check"],
         &["collect", "--unknown"],
         &["verify", "--unknown"],
     ] {
@@ -190,7 +284,7 @@ fn verbose_and_quiet_conflict_and_zero_workers_are_rejected() {
 }
 #[test]
 fn root_and_subcommand_options_cannot_silently_conflict() {
-    let o = run(&["--computer", "IGNORED", "plan"]);
+    let o = run(&["--computer", "IGNORED", "collect-test"]);
     assert!(!o.status.success());
 }
 #[test]
@@ -201,7 +295,7 @@ fn cli_can_plan_collect_and_verify_offline() {
     fs::write(source.join("Windows/Prefetch/EXAMPLE.pf"), b"fixture").unwrap();
     let planned = temp.path().join("planned");
     let out = run(&[
-        "plan",
+        "collect-test",
         "-d",
         arg(&source),
         "-o",
@@ -264,7 +358,7 @@ fn memory_request_has_nonzero_partial_exit() {
 #[test]
 fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["doctor", "--check"])
+        .arg("check-support")
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .output()
@@ -273,7 +367,7 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("\x1b[38;2;0;255;0mVersion:\x1b[0m \x1b[38;2;255;255;255m"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["doctor", "--check"])
+        .arg("check-support")
         .env("CLICOLOR_FORCE", "1")
         .env("NO_COLOR", "1")
         .output()
@@ -283,13 +377,53 @@ fn requested_terminal_colors_do_not_change_redirected_or_no_color_output() {
     assert!(!text.contains('\x1b'));
     assert!(text.contains("by Yamato Security"));
     let output = Command::new(env!("CARGO_BIN_EXE_kumade"))
-        .args(["doctor", "--check"])
+        .arg("check-support")
         .env_remove("CLICOLOR_FORCE")
         .env_remove("NO_COLOR")
         .output()
         .unwrap();
     assert!(output.status.success());
     assert!(!String::from_utf8(output.stdout).unwrap().contains('\x1b'));
+}
+
+#[test]
+fn support_colors_every_unavailable_value_and_keeps_the_plain_text_readable() {
+    let bin = env!("CARGO_BIN_EXE_kumade");
+    let plain = Command::new(bin)
+        .arg("check-support")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let colored = Command::new(bin)
+        .arg("check-support")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .unwrap();
+    assert!(plain.status.success() && colored.status.success());
+    let plain = String::from_utf8(plain.stdout).unwrap();
+    let colored = String::from_utf8(colored.stdout).unwrap();
+    assert!(!plain.contains('\x1b'));
+    assert_eq!(console::strip_ansi_codes(&colored), plain);
+    for line in plain.lines() {
+        if let Some((label, value)) = line.split_once(": ") {
+            let line = colored
+                .lines()
+                .find(|text| console::strip_ansi_codes(text).starts_with(&format!("{label}: ")))
+                .unwrap();
+            let unavailable = value.starts_with("Not available (")
+                || value.starts_with("Unknown (")
+                || (label == "Bundled YARA Forge"
+                    && value == "None; use a local ZIP or download rules");
+            assert_eq!(line.contains("\x1b[38;2;255;0;0m"), unavailable, "{label}");
+            if unavailable {
+                assert!(
+                    line.ends_with(&format!("\x1b[38;2;255;0;0m{value}\x1b[0m")),
+                    "{label}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -309,7 +443,7 @@ fn vhdx_options_reject_ambiguous_destinations_and_invalid_capacity() {
         vec!["--vhdx-size-gib", "1"],
         vec!["--vhdx", "evidence.vhdx", "--vhdx-size-gib", "0"],
         vec!["--vhdx", "evidence.vhdx", "--vhdx-size-gib", "65537"],
-        vec!["plan", "--vhdx", "evidence.vhdx"],
+        vec!["collect-test", "--vhdx", "evidence.vhdx"],
     ] {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -324,7 +458,7 @@ fn e01_options_reject_conflicts_and_invalid_capacity() {
         vec!["--e01-size-gib", "1"],
         vec!["--e01", "case.E01", "--e01-size-gib", "0"],
         vec!["--e01", "case.E01", "--e01-size-gib", "65537"],
-        vec!["plan", "--e01", "case.E01"],
+        vec!["collect-test", "--e01", "case.E01"],
     ] {
         assert_eq!(run(&args).status.code(), Some(2), "{args:?}");
     }
@@ -418,7 +552,7 @@ fn vss_flags_reject_offline_plans_and_invalid_timeouts_without_writing() {
     let temp = tempfile::tempdir().unwrap();
     let output = temp.path().join("no-output");
     for extra in [
-        vec!["plan", "--vss"],
+        vec!["collect-test", "--vss"],
         vec!["collect", "--vss", "-d", "offline"],
         vec!["collect", "--vss-timeout", "30"],
         vec!["collect", "--vss", "--vss-timeout", "0"],

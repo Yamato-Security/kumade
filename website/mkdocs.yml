@@ -113,19 +113,19 @@ nav:
       - Troubleshooting: getting-started/troubleshooting.md
   - Commands:
       - Command list: commands/index.md
+      - check-support: commands/check-support.md
       - collect: commands/collect.md
-      - doctor: commands/doctor.md
+      - collect-test: commands/collect-test.md
       - forensic-copy: commands/forensic-copy.md
-      - list: commands/list.md
+      - list-artifacts: commands/list-artifacts.md
       - list-vss: commands/list-vss.md
       - live-info: commands/live-info.md
-      - plan: commands/plan.md
-      - receive: commands/receive.md
+      - receive-sftp: commands/receive-sftp.md
+      - resume-s3: commands/resume-s3.md
       - scan-processes: commands/scan-processes.md
       - update-rules: commands/update-rules.md
       - verify: commands/verify.md
       - verify-delivery: commands/verify-delivery.md
-      - resume-s3: commands/resume-s3.md
       - verify-s3: commands/verify-s3.md
   - Collection:
       - Collection guide: collection/index.md

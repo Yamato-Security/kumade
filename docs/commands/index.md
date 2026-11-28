@@ -1,23 +1,23 @@
 # Commands
 
-Run `kumade.exe` or `kumade.exe -h` for the command list. Run a command by itself (for example, `kumade.exe collect`) or add `-h` to see its usage and options. Collection flags also work without writing the `collect` subcommand.
+Run `kumade.exe` or `kumade.exe -h` for the command list. Run `kumade.exe check-support` for the support report. Add `-h` to any command to see its usage and options. Collection flags also work without writing the `collect` subcommand.
 
 | Command | Purpose |
 |---|---|
-| [`collect`](collect.md) | Collect forensic artifacts |
-| [`doctor`](doctor.md) | Inspect compiled capabilities |
-| [`forensic-copy`](forensic-copy.md) | Image a logical partition |
-| [`list`](list.md) | List acquisition families |
-| [`list-vss`](list-vss.md) | List existing shadow copies |
-| [`live-info`](live-info.md) | Capture current host state |
-| [`plan`](plan.md) | Inspect scope and size estimates |
-| [`receive`](receive.md) | Receive upload-only SFTP evidence |
-| [`scan-processes`](scan-processes.md) | Hunt in live process memory |
-| [`update-rules`](update-rules.md) | Download compressed YARA Forge rules |
-| [`verify`](verify.md) | Check a retained local collection |
-| [`verify-delivery`](verify-delivery.md) | Verify or restore an SFTP delivery |
-| [`resume-s3`](resume-s3.md) | Resume a hybrid or fully staged S3 delivery |
-| [`verify-s3`](verify-s3.md) | Verify or restore an S3 delivery |
+| [`check-support`](check-support.md) | Check platform support and acquisition prerequisites |
+| [`collect`](collect.md) | Collect DFIR artifacts |
+| [`collect-test`](collect-test.md) | Discover files and write a plan without copying evidence |
+| [`forensic-copy`](forensic-copy.md) | Create a bit-for-bit image of a logical Windows partition |
+| [`list-artifacts`](list-artifacts.md) | List supported DFIR artifacts |
+| [`list-vss`](list-vss.md) | List local Volume Shadow Copies |
+| [`live-info`](live-info.md) | Capture live Windows response data |
+| [`receive-sftp`](receive-sftp.md) | Receive evidence through a temporary upload-only SFTP account |
+| [`resume-s3`](resume-s3.md) | Resume phased S3 uploads from a protected workspace without reading original sources |
+| [`scan-processes`](scan-processes.md) | Scan running Windows processes with YARA Forge or local YARA rules |
+| [`update-rules`](update-rules.md) | Download or update a compressed YARA Forge rule package |
+| [`verify`](verify.md) | Verify the integrity of a local Kumade collection |
+| [`verify-delivery`](verify-delivery.md) | Verify an SFTP delivery locally and optionally reconstruct files |
+| [`verify-s3`](verify-s3.md) | Verify an S3 collection against its delivery hash and optionally restore it |
 
 [Root help snapshot](help/kumade.txt). These pages describe current source behavior. A release sharing the same version label may predate recent flags.
 

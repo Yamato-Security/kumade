@@ -1,6 +1,6 @@
 # `resume-s3`
 
-Resume a hybrid or fully staged S3 delivery.
+Resume phased S3 uploads from a protected workspace without reading original sources.
 
 Supply the protected workspace printed by the collector and the original S3 destination. The uploader reuses acknowledged chunks and never rereads a live source. See [hybrid collection](../S3.md#hybrid-collection) and [full phased recovery](../S3.md#recoverable-phased-collection).
 
@@ -11,12 +11,12 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0

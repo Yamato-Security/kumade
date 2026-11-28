@@ -19,6 +19,9 @@ pub struct Args {
     /// Do not copy active pagefiles during RAM capture (default: copy)
     #[arg(long, requires = "memory")]
     pub no_memory_pagefile: bool,
+    /// Skip swapfile.sys during RAM capture (default: copy if present)
+    #[arg(long, requires = "memory")]
+    pub no_memory_swapfile: bool,
     /// DumpIt toolkit directory or executable (otherwise tools/DumpIt beside Kumade)
     #[arg(long, value_name = "FILE_OR_DIR")]
     pub dumpit: Option<PathBuf>,
@@ -36,6 +39,7 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             no_memory_pagefile: false,
+            no_memory_swapfile: false,
             dumpit: None,
             dumpit_sha256: None,
             memory_timeout: 1800,
@@ -138,6 +142,12 @@ fn tool_path(args: &Args, arch: Architecture) -> Result<PathBuf> {
         )
     })
 }
+/// Validate the default provider exactly as capture would, without starting it.
+#[cfg(windows)]
+pub(crate) fn check_default_tool() -> Result<()> {
+    trusted_tool(&Args::default(), native_architecture()?).map(|_| ())
+}
+
 /// Keep the verified executable open with write/delete sharing denied until the child exits.
 fn trusted_tool(args: &Args, arch: Architecture) -> Result<(PathBuf, fs::File, String)> {
     let path = tool_path(args, arch)?;
@@ -491,32 +501,45 @@ pub fn acquire(
     let mut nt_status = None;
     let mut provider_started = None;
     let mut provider_finished = None;
-    let capture_stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut pagefile_worker = None;
+    let capture_stopped = std::sync::atomic::AtomicBool::new(false);
+    use crate::pagefile::Kind;
+    let mut pending: Vec<_> = [
+        (!args.no_memory_pagefile, Kind::Pagefile),
+        (!args.no_memory_swapfile, Kind::Swapfile),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, kind)| enabled.then_some(kind))
+    .collect();
+    let pairing = !pending.is_empty();
     let mut pagefile_rows = Vec::new();
+    let mut companion_result = Ok(());
     let outcome = (|| -> Result<()> {
         let arch = native_architecture()?;
         let (tool, _guard, digest) = trusted_tool(args, arch)?;
         tool_hash = Some(digest);
         let estimate = physical_bytes()?;
-        let pagefiles = if args.no_memory_pagefile {
-            Vec::new()
-        } else {
-            match crate::pagefile::discover(computer) {
-                Ok(inputs) => inputs,
-                Err(error) => {
-                    pagefile_rows.push(crate::pagefile::failure(
-                        computer,
-                        format!("Active pagefile discovery failed: {error:#}"),
-                    ));
-                    Vec::new()
+        let mut groups = Vec::new();
+        pending.retain(|&kind| {
+            match crate::pagefile::discover(computer, kind, &mut pagefile_rows) {
+                Ok(inputs) if !inputs.is_empty() => {
+                    groups.push((kind, inputs));
+                    true
+                }
+                Ok(_) => false,
+                Err(e) => {
+                    pagefile_rows.push(kind.failure(computer, format!("{e:#}")));
+                    false
                 }
             }
-        };
-        let paging_bytes = pagefiles.iter().try_fold(0u64, |sum, input| {
-            sum.checked_add(input.file.before.as_ref().map_or(0, |f| f.size))
-                .context("Pagefile size overflow")
-        })?;
+        });
+        let paging_bytes =
+            groups
+                .iter()
+                .flat_map(|(_, inputs)| inputs)
+                .try_fold(0u64, |sum, input| {
+                    sum.checked_add(input.file.before.as_ref().map_or(0, |f| f.size))
+                        .context("Pagefile size overflow")
+                })?;
         ensure!(
             fs2::available_space(&directory)?
                 >= estimate
@@ -524,14 +547,14 @@ pub fn acquire(
                     .and_then(|n| n.checked_add(64 * 1024 * 1024))
                     .and_then(|n| n.checked_add(reserve))
                     .context("RAM size estimate overflow")?,
-            "Insufficient RAM staging free space; need physical RAM, active paging files, 64 MiB header headroom and the free-space reserve"
+            "Insufficient RAM staging free space; need physical RAM, selected paging and swap files, 64 MiB header headroom and the free-space reserve"
         );
         ensure!(!path.exists(), "RAM output already exists");
         if !quiet {
-            crate::ui::status(if args.no_memory_pagefile {
+            crate::ui::status(if groups.is_empty() {
                 "Acquiring physical RAM with DumpIt before other evidence…"
             } else {
-                "Acquiring physical RAM with DumpIt and copying active pagefiles…"
+                "Acquiring physical RAM with DumpIt and copying selected paging or swap files…"
             });
         }
         let mut command = Command::new(&tool);
@@ -547,36 +570,45 @@ pub fn acquire(
                 "/OUTPUT",
             ])
             .arg(&path);
-        if !args.no_memory_pagefile {
-            let (stage, host) = (root.to_path_buf(), computer.to_string());
-            let timeout = Duration::from_secs(args.memory_timeout);
-            let stopped = capture_stopped.clone();
-            let dump_path = path.clone();
-            pagefile_worker = Some(std::thread::spawn(move || {
-                let waiting = Instant::now();
-                if let Err(error) = crate::pagefile::wait_for_ram(&dump_path, &stopped, timeout) {
-                    return Ok(vec![crate::pagefile::failure(&host, format!("{error:#}"))]);
+        let timeout = Duration::from_secs(args.memory_timeout);
+        let execution = std::thread::scope(|scope| {
+            let mut workers = Vec::new();
+            // Each companion starts independently as soon as DumpIt produces payload.
+            for (kind, inputs) in groups {
+                let dump = &path;
+                let stopped = &capture_stopped;
+                workers.push(scope.spawn(move || {
+                    let start = Instant::now();
+                    if let Err(e) = crate::pagefile::wait_for_ram(dump, stopped, timeout) {
+                        return Ok(vec![kind.failure(computer, format!("{e:#}"))]);
+                    }
+                    crate::pagefile::acquire(
+                        root,
+                        computer,
+                        kind,
+                        inputs,
+                        reserve,
+                        timeout.saturating_sub(start.elapsed()),
+                    )
+                }));
+            }
+            pending.clear();
+            provider_started = Some(utc_now());
+            let execution = execute(command, &path, reserve, timeout, quiet, estimate);
+            provider_finished = Some(utc_now());
+            capture_stopped.store(true, std::sync::atomic::Ordering::Release);
+            for worker in workers {
+                match worker
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("Paired acquisition worker panicked"))
+                    .and_then(|r| r)
+                {
+                    Ok(rows) => pagefile_rows.extend(rows),
+                    Err(e) => companion_result = Err(e),
                 }
-                crate::pagefile::acquire(
-                    &stage,
-                    &host,
-                    pagefiles,
-                    reserve,
-                    timeout.saturating_sub(waiting.elapsed()),
-                )
-            }));
-        }
-        provider_started = Some(utc_now());
-        let execution = execute(
-            command,
-            &path,
-            reserve,
-            Duration::from_secs(args.memory_timeout),
-            quiet,
-            estimate,
-        );
-        provider_finished = Some(utc_now());
-        capture_stopped.store(true, std::sync::atomic::Ordering::Release);
+            }
+            execution
+        });
         let (status, stdout, _) = execution?;
         exit_code = status.code();
         (inaccessible_pages, nt_status) = diagnostics(&stdout);
@@ -591,17 +623,16 @@ pub fn acquire(
         layout = Some(validate_dump(&path, arch)?);
         Ok(())
     })();
-    if let Some(worker) = pagefile_worker {
-        pagefile_rows.extend(worker.join().map_err(|_| {
-            anyhow::anyhow!("Pagefile acquisition worker panicked; staging retained")
-        })??);
-    } else if !args.no_memory_pagefile && pagefile_rows.is_empty() && outcome.is_err() {
-        pagefile_rows.push(crate::pagefile::failure(
-            computer,
-            "Paired pagefile capture did not start because RAM preflight failed".into(),
-        ));
+    companion_result.context("Paired inventory could not be sealed; staging retained")?;
+    if outcome.is_err() {
+        for kind in pending {
+            pagefile_rows.push(kind.failure(
+                computer,
+                "Paired capture did not start because RAM preflight failed".into(),
+            ));
+        }
     }
-    if !args.no_memory_pagefile {
+    if pairing {
         collect::write_json_new(&root.join(crate::pagefile::INVENTORY), &pagefile_rows)?;
     }
     if path.exists() {
@@ -634,7 +665,7 @@ pub fn acquire(
     row.finished_utc = utc_now();
     collect::write_json_new(
         &directory.join("Acquisition.json"),
-        &serde_json::json!({"SchemaVersion":1,"Provider":"DumpIt","ProviderStartedUTC":provider_started,"ProviderFinishedUTC":provider_finished,"PagefilesEnabled":!args.no_memory_pagefile,"ToolSHA256":tool_hash,"ExitCode":exit_code,"InaccessiblePages":inaccessible_pages,"NtStatus":nt_status,"DumpLayout":layout,"Record":row,"Arguments":["/QUIET","/TYPE","DMP","/NOCOMPRESS","/NOLYTICS","/NOJSON","/OUTPUT","Memory.dmp"],"LogRetentionBytesPerStream":LOG_LIMIT,"Limitations":["Live RAM is non-atomic; integrity hashes are not proof of semantic completeness","Driver load/unload changes the live host; platform security can block acquisition","DumpIt requires a staged file even for remote delivery"]}),
+        &serde_json::json!({"SchemaVersion":1,"Provider":"DumpIt","ProviderStartedUTC":provider_started,"ProviderFinishedUTC":provider_finished,"PagefilesEnabled":!args.no_memory_pagefile,"SwapfileEnabled":!args.no_memory_swapfile,"ToolSHA256":tool_hash,"ExitCode":exit_code,"InaccessiblePages":inaccessible_pages,"NtStatus":nt_status,"DumpLayout":layout,"Record":row,"Arguments":["/QUIET","/TYPE","DMP","/NOCOMPRESS","/NOLYTICS","/NOJSON","/OUTPUT","Memory.dmp"],"LogRetentionBytesPerStream":LOG_LIMIT,"Limitations":["Live RAM is non-atomic; integrity hashes are not proof of semantic completeness","Driver load/unload changes the live host; platform security can block acquisition","DumpIt requires a staged file even for remote delivery"]}),
     )?;
     Ok(row)
 }

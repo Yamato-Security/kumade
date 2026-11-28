@@ -485,7 +485,9 @@ pub fn verify(root: &Path) -> Result<(usize, bool)> {
             ),
         failures == 0
             && memory.as_ref().is_none_or(|r| r.status == "Acquired")
-            && pagefiles.iter().all(|r| r.status == "Acquired"),
+            && pagefiles
+                .iter()
+                .all(|r| matches!(r.status.as_str(), "Acquired" | "NotPresent")),
     ))
 }
 
@@ -560,8 +562,14 @@ mod memory_tests {
         row.sha256 = Some(digest);
         row.verified = true;
         row.relative_output_path = Some("Memory/Pagefile0.sys".into());
-        collect::write_json_new(&capture.root.join(crate::pagefile::INVENTORY), &vec![row])
-            .unwrap();
+        let mut absent =
+            crate::pagefile::Kind::Swapfile.failure("RAMHOST", "Swapfile absent".into());
+        absent.status = "NotPresent".into();
+        collect::write_json_new(
+            &capture.root.join(crate::pagefile::INVENTORY),
+            &[row, absent],
+        )
+        .unwrap();
         let mut seal: serde_json::Value =
             serde_json::from_reader(fs::File::open(capture.root.join("Seal.json")).unwrap())
                 .unwrap();
@@ -588,7 +596,7 @@ mod memory_tests {
         Arc::new(capture)
     }
     #[test]
-    fn paired_pagefile_survives_import_verifies_and_tampering_is_detected() {
+    fn paired_pagefile_and_absent_swapfile_verify_and_tampering_is_detected() {
         let t = tempfile::tempdir().unwrap();
         let capture = fixture_with_pagefile(t.path());
         let p = plan(t.path());

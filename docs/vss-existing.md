@@ -51,7 +51,7 @@ local devices. Listing does not export a snapshot or guarantee it remains availa
 .\kumade.exe collect --no-wizard --volume C: --vss-existing 01234567-89ab-cdef-0123-456789abcdef -o E:\Evidence
 
 # Plan only; no payload copy or new snapshot:
-.\kumade.exe plan --volume C: --vss-existing all --artifact windows.eventlogs -o E:\Plans\History
+.\kumade.exe collect-test --volume C: --vss-existing all --artifact windows.eventlogs -o E:\Plans\History
 ```
 
 Values are `all` (the bare flag's default), `newest`, a positive count **per

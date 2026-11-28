@@ -1149,7 +1149,7 @@ fn collect_inner(
             acquired: u64::from(matches!(row.status.as_str(), "Acquired" | "Transferred")),
             partial: u64::from(row.status == "Partial"),
             failed: u64::from(row.status == "Failed"),
-            not_present: 0,
+            not_present: u64::from(row.status == "NotPresent"),
             status: row.status.clone(),
             reason: row.reason.clone(),
         })?;

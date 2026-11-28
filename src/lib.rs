@@ -25,6 +25,7 @@ pub mod model;
 pub mod paths;
 pub mod platform;
 pub mod raw;
+pub mod support;
 pub mod ui;
 pub mod verify;
 pub mod vhdx;

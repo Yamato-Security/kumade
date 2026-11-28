@@ -32,10 +32,12 @@ use std::{
 #[command(
     name = "kumade",
     version,
+    term_width = 0,
+    next_display_order = None,
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
     help_template = "{about}\n\n{usage-heading} {usage}\n\nCommands:\n{subcommands}\n\nRun `kumade <COMMAND> -h` for its options.",
-    about = "Windows evidence collection by Yamato Security — development prototype"
+    about = "Windows DFIR Triage Collector — development prototype"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -46,34 +48,31 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Collect selected artifacts into a new, hash-verified run directory
+    /// Collect DFIR artifacts
     Collect(CollectionArgs),
-    /// Inspect platform support and acquisition prerequisites
-    Doctor {
-        /// Check platform support and collection prerequisites
-        #[arg(long)]
-        check: bool,
-    },
-    /// Image a logical partition to a raw file on a different external drive
+    /// Check platform support and acquisition prerequisites
+    CheckSupport,
+    /// Create a bit-for-bit image of a logical Windows partition
     ForensicCopy(ForensicCopyArgs),
-    /// Capture live Windows response inventory without copying forensic artifacts
+    /// Capture live Windows response data
     LiveInfo(LiveInfoArgs),
-    /// List the embedded or explicitly selected acquisition catalog
-    List {
+    /// List supported DFIR artifacts
+    ListArtifacts {
         /// Show the embedded acquisition catalog
         #[arg(long, conflicts_with = "catalog")]
         builtin: bool,
+        /// Load an acquisition catalog from this file
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
-    /// List existing local Volume Shadow Copies without creating or deleting them
+    /// List local Volume Shadow Copies
     ListVss(kumade::vss_history::ListOptions),
     /// Download or update a compressed YARA Forge rule package
     UpdateRules(kumade::yara_rules::UpdateOptions),
     /// Discover files and write a plan without copying evidence
-    Plan(CollectionArgs),
+    CollectTest(CollectionArgs),
     /// Receive evidence through a temporary upload-only SFTP account
-    Receive(kumade::sftp_receive::Options),
+    ReceiveSftp(kumade::sftp_receive::Options),
     /// Resume phased S3 uploads from a protected workspace without reading original sources
     ResumeS3(kumade::s3_phases::ResumeArgs),
     /// Verify an SFTP delivery locally and optionally reconstruct files
@@ -82,8 +81,11 @@ enum Command {
     VerifyS3(kumade::s3::VerifyArgs),
     /// Scan running Windows processes with YARA Forge or local YARA rules
     ScanProcesses(kumade::yara_scan::Options),
-    /// Verify the seal and every stored payload; never reads original sources
-    Verify { directory: PathBuf },
+    /// Verify the integrity of a local Kumade collection
+    Verify {
+        /// Collection directory containing the manifest
+        directory: PathBuf,
+    },
 }
 
 // clap treats a required option as satisfied when it conflicts with an option that is present,
@@ -115,20 +117,128 @@ enum Command {
         .conflicts_with("sources")),
 )]
 struct CollectionArgs {
-    /// Collect the default selection without the wizard (for scripts)
-    #[arg(long = "no-wizard", alias = "yes")]
+    /// Skip the wizard and use collection defaults plus any options you specify
+    #[arg(short = 'w', long = "no-wizard", alias = "yes")]
     no_wizard: bool,
-    /// Include paging, swap, hibernation and existing memory dumps (default: off)
-    #[arg(long)]
+    /// Maximum acquisition workers (default: available logical CPUs, at most 4)
+    #[arg(short = 'T', long, default_value_t = default_threads())]
+    threads: usize,
+    /// Suppress progress and routine console messages
+    #[arg(short, long)]
+    quiet: bool,
+    /// List each file being copied instead of displaying a progress bar
+    #[arg(short = 'v', long, conflicts_with = "quiet")]
+    verbose: bool,
+
+    /// Mounted Windows volume directory; repeat for additional volumes
+    #[arg(
+        help_heading = "Input",
+        short = 'd',
+        long = "source",
+        value_name = "DIR"
+    )]
+    sources: Vec<PathBuf>,
+    /// Select a live volume such as C:; repeat (default: all discovered fixed volumes)
+    #[arg(
+        help_heading = "Input",
+        long = "volume",
+        value_name = "VOLUME",
+        conflicts_with = "sources"
+    )]
+    volumes: Vec<String>,
+    /// Computer name for offline evidence
+    #[arg(help_heading = "Input", long)]
+    computer: Option<String>,
+    /// Additional local profile root under a selected source
+    #[arg(help_heading = "Input", long = "profile-root", value_name = "DIR")]
+    profile_roots: Vec<PathBuf>,
+
+    /// Explicit acquisition catalog; executable-directory configs are never auto-loaded
+    #[arg(help_heading = "Artifact Selection", long)]
+    catalog: Option<PathBuf>,
+    /// Limit scope to an artifact ID; repeat to include several
+    #[arg(
+        help_heading = "Artifact Selection",
+        long = "artifact",
+        value_name = "ID"
+    )]
+    artifacts: Vec<String>,
+
+    /// Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); collect-test writes Plan.json here
+    #[arg(help_heading = "Local Output", short, long, value_name = "DIR", required_unless_present_any = ["vhdx", "e01", "sftp", "s3"])]
+    output: Option<PathBuf>,
+    /// Keep this much destination space free (MiB)
+    #[arg(help_heading = "Local Output", long, default_value_t = 2048)]
+    reserve_mib: u64,
+    /// Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
+    #[arg(
+        help_heading = "Local Output",
+        long,
+        value_name = "FILE_OR_DIR",
+        conflicts_with = "output"
+    )]
+    vhdx: Option<Option<PathBuf>>,
+    /// Virtual capacity in GiB (default: automatic, dynamically allocated)
+    #[arg(help_heading = "Local Output", long, value_name = "GIB", requires = "vhdx", value_parser = clap::value_parser!(u64).range(1..=65536))]
+    vhdx_size_gib: Option<u64>,
+    /// Save to compressed E01 segments; a directory (or no value: Kumade-Results beside the executable) names them by hostname and UTC start time
+    #[arg(help_heading = "Local Output", long, value_name = "FILE_OR_DIR", conflicts_with_all = ["output", "vhdx"])]
+    e01: Option<Option<PathBuf>>,
+    /// NTFS capacity in GiB before E01 compression (default: automatic)
+    #[arg(help_heading = "Local Output", long, value_name = "GIB", requires = "e01", value_parser = clap::value_parser!(u64).range(1..=65536))]
+    e01_size_gib: Option<u64>,
+
+    /// Acquire physical RAM first with a separately supplied DumpIt toolkit
+    #[arg(help_heading = "RAM Acquisition", short = 'm', long)]
+    memory: bool,
+    #[command(flatten, next_help_heading = "RAM Acquisition")]
+    memory_options: kumade::memory::Args,
+    /// Add the broad disk paging family (pagefile, swapfile, hibernation and existing crash dumps)
+    #[arg(help_heading = "Artifact Selection", long)]
     paging: bool,
-    /// Include hiberfil.sys without other paging/dump files (default: off)
-    #[arg(long)]
+    /// Include hiberfil.sys in a restricted disk selection (included by default)
+    #[arg(help_heading = "Artifact Selection", long)]
     hibernation: bool,
+
+    /// Skip the automatic live-response inventory (offline sources always skip it)
+    #[arg(help_heading = "Live Response", long)]
+    no_live_info: bool,
+    /// Live-response inventory output format
+    #[arg(
+        help_heading = "Live Response",
+        long,
+        value_enum,
+        default_value = "csv"
+    )]
+    live_info_format: kumade::live_info::Format,
+    /// Per-provider live-response deadline in seconds
+    #[arg(help_heading = "Live Response", long,default_value_t=90,value_parser=clap::value_parser!(u64).range(1..=3600))]
+    live_info_timeout: u64,
+
+    /// Acquire live files from owned, crash-consistent VSS snapshots
+    #[arg(
+        help_heading = "Volume Shadow Copies",
+        long,
+        conflicts_with = "sources"
+    )]
+    vss: bool,
+    /// Also collect existing snapshots: all, newest, newest N per volume, or a GUID
+    #[arg(help_heading = "Volume Shadow Copies", long, num_args = 0..=1, default_missing_value = "all", value_name = "SELECTION", conflicts_with = "sources")]
+    vss_existing: Option<kumade::vss_history::Selection>,
+    /// VSS snapshot creation deadline in seconds
+    #[arg(help_heading = "Volume Shadow Copies", long, value_name = "SECONDS", requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    vss_timeout: Option<u64>,
+
     /// Scan live process memory after hot disk artifacts (default: off)
-    #[arg(long, conflicts_with = "sources")]
+    #[arg(
+        help_heading = "YARA Process Scanning",
+        long,
+        conflicts_with = "sources"
+    )]
     scan_processes: bool,
     /// YARA Forge package (bundled selection by default, otherwise core)
     #[arg(
+        help_heading = "YARA Process Scanning",
         long,
         value_enum,
         requires = "scan_processes",
@@ -136,123 +246,58 @@ struct CollectionArgs {
     )]
     yara_ruleset: Option<kumade::yara_scan::RuleSet>,
     /// Use a local Forge ZIP or YARA source for the process scan
-    #[arg(long, requires = "scan_processes")]
+    #[arg(
+        help_heading = "YARA Process Scanning",
+        long,
+        requires = "scan_processes"
+    )]
     yara_rules: Option<PathBuf>,
     /// YARA Forge release for the process scan (default: latest)
-    #[arg(long, requires = "scan_processes", conflicts_with = "yara_rules")]
+    #[arg(
+        help_heading = "YARA Process Scanning",
+        long,
+        requires = "scan_processes",
+        conflicts_with = "yara_rules"
+    )]
     yara_release: Option<String>,
-    /// Mounted Windows volume directory; repeat for additional volumes
-    #[arg(short = 'd', long = "source", value_name = "DIR")]
-    sources: Vec<PathBuf>,
-    /// Select a live volume such as C:; repeat (default: all discovered fixed volumes)
-    #[arg(long = "volume", value_name = "VOLUME", conflicts_with = "sources")]
-    volumes: Vec<String>,
-    /// Acquire live files from owned, crash-consistent VSS snapshots
-    #[arg(long, conflicts_with = "sources")]
-    vss: bool,
-    /// Also collect existing snapshots: all, newest, newest N per volume, or a GUID
-    #[arg(long, num_args = 0..=1, default_missing_value = "all", value_name = "SELECTION", conflicts_with = "sources")]
-    vss_existing: Option<kumade::vss_history::Selection>,
-    /// VSS snapshot creation deadline in seconds
-    #[arg(long, value_name = "SECONDS", requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
-    vss_timeout: Option<u64>,
-    /// Output parent directory (required unless --vhdx, --e01, --sftp or --s3 is given); plan writes Plan.json here
-    #[arg(short, long, value_name = "DIR", required_unless_present_any = ["vhdx", "e01", "sftp", "s3"])]
-    output: Option<PathBuf>,
-    /// Save to an NTFS VHDX; a directory (or no value: Kumade-Results beside the executable) names it by hostname and UTC start time
-    #[arg(long, value_name = "FILE_OR_DIR", conflicts_with = "output")]
-    vhdx: Option<Option<PathBuf>>,
-    /// Virtual capacity in GiB (default: automatic, dynamically allocated)
-    #[arg(long, value_name = "GIB", requires = "vhdx", value_parser = clap::value_parser!(u64).range(1..=65536))]
-    vhdx_size_gib: Option<u64>,
-    /// Save to compressed E01 segments; a directory (or no value: Kumade-Results beside the executable) names them by hostname and UTC start time
-    #[arg(long, value_name = "FILE_OR_DIR", conflicts_with_all = ["output", "vhdx"])]
-    e01: Option<Option<PathBuf>>,
-    /// NTFS capacity in GiB before E01 compression (default: automatic)
-    #[arg(long, value_name = "GIB", requires = "e01", value_parser = clap::value_parser!(u64).range(1..=65536))]
-    e01_size_gib: Option<u64>,
-    /// Skip the automatic live-response inventory (offline sources always skip it)
-    #[arg(long)]
-    no_live_info: bool,
-    /// Live-response inventory output format
-    #[arg(long, value_enum, default_value = "csv")]
-    live_info_format: kumade::live_info::Format,
-    /// Per-provider live-response deadline in seconds
-    #[arg(long,default_value_t=90,value_parser=clap::value_parser!(u64).range(1..=3600))]
-    live_info_timeout: u64,
-    /// Computer name for offline evidence
-    #[arg(long)]
-    computer: Option<String>,
-    /// Explicit acquisition catalog; executable-directory configs are never auto-loaded
-    #[arg(long)]
-    catalog: Option<PathBuf>,
-    /// Limit scope to an artifact ID; repeat to include several
-    #[arg(long = "artifact", value_name = "ID")]
-    artifacts: Vec<String>,
-    /// Additional local profile root under a selected source
-    #[arg(long = "profile-root", value_name = "DIR")]
-    profile_roots: Vec<PathBuf>,
-    /// Maximum acquisition workers (default: available logical CPUs, at most 4)
-    #[arg(short = 'T', long, default_value_t = default_threads())]
-    threads: usize,
-    /// Keep this much destination space free (MiB)
-    #[arg(long, default_value_t = 2048)]
-    reserve_mib: u64,
-    /// Acquire physical RAM first with a separately supplied DumpIt toolkit
-    #[arg(short = 'm', long)]
-    memory: bool,
-    #[command(flatten)]
-    memory_options: kumade::memory::Args,
-    /// Suppress progress and routine console messages
-    #[arg(short, long)]
-    quiet: bool,
-    #[command(flatten)]
+
+    #[command(flatten, next_help_heading = "High-Entropy File Scanning")]
     entropy: kumade::entropy::EntropyArgs,
-    #[command(flatten)]
+
+    #[command(flatten, next_help_heading = "SFTP Upload")]
     sftp: kumade::sftp::Args,
-    #[command(flatten)]
+
+    #[command(flatten, next_help_heading = "S3 Upload")]
     s3: kumade::s3::S3Args,
-    /// List each file being copied instead of displaying a progress bar
-    #[arg(short = 'v', long, conflicts_with = "quiet")]
-    verbose: bool,
 }
 
 #[derive(Args)]
 struct ForensicCopyArgs {
-    /// Logical volume to read, for example C: or a volume GUID
-    #[arg(short = 's', long, value_name = "VOLUME")]
-    source: String,
-    /// Destination directory on a different external physical drive
-    #[arg(short, long, value_name = "DIR")]
-    output: PathBuf,
-    /// Read from an owned, crash-consistent VSS snapshot
-    #[arg(long)]
-    vss: bool,
-    /// VSS snapshot creation deadline in seconds
-    #[arg(long, requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
-    vss_timeout: Option<u64>,
-    /// Keep this much destination space free (MiB)
-    #[arg(long, default_value_t = 2048)]
-    reserve_mib: u64,
     /// Suppress progress and routine console messages
     #[arg(short, long)]
     quiet: bool,
+
+    /// Logical volume to read, for example C: or a volume GUID
+    #[arg(help_heading = "Input", short = 's', long, value_name = "VOLUME")]
+    source: String,
+
+    /// Destination directory on a different external physical drive
+    #[arg(help_heading = "Output", short, long, value_name = "DIR")]
+    output: PathBuf,
+    /// Keep this much destination space free (MiB)
+    #[arg(help_heading = "Output", long, default_value_t = 2048)]
+    reserve_mib: u64,
+
+    /// Read from an owned, crash-consistent VSS snapshot
+    #[arg(help_heading = "Volume Shadow Copies", long)]
+    vss: bool,
+    /// VSS snapshot creation deadline in seconds
+    #[arg(help_heading = "Volume Shadow Copies", long, requires = "vss", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    vss_timeout: Option<u64>,
 }
 
 #[derive(Args)]
 struct LiveInfoArgs {
-    /// New output directory (existing directories are refused)
-    #[arg(short, long, value_name = "DIR", required_unless_present = "list")]
-    output: Option<PathBuf>,
-    /// List the embedded inventory data sets without querying the system
-    #[arg(long)]
-    list: bool,
-    /// Output format
-    #[arg(short = 't', long = "format", value_enum, default_value = "csv")]
-    format: kumade::live_info::Format,
-    /// Select a named data set; repeat (default: all)
-    #[arg(long = "dataset", value_name = "NAME")]
-    datasets: Vec<String>,
     /// Concurrent PowerShell queries
     #[arg(short='T',long,default_value_t=2,value_parser=clap::value_parser!(u64).range(1..=8))]
     threads: u64,
@@ -262,6 +307,32 @@ struct LiveInfoArgs {
     /// Suppress progress
     #[arg(short, long)]
     quiet: bool,
+
+    /// List the embedded inventory data sets without querying the system
+    #[arg(help_heading = "Data Sets", long)]
+    list: bool,
+    /// Select a named data set; repeat (default: all)
+    #[arg(help_heading = "Data Sets", long = "dataset", value_name = "NAME")]
+    datasets: Vec<String>,
+
+    /// New output directory (existing directories are refused)
+    #[arg(
+        help_heading = "Output",
+        short,
+        long,
+        value_name = "DIR",
+        required_unless_present = "list"
+    )]
+    output: Option<PathBuf>,
+    /// Output format
+    #[arg(
+        help_heading = "Output",
+        short = 't',
+        long = "format",
+        value_enum,
+        default_value = "csv"
+    )]
+    format: kumade::live_info::Format,
 }
 
 /// A conservative live-triage default; operators can explicitly request up to
@@ -387,6 +458,7 @@ fn run() -> Result<u8> {
     };
     let show_help = match supplied {
         [] => true,
+        [command] if command == "check-support" => false,
         [command] => command
             .to_str()
             .is_some_and(|name| Cli::command().find_subcommand(name).is_some()),
@@ -406,7 +478,7 @@ fn run() -> Result<u8> {
         Err(error) => error.exit(),
     };
     let (mut options, plan_only) = match cli.command {
-        Some(Command::Receive(args)) => return kumade::sftp_receive::run(&args),
+        Some(Command::ReceiveSftp(args)) => return kumade::sftp_receive::run(&args),
         Some(Command::ResumeS3(args)) => return kumade::s3_phases::resume(&args),
         Some(Command::VerifyS3(args)) => return kumade::s3::verify(&args),
         Some(Command::VerifyDelivery(args)) => return kumade::sftp_verify::run(&args),
@@ -466,64 +538,11 @@ fn run() -> Result<u8> {
             }
             return Ok(if info.failures() > 0 { 3 } else { 0 });
         }
-        Some(Command::Doctor { .. }) => {
-            ui::banner();
-            ui::field(
-                "Platform",
-                format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH),
-            );
-            ui::field(
-                "Live acquisition",
-                if cfg!(windows) {
-                    "Available; elevated privileges required"
-                } else {
-                    "Use offline --source directories"
-                },
-            );
-            ui::field("Raw NTFS acquisition", "Available");
-            ui::field(
-                "Bundled YARA Forge",
-                kumade::yara_rules::bundle_description(),
-            );
-            ui::field(
-                "Partition imaging",
-                if cfg!(windows) {
-                    "forensic-copy; external destination and elevation required"
-                } else {
-                    "Requires Windows"
-                },
-            );
-            ui::field(
-                "RAM acquisition",
-                "External DumpIt (--memory; toolkit required)",
-            );
-            ui::field(
-                "VSS acquisition",
-                "--vss; native elevated Windows, crash-consistent snapshots without application writers",
-            );
-            ui::field(
-                "Remote transport",
-                "--sftp (pinned host key) or --s3 (temporary upload credentials)",
-            );
-            ui::field(
-                "VHDX output",
-                if cfg!(windows) {
-                    "Available; elevated Windows and Storage cmdlets required"
-                } else {
-                    "Requires Windows"
-                },
-            );
-            ui::field(
-                "E01 output",
-                if cfg!(windows) {
-                    "Available; NTFS staging, native compression and hash verification"
-                } else {
-                    "Collection requires Windows"
-                },
-            );
+        Some(Command::CheckSupport) => {
+            kumade::support::print();
             return Ok(0);
         }
-        Some(Command::List { catalog, .. }) => {
+        Some(Command::ListArtifacts { catalog, .. }) => {
             ui::banner();
             let rules = rules(catalog.as_deref())?;
             ui::heading(&format!(
@@ -557,12 +576,11 @@ fn run() -> Result<u8> {
             );
             return Ok(if complete { 0 } else { 3 });
         }
-        Some(Command::Plan(options)) => (options, true),
+        Some(Command::CollectTest(options)) => (options, true),
         Some(Command::Collect(options)) => (options, false),
         None => (cli.options, false),
     };
     options.sftp.validate()?;
-    // Every collection runs the wizard unless --no-wizard asks for the defaults.
     let interactive = !plan_only && !options.no_wizard;
     ensure!(
         !interactive || !options.quiet,
@@ -570,11 +588,11 @@ fn run() -> Result<u8> {
     );
     ensure!(
         !plan_only || !options.remote(),
-        "Remote uploads are a collect destination; plan uses -o DIR"
+        "Remote uploads are a collect destination; collect-test uses -o DIR"
     );
     ensure!(
         !plan_only || !options.vss,
-        "plan does not create VSS snapshots; use collect --vss"
+        "collect-test does not create VSS snapshots; use collect --vss"
     );
     if options.vss || options.vss_existing.is_some() {
         kumade::vss::check_host()?;
@@ -585,7 +603,7 @@ fn run() -> Result<u8> {
     );
     ensure!(
         !plan_only || (options.vhdx.is_none() && options.e01.is_none()),
-        "plan does not create containers; use -o DIR for a plan"
+        "collect-test does not create containers; use -o DIR for a plan"
     );
     ensure!(
         options.vhdx.is_none() || cfg!(windows),
@@ -1169,7 +1187,10 @@ fn run() -> Result<u8> {
 
 fn main() -> ExitCode {
     match run() {
-        Ok(code) => ExitCode::from(code),
+        Ok(code) => {
+            ui::finish();
+            ExitCode::from(code)
+        }
         Err(error) => {
             let _ = writeln!(std::io::stderr(), "Error: {error:#}");
             ExitCode::from(2)
@@ -1288,7 +1309,7 @@ mod tests {
         for args in [
             vec!["kumade", "collect", "--no-wizard"],
             vec!["kumade", "--no-wizard"],
-            vec!["kumade", "plan", "--artifact", "windows.prefetch"],
+            vec!["kumade", "collect-test", "--artifact", "windows.prefetch"],
             vec!["kumade", "collect", "-o", "results", "--wizard"],
             vec![
                 "kumade",
@@ -1316,8 +1337,8 @@ mod tests {
                 "--sftp-password-stdin",
                 "--no-wizard",
             ],
-            vec!["kumade", "doctor", "--check"],
-            vec!["kumade", "list", "--builtin"],
+            vec!["kumade", "check-support"],
+            vec!["kumade", "list-artifacts", "--builtin"],
         ] {
             assert!(Cli::try_parse_from(args).is_ok());
         }
@@ -1333,6 +1354,32 @@ mod tests {
                 .options
                 .no_wizard
         );
+    }
+
+    #[test]
+    fn skipping_the_wizard_preserves_explicit_collection_features() {
+        let cli = parse_args([
+            "kumade",
+            "collect",
+            "-w",
+            "--memory",
+            "--paging",
+            "--hibernation",
+            "--vss",
+            "--vss-existing",
+            "newest",
+            "--scan-processes",
+            "--high-entropy",
+        ])
+        .unwrap();
+        let Some(Command::Collect(options)) = cli.command else {
+            panic!("expected collect")
+        };
+        assert!(options.no_wizard);
+        assert!(options.memory && options.paging && options.hibernation);
+        assert!(options.vss && options.vss_existing.is_some());
+        assert!(options.scan_processes && options.entropy.high_entropy);
+        assert!(!options.no_live_info);
     }
 
     #[test]
@@ -1512,7 +1559,7 @@ mod tests {
             vec!["kumade", "--high-entropy", "--entropy-threshold", "8"],
             vec![
                 "kumade",
-                "plan",
+                "collect-test",
                 "--high-entropy",
                 "--entropy-scope",
                 "either",
@@ -1537,10 +1584,24 @@ mod tests {
             panic!("collect")
         };
         assert!(!options.memory);
-        assert!(!options.memory_options.no_memory_pagefile);
-        let cli = parse_args(["kumade", "--memory", "--no-memory-pagefile"]).unwrap();
-        assert!(cli.options.memory && cli.options.memory_options.no_memory_pagefile);
-        assert!(parse_args(["kumade", "--no-memory-pagefile"]).is_err());
+        for (flags, skip_page, skip_swap) in [
+            (vec![], false, false),
+            (vec!["--no-memory-pagefile"], true, false),
+            (vec!["--no-memory-swapfile"], false, true),
+            (
+                vec!["--no-memory-pagefile", "--no-memory-swapfile"],
+                true,
+                true,
+            ),
+        ] {
+            let args = ["kumade", "-m"].into_iter().chain(flags);
+            let selected = parse_args(args).unwrap().options.memory_options;
+            assert_eq!(selected.no_memory_pagefile, skip_page);
+            assert_eq!(selected.no_memory_swapfile, skip_swap);
+        }
+        for option in ["--no-memory-pagefile", "--no-memory-swapfile"] {
+            assert!(parse_args(["kumade", option]).is_err());
+        }
     }
     #[test]
     fn containers_accept_automatic_names_and_destination_directories() {

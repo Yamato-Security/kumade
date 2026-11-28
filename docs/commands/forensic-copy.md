@@ -1,6 +1,6 @@
 # `forensic-copy`
 
-Image a logical partition.
+Create a bit-for-bit image of a logical Windows partition.
 
 This is separate from artifact collection. It writes a logical partition image
 and a receipt, not the physical whole disk and not only catalogue files.
@@ -22,28 +22,34 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0
 
-    Image a logical partition to a raw file on a different external drive
+    Create a bit-for-bit image of a logical Windows partition
 
     Usage: kumade forensic-copy [OPTIONS] --source <VOLUME> --output <DIR>
 
     Options:
-      -s, --source <VOLUME>            Logical volume to read, for example C: or a volume GUID
+      -q, --quiet  Suppress progress and routine console messages
+      -h, --help   Print help
+
+    Input:
+      -s, --source <VOLUME>  Logical volume to read, for example C: or a volume GUID
+
+    Output:
       -o, --output <DIR>               Destination directory on a different external physical drive
+          --reserve-mib <RESERVE_MIB>  Keep this much destination space free (MiB) [default: 2048]
+
+    Volume Shadow Copies:
           --vss                        Read from an owned, crash-consistent VSS snapshot
           --vss-timeout <VSS_TIMEOUT>  VSS snapshot creation deadline in seconds
-          --reserve-mib <RESERVE_MIB>  Keep this much destination space free (MiB) [default: 2048]
-      -q, --quiet                      Suppress progress and routine console messages
-      -h, --help                       Print help
     ```
 
 [Download plain-text help](help/forensic-copy.txt).

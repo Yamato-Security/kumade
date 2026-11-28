@@ -75,7 +75,7 @@ pub fn disk_priority(item: &PlannedFile) -> usize {
         .any(|id| has(id))
     {
         6
-    } else if has("windows.paging") || has("windows.hibernation") {
+    } else if has("windows.paging") || has("windows.hibernation") || has("windows.crashdumps") {
         9
     } else if [
         "windows.outlook",

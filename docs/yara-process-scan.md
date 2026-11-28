@@ -24,7 +24,7 @@ Optional Core/Extended/Full binaries embed the exact compressed Forge ZIP. Rules
 Choose an executable ending in `-yara-core.exe`, `-yara-extended.exe` or
 `-yara-full.exe` for offline use. Each contains one complete, compressed ZIP.
 The chosen pack is also that binary's default in the collection wizard. Use
-`doctor --check` to inspect its exact embedded release and archive hash.
+`check-support` to inspect its exact embedded release and archive hash.
 
 The ZIP member is decompressed **in RAM**, then compiled by Boreal. YARA cannot
 evaluate compressed bytes directly. Kumade does not extract member paths, create

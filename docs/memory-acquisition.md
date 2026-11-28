@@ -6,10 +6,10 @@ It is off by default. The wizard also offers RAM capture, showing the approximat
 physical RAM size. Planning and wizard size estimation read metadata before capture;
 this is not an atomic machine snapshot.
 
-To preserve an existing saved hibernation state as well, select
-`--hibernation` or the `windows.hibernation` family. This copies `hiberfil.sys`
-separately from new RAM capture; it is off by default and is excluded from VSS.
-See [hibernation-file acquisition](hibernation-acquisition.md).
+Default disk collection includes the existing `hiberfil.sys`, `Windows/MEMORY.DMP`, and
+`Windows/Minidump/` files when present. These contain earlier states and are
+acquired in the disk phase even without `-m`. Artifact and volume selections still apply.
+See [hibernation acquisition](hibernation-acquisition.md) for VSS exclusions.
 
 ## Supply the vendor tool separately
 
@@ -46,25 +46,23 @@ the checked executable open without write/delete sharing while it runs.
 .\kumade.exe collect -o E:\Evidence --memory --dumpit E:\Tools\Comae-Toolkit --no-wizard
 ```
 
-To include the catalog's paging, swap, hibernation and existing dump files too:
+With `-m`, DumpIt writes the live RAM image. Once it starts producing payload,
+Kumade starts separate workers for active paging files and for `swapfile.sys` on the running
+Windows volume. This includes active pagefiles on other volumes and at custom paths.
+The swap worker uses the system volume even when Windows omits the swapfile from its active-pagefile list.
+A single large pagefile cannot delay the start of the swapfile read.
+Read intervals may overlap without matching exactly. Windows can change bytes during any of these reads.
 
-```powershell
-.\kumade.exe collect -o E:\Evidence --memory --paging --dumpit E:\Tools\Comae-Toolkit --no-wizard
-```
+| RAM acquisition options | Companion files |
+|---|---|
+| `-m` | Active pagefiles and the Windows swapfile, when present |
+| `-m --no-memory-pagefile` | Swapfile only |
+| `-m --no-memory-swapfile` | Active pagefiles only |
+| `-m --no-memory-pagefile --no-memory-swapfile` | Neither |
 
-Active `pagefile.sys` files are copied **concurrently with RAM by default** when
-`--memory` is selected. Use `--no-memory-pagefile` for RAM alone. RAM acquisition
-itself remains opt-in. The active-file query includes custom paths and volumes;
-it does not depend on the next-boot PagingFiles registry configuration. Locked
-files use the live raw NTFS reader. Copying waits for the DumpIt output to extend beyond its header, then runs
-concurrently. File allocation alone does not prove which RAM pages have been read;
-use the recorded time bounds and remember that this is not an atomic snapshot. This is a time-overlapping acquisition,
-**not an atomic RAM/pagefile snapshot**: Windows can change pages during either read.
-
-`--paging` additionally selects swap/hibernation and existing crash-dump files.
-An active paging file already handled by paired acquisition is not copied again
-in the later disk phase. Offline `--source` requests never acquire
-the analyst computer's RAM: they record a failed RAM task and continue disk acquisition.
+These switches affect the live RAM phase. Explicit `--paging` also requests disk copies.
+Kumade deduplicates a paired payload against the same live disk source. Historical snapshots are separate sources.
+Offline `--source` requests never acquire the analyst computer's RAM.
 
 ## Output, verification and failures
 
@@ -72,11 +70,12 @@ The owned collection contains:
 
 - `Memory/Memory.dmp`: uncompressed Microsoft full-memory dump, including retained
   partial bytes if the tool failed after creating the file. Check the manifest status.
+- `Memory/Swapfile.sys`: the Windows OS-volume swapfile when present and enabled.
 - `Memory/Pagefile0.sys`, `Pagefile1.sys`, …: active pagefiles, when present.
-  `Memory/Pagefiles.json` records each original source path, read time bounds,
+  `Memory/Pagefiles.json` covers both kinds of companion and records each original source path, read time bounds,
   size, status and SHA-256. Numbering is acquisition order, **not a verified Windows
   pagefile index**. Discovery/copy failures are explicit failed manifest records;
-  a machine with no active paging files has an empty inventory.
+  an absent swapfile has a `NotPresent` entry.
 - `Memory/Acquisition.json`: UTC start/end, provider hash, exit code when available,
   dump-layout check, acquisition record and limitations.
 - `Memory/DumpIt-stdout.txt` and `DumpIt-stderr.txt`: provider diagnostics, up to
@@ -163,6 +162,8 @@ with `-pagefile0 <file>`. For a machine with one active default paging file:
 ```text
 MemProcFS -device Memory/Memory.dmp -pagefile0 Memory/Pagefile0.sys
 ```
+
+MemProcFS also accepts the captured `Memory/Swapfile.sys`. Use `-pagefile1 Memory/Swapfile.sys` only if the source Windows system assigned it index 1.
 
 Use the original paths in `Pagefiles.json` to identify collected inputs. For
 multiple active files, verify their Windows paging-file indexes before supplying

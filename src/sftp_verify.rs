@@ -33,26 +33,27 @@ pub const MAX_METADATA: u64 = 128 * 1024 * 1024;
 #[derive(clap::Args)]
 pub struct Options {
     /// Flat incoming object directory from an SFTP delivery
-    #[arg(long)]
+    #[arg(help_heading = "Delivery Verification", long)]
     pub incoming: PathBuf,
     /// Final UUID-delivery.json object name
-    #[arg(long)]
+    #[arg(help_heading = "Delivery Verification", long)]
     pub delivery: String,
     /// Delivery SHA256 printed by the collector (compare independently)
-    #[arg(long)]
+    #[arg(help_heading = "Delivery Verification", long)]
     pub sha256: String,
+    /// Confirm upload credentials have been revoked and existing sessions ended
+    #[arg(help_heading = "Delivery Verification", long, required = true)]
+    pub uploader_revoked: bool,
+
     /// New readback receipt path (will not overwrite an existing file)
-    #[arg(long)]
+    #[arg(help_heading = "Output and Restore", long)]
     pub receipt: PathBuf,
     /// Optional new directory in which to reconstruct files (extra server disk space)
-    #[arg(long)]
+    #[arg(help_heading = "Output and Restore", long)]
     pub restore: Option<PathBuf>,
     /// Maximum total decoded GiB, including sparse logical zero ranges
-    #[arg(long,default_value_t=1024,value_parser=clap::value_parser!(u64).range(1..=1048576))]
+    #[arg(help_heading = "Output and Restore", long,default_value_t=1024,value_parser=clap::value_parser!(u64).range(1..=1048576))]
     pub max_decoded_gib: u64,
-    /// Confirm upload credentials have been revoked and existing sessions ended
-    #[arg(long, required = true)]
-    pub uploader_revoked: bool,
 }
 pub struct Inputs {
     pub incoming: PathBuf,

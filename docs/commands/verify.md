@@ -1,6 +1,6 @@
 # `verify`
 
-Check a retained local collection.
+Verify the integrity of a local Kumade collection.
 
 Read the saved collection, validate seals/accounting and compare retained
 payload hashes without reading original source evidence.
@@ -21,22 +21,22 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
 ??? info "Show full help"
 
     ```text
-    ┏┓┏━┓┓ ┏┓━┓┏━┓━━━┓━━━┓━━━┓
+    ┏┓┏━┳┓ ┏┳━┓┏━┳━━━┳━━━┳━━━┓
     ┃┃┃┏┛┃ ┃┃ ┗┛ ┃┏━┓┃┓┏┓┃┏━━┛
     ┃┗┛┛┃┃ ┃┃┏┓┏┓┃┃ ┃┃┃┃┃┃┗━━┓
     ┃┏┓┃┃┃ ┃┃┃┃┃┃┃┗━┛┃┃┃┃┃┏━━┛
     ┃┃┃┗┓┗━┛┃┃┃┃┃┃┏━┓┃┛┗┛┃┗━━┓
-    ┗┛┗━┛━━━┛┛┗┛┗┛┛ ┗┛━━━┛━━━┛
+    ┗┛┗━┻━━━┻┛┗┛┗┻┛ ┗┻━━━┻━━━┛
         by Yamato Security
 
     Version: 0.1.0
 
-    Verify the seal and every stored payload; never reads original sources
+    Verify the integrity of a local Kumade collection
 
     Usage: kumade verify <DIRECTORY>
 
     Arguments:
-      <DIRECTORY>
+      <DIRECTORY>  Collection directory containing the manifest
 
     Options:
       -h, --help  Print help

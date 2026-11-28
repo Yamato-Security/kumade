@@ -37,36 +37,60 @@ pub enum Format {
 
 #[derive(Args, Debug, Clone)]
 pub struct Options {
-    /// New result directory (existing directories are refused)
-    #[arg(short, long, value_name = "DIR")]
-    pub output: PathBuf,
-    /// YARA Forge package (bundled selection by default, otherwise core)
-    #[arg(long, value_enum, default_value_t, conflicts_with = "rules")]
-    pub ruleset: RuleSet,
-    /// Forge release tag YYYYMMDD, or latest
-    #[arg(long, default_value = "latest", conflicts_with = "rules")]
-    pub rules_release: String,
-    /// Local Forge ZIP or UTF-8 YARA source (offline; includes disabled)
-    #[arg(long, value_name = "FILE")]
-    pub rules: Option<PathBuf>,
-    /// Result table format
-    #[arg(short = 't', long, value_enum, default_value = "csv")]
-    pub format: Format,
-    /// Limit scanning to a PID; repeat (default: all except this collector)
-    #[arg(long = "pid", value_name = "PID")]
-    pub pids: Vec<u32>,
-    /// Concurrent processes (default: 2 to limit live-system pressure)
-    #[arg(short = 'T', long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=16))]
-    pub threads: u64,
-    /// Deadline per process in seconds; expired scans retain partial matches
-    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
-    pub timeout: u64,
-    /// Memory read chunk size in MiB; patterns crossing chunks may be missed
-    #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u64).range(1..=256))]
-    pub chunk_mib: u64,
     /// Suppress progress and routine console messages
     #[arg(short, long)]
     pub quiet: bool,
+
+    /// Limit scanning to a PID; repeat (default: all except this collector)
+    #[arg(
+        help_heading = "Process Selection and Scan Limits",
+        long = "pid",
+        value_name = "PID"
+    )]
+    pub pids: Vec<u32>,
+    /// Concurrent processes (default: 2 to limit live-system pressure)
+    #[arg(help_heading = "Process Selection and Scan Limits", short = 'T', long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=16))]
+    pub threads: u64,
+    /// Deadline per process in seconds; expired scans retain partial matches
+    #[arg(help_heading = "Process Selection and Scan Limits", long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub timeout: u64,
+    /// Memory read chunk size in MiB; patterns crossing chunks may be missed
+    #[arg(help_heading = "Process Selection and Scan Limits", long, default_value_t = 16, value_parser = clap::value_parser!(u64).range(1..=256))]
+    pub chunk_mib: u64,
+
+    /// YARA Forge package (bundled selection by default, otherwise core)
+    #[arg(
+        help_heading = "YARA Rules",
+        long,
+        value_enum,
+        default_value_t,
+        conflicts_with = "rules"
+    )]
+    pub ruleset: RuleSet,
+    /// Forge release tag YYYYMMDD, or latest
+    #[arg(
+        help_heading = "YARA Rules",
+        long,
+        default_value = "latest",
+        conflicts_with = "rules"
+    )]
+    pub rules_release: String,
+    /// Local Forge ZIP or UTF-8 YARA source (offline; includes disabled)
+    #[arg(help_heading = "YARA Rules", long, value_name = "FILE")]
+    pub rules: Option<PathBuf>,
+
+    /// New result directory (existing directories are refused)
+    #[arg(help_heading = "Output", short, long, value_name = "DIR")]
+    pub output: PathBuf,
+    /// Result table format
+    #[arg(
+        help_heading = "Output",
+        short = 't',
+        long,
+        value_enum,
+        default_value = "csv"
+    )]
+    pub format: Format,
 }
 
 #[derive(Debug, Clone, Serialize)]

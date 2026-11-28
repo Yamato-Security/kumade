@@ -373,6 +373,19 @@ pub fn live_sources(destination: Option<&Path>) -> Result<SourceDiscovery> {
     windows::live_sources(destination)
 }
 
+#[cfg(windows)]
+pub(crate) const BACKUP_PRIVILEGE: &str = "SeBackupPrivilege";
+#[cfg(windows)]
+pub(crate) const METADATA_PRIVILEGES: &[&str] = &[
+    BACKUP_PRIVILEGE,
+    "SeRestorePrivilege",
+    "SeSecurityPrivilege",
+    "SeManageVolumePrivilege",
+];
+
+#[cfg(windows)]
+pub(crate) use windows::{check_privileges, system_windows_directory};
+
 #[cfg(not(windows))]
 pub fn enable_backup_privilege() -> Result<()> {
     bail!("Windows privileges are not available")
@@ -386,7 +399,12 @@ pub fn enable_backup_privilege() -> Result<()> {
 mod windows {
     use super::*;
     use anyhow::{Context, ensure};
-    use std::{mem::size_of, path::PathBuf, ptr};
+    use std::{
+        mem::size_of,
+        os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        path::PathBuf,
+        ptr,
+    };
     use windows_sys::Win32::{
         Foundation::*,
         Security::*,
@@ -467,87 +485,122 @@ mod windows {
         text.encode_utf16().chain(Some(0)).collect()
     }
 
-    pub fn enable_backup_privilege() -> Result<()> {
-        // SAFETY: the token output is initialized only by OpenProcessToken.
+    fn process_token(access: TOKEN_ACCESS_MASK) -> Result<OwnedHandle> {
         let mut token = ptr::null_mut();
-        ensure!(
-            // SAFETY: the current process handle is valid and token is writable.
-            unsafe {
-                OpenProcessToken(
-                    GetCurrentProcess(),
-                    TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
-                    &mut token,
-                )
-            } != 0,
-            "OpenProcessToken: {}",
-            std::io::Error::last_os_error()
-        );
-        let result = (|| {
-            // SAFETY: TOKEN_ELEVATION has an all-zero valid representation.
-            let mut elevation: TOKEN_ELEVATION = unsafe { std::mem::zeroed() };
-            let mut returned = 0;
-            ensure!(
-                // SAFETY: valid token and correctly sized writable output.
-                unsafe {
-                    GetTokenInformation(
-                        token,
-                        TokenElevation,
-                        &mut elevation as *mut _ as *mut _,
-                        size_of::<TOKEN_ELEVATION>() as u32,
-                        &mut returned,
-                    )
-                } != 0,
-                "Cannot inspect elevation"
-            );
-            ensure!(
-                elevation.TokenIsElevated != 0,
-                "Full live collection needs an elevated local administrator; run as administrator or select an offline --source"
-            );
-            let mut luid = LUID {
-                LowPart: 0,
-                HighPart: 0,
-            };
-            ensure!(
-                // SAFETY: the name is NUL-terminated; luid is writable.
-                unsafe {
-                    LookupPrivilegeValueW(
-                        ptr::null(),
-                        wide("SeBackupPrivilege").as_ptr(),
-                        &mut luid,
-                    )
-                } != 0,
-                "Cannot resolve backup privilege"
-            );
-            let state = TOKEN_PRIVILEGES {
-                PrivilegeCount: 1,
-                Privileges: [LUID_AND_ATTRIBUTES {
-                    Luid: luid,
-                    Attributes: SE_PRIVILEGE_ENABLED,
-                }],
-            };
-            // SAFETY: token and the single privilege entry are valid; no previous state requested.
-            unsafe {
-                SetLastError(0);
-            }
-            ensure!(
-                // SAFETY: state layout matches TOKEN_PRIVILEGES for one entry.
-                unsafe {
-                    AdjustTokenPrivileges(token, 0, &state, 0, ptr::null_mut(), ptr::null_mut())
-                } != 0,
-                "Cannot enable backup privilege"
-            );
-            ensure!(
-                // SAFETY: GetLastError reads the thread's error value.
-                unsafe { GetLastError() } != ERROR_NOT_ALL_ASSIGNED,
-                "Token does not hold SeBackupPrivilege"
-            );
-            Ok(())
-        })();
-        // SAFETY: this function exclusively owns the token handle.
-        unsafe {
-            CloseHandle(token);
+        // SAFETY: the current process handle is valid and the output is writable.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), access, &mut token) } == 0 {
+            return Err(std::io::Error::last_os_error()).context("Cannot open process token");
         }
-        result
+        // SAFETY: a successful OpenProcessToken returns an owned handle.
+        Ok(unsafe { OwnedHandle::from_raw_handle(token) })
+    }
+
+    fn is_elevated(token: &OwnedHandle) -> Result<bool> {
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0;
+        // SAFETY: the token is open for queries and the output matches TokenElevation.
+        if unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenElevation,
+                (&raw mut elevation).cast(),
+                size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error()).context("Cannot inspect elevation");
+        }
+        Ok(elevation.TokenIsElevated != 0)
+    }
+
+    fn enable_privilege_on(token: &OwnedHandle, name: &str) -> Result<bool> {
+        let mut luid = LUID::default();
+        // SAFETY: the privilege name is NUL-terminated and the LUID is writable.
+        if unsafe { LookupPrivilegeValueW(ptr::null(), wide(name).as_ptr(), &mut luid) } == 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("Cannot resolve {name}"));
+        }
+        let state = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+        // SAFETY: the token allows adjustment, the state holds one initialized entry,
+        // and no previous-state output is requested.
+        unsafe {
+            SetLastError(0);
+            if AdjustTokenPrivileges(
+                token.as_raw_handle(),
+                0,
+                &state,
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error())
+                    .with_context(|| format!("Cannot enable {name}"));
+            }
+            Ok(GetLastError() != ERROR_NOT_ALL_ASSIGNED)
+        }
+    }
+
+    /// Return the first unmet prerequisite, or an error if the token cannot be inspected.
+    pub(crate) fn check_privileges(
+        names: &[&str],
+        require_elevation: bool,
+    ) -> Result<Option<String>> {
+        let token = process_token(TOKEN_QUERY | TOKEN_DUPLICATE)?;
+        let elevated = is_elevated(&token)?;
+        if require_elevation && !elevated {
+            return Ok(Some("run as administrator".into()));
+        }
+
+        // Exercise the same privilege check as collection on a disposable token.
+        let mut copy = ptr::null_mut();
+        // SAFETY: the source permits duplication and the output is writable. The
+        // duplicate uses default security attributes and is never impersonated.
+        if unsafe {
+            DuplicateTokenEx(
+                token.as_raw_handle(),
+                TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES,
+                ptr::null(),
+                SecurityIdentification,
+                TokenImpersonation,
+                &mut copy,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error()).context("Cannot check token privileges");
+        }
+        // SAFETY: DuplicateTokenEx succeeded and transferred ownership of the new handle.
+        let copy = unsafe { OwnedHandle::from_raw_handle(copy) };
+        for &name in names {
+            if !enable_privilege_on(&copy, name)? {
+                return Ok(Some(if elevated {
+                    format!("{name} is missing")
+                } else {
+                    "run as administrator".into()
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn enable_backup_privilege() -> Result<()> {
+        let token = process_token(TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES)?;
+        ensure!(
+            is_elevated(&token)?,
+            "Full live collection needs an elevated local administrator; run as administrator or select an offline --source"
+        );
+        ensure!(
+            enable_privilege_on(&token, BACKUP_PRIVILEGE)?,
+            "Token does not hold SeBackupPrivilege"
+        );
+        Ok(())
     }
 
     fn profile_paths() -> Result<Vec<std::path::PathBuf>> {
@@ -638,7 +691,7 @@ mod windows {
         result
     }
 
-    pub(super) fn windows_volume_name() -> Result<String> {
+    pub(crate) fn system_windows_directory() -> Result<PathBuf> {
         let mut directory = vec![0u16; 32768];
         // SAFETY: writable buffer with its actual UTF-16 capacity.
         let length = unsafe {
@@ -651,8 +704,12 @@ mod windows {
             length > 0 && length < directory.len(),
             "Cannot resolve the Windows directory"
         );
-        let path = PathBuf::from(String::from_utf16(&directory[..length])?);
-        volume_for_path(&path)?.context("The running Windows volume must be local")
+        Ok(PathBuf::from(String::from_utf16(&directory[..length])?))
+    }
+
+    pub(super) fn windows_volume_name() -> Result<String> {
+        volume_for_path(&system_windows_directory()?)?
+            .context("The running Windows volume must be local")
     }
 
     /// Resolve the actual volume, including junctions, mounted folders, GUID

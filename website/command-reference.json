@@ -1,19 +1,19 @@
 {
   "Version": "kumade 0.1.0",
   "Commands": [
+    "check-support",
     "collect",
-    "doctor",
+    "collect-test",
     "forensic-copy",
-    "list",
+    "list-artifacts",
     "list-vss",
     "live-info",
-    "plan",
-    "receive",
+    "receive-sftp",
+    "resume-s3",
     "scan-processes",
     "update-rules",
     "verify",
     "verify-delivery",
-    "resume-s3",
     "verify-s3"
   ]
 }

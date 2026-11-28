@@ -10,8 +10,8 @@ they do not perform entropy analysis or copy evidence payloads.
 After scope confirmation:
 
 1. **Physical RAM acquisition.** With `--memory`, the separately supplied DumpIt
-   provider runs first. Active paging files are copied concurrently by default;
-   `--no-memory-pagefile` opts out. The RAM record appears first in the final manifest.
+   provider runs first. Active pagefiles and the OS swapfile are read concurrently by default.
+   `--no-memory-pagefile` and `--no-memory-swapfile` opt out independently. The RAM record appears first in the final manifest.
    Missing/blocked tools or invalid/truncated dumps produce a failed task and
    partial collection. See [RAM acquisition](memory-acquisition.md).
 2. **Fast live state.** Processes first, then network connections, DNS cache,
@@ -34,7 +34,7 @@ After scope confirmation:
    the hot disk groups above. YARA remains a live scan at its actual recorded
    time; it does not analyze a nonexistent saved RAM dump.
 6. **Remaining disk evidence.** Execution traces, other artifacts, then bulk
-   mail/chat/cache/recycle data and optional paging/hibernation/existing dumps.
+   mail/chat/cache/recycle data and default hibernation/existing crash dumps. The broad disk paging family is optional.
    Existing dump files are disk artifacts, distinct from capturing current RAM.
 7. **Optional full-drive entropy discovery and additional binary acquisition.**
    Core payloads are already preserved. Already acquired unnamed files are
@@ -95,7 +95,7 @@ No pre-existing directory is accepted as an owned staging capture.
 ## Deferred entropy and container capacity
 
 With deferred discovery, `InitialPlan.json` records the initial selection and
-`Plan.json` records the final plan. Both are sealed. `plan --high-entropy` remains
+`Plan.json` records the final plan. Both are sealed. `collect-test --high-entropy` remains
 an explicit standalone analysis/planning action; it does not acquire live data.
 Library callers supplying precomputed entropy results are identified separately
 as `EntropyPreplanned` in `Run.json`; they control work done before collection.

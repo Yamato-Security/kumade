@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Show the command list at the top level and command-specific help for a bare
-  command or `-h`. Use `doctor --check`, `list --builtin` and `list-vss --all`
-  to run the default host, catalog and snapshot checks.
+- Show the command list at the top level and command-specific help with `-h`.
+  Run `check-support` directly for the host support report. Other bare commands
+  display help. Use `list-artifacts --builtin` and `list-vss --all` for the catalog and
+  snapshot listings.
+
+- Rename `list` to `list-artifacts`, `plan` to `collect-test`, and `receive` to
+  `receive-sftp`.
 
 - A collection needs an output (`-o DIR`, or `--vhdx`, `--e01`, `--sftp` or
   `--s3`) and then runs the wizard, also when stdin is redirected.
@@ -32,7 +36,7 @@
   for independent SHA-256 readback and restoration. Unconfirmed writes retain
   staging and return an error. Restored evidence is published after verification.
 
-- Accept concurrent SFTP collections on one listener with `receive --sources N`.
+- Accept concurrent SFTP collections on one listener with `receive-sftp --sources N`.
   Each computer gets its own expiring credentials, inbox and readback receipt.
   A running collector can reconnect to a running Kumade receiver and continue
   at the receiver's accepted byte offset. Set the reconnect budget with
@@ -67,7 +71,7 @@
   (`--no-memory-pagefile` skips them), recorded in `Memory/Pagefiles.json`, not
   copied again by `--paging`, and verified like the RAM dump. No vendor tools bundled.
 
-- Add a built-in `receive` command with ephemeral SFTP credentials, append-only
+- Add a built-in `receive-sftp` command with ephemeral SFTP credentials, append-only
   uploads, expiry/session revocation, quotas and optional source-IP restrictions.
   Verify disk readback automatically and reconstruct exports without Python
   using `verify-delivery`. Share device-name checks with export encoding so
@@ -128,7 +132,7 @@
   PE-format files that are not executable images count as non-PE, a malformed
   PE header gets a `Malformed` row instead of failing the run, and `Plan.json`
   keeps settings and counters while the per-file inventory lives only in the
-  sealed reports, which `plan` writes beside the plan. Managed assemblies are
+  sealed reports, which `collect-test` writes beside the plan. Managed assemblies are
   measured without their embedded CLR resources, so satellite `.resources.dll`
   files no longer qualify on compressed strings alone, and `IsManaged` is
   reported. High entropy is a heuristic, not a malware verdict.
