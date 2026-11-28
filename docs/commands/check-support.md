@@ -10,7 +10,7 @@ VSS, RAM capture, container output and collection uploads. VSS also needs a nati
 For RAM it validates the default DumpIt executable without launching it. A custom toolkit can be supplied
 with `--dumpit` during collection. The container check looks for Windows PowerShell and its Storage module.
 Destination space, driver policy, volume eligibility and remote credentials still need to be checked at collection time.
-An empty bundled YARA ruleset is informational because local and downloadable rules are supported.
+If the binary has no embedded YARA Forge rules, the value appears in red. You can supply a local ZIP or use `update-rules` to download one.
 
 ```powershell
 .\kumade.exe check-support

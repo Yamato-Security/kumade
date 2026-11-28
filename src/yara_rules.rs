@@ -246,6 +246,9 @@ fn bundled() -> Option<(&'static [u8], &'static str, &'static str)> {
 fn bundled() -> Option<(&'static [u8], &'static str, &'static str)> {
     None
 }
+pub(crate) fn has_bundle() -> bool {
+    bundled().is_some()
+}
 pub fn bundle_description() -> String {
     match bundled() {
         Some((_, tag, hash)) => format!("{} / {} / SHA-256 {}", RuleSet::default(), tag, hash),

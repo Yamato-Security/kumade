@@ -411,8 +411,10 @@ fn support_colors_every_unavailable_value_and_keeps_the_plain_text_readable() {
                 .lines()
                 .find(|text| console::strip_ansi_codes(text).starts_with(&format!("{label}: ")))
                 .unwrap();
-            let unavailable =
-                value.starts_with("Not available (") || value.starts_with("Unknown (");
+            let unavailable = value.starts_with("Not available (")
+                || value.starts_with("Unknown (")
+                || (label == "Bundled YARA Forge"
+                    && value == "None; use a local ZIP or download rules");
             assert_eq!(line.contains("\x1b[38;2;255;0;0m"), unavailable, "{label}");
             if unavailable {
                 assert!(

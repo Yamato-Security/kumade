@@ -126,10 +126,12 @@ pub fn print() {
         "Raw NTFS acquisition",
         "Available for readable live NTFS volumes",
     );
-    ui::field(
-        "Bundled YARA Forge",
-        crate::yara_rules::bundle_description(),
-    );
+    let bundle = crate::yara_rules::bundle_description();
+    if crate::yara_rules::has_bundle() {
+        ui::field("Bundled YARA Forge", bundle);
+    } else {
+        ui::error_field("Bundled YARA Forge", &bundle);
+    }
     checks.live.show(
         "Partition imaging",
         "forensic-copy (requires a separate external destination disk)",
