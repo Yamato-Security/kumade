@@ -22,13 +22,13 @@ protected file or memory page will be readable.
 
 Review the artifact categories and estimated transfer sizes. Defaults collect
 the supported catalogue families and live inventory; paging, new RAM, VSS,
-entropy discovery and YARA are separate choices. `--no-wizard` skips the wizard using
-defaults plus explicitly requested flags; it does not enable every feature.
+entropy discovery and YARA are separate choices. `-w` (`--no-wizard`) skips the
+wizard and applies any options you specify to those defaults.
 
 To automate the same feature defaults:
 
 ```powershell
-.\kumade.exe collect --no-wizard -o E:\Evidence
+.\kumade.exe collect -w -o E:\Evidence
 ```
 
 To limit the volume scope to `C:`:

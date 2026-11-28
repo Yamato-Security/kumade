@@ -116,8 +116,8 @@ enum Command {
         .conflicts_with("sources")),
 )]
 struct CollectionArgs {
-    /// Collect the default selection without the wizard (for scripts)
-    #[arg(long = "no-wizard", alias = "yes")]
+    /// Skip the wizard and use collection defaults plus any options you specify
+    #[arg(short = 'w', long = "no-wizard", alias = "yes")]
     no_wizard: bool,
     /// Maximum acquisition workers (default: available logical CPUs, at most 4)
     #[arg(short = 'T', long, default_value_t = default_threads())]
@@ -580,7 +580,6 @@ fn run() -> Result<u8> {
         None => (cli.options, false),
     };
     options.sftp.validate()?;
-    // Every collection runs the wizard unless --no-wizard asks for the defaults.
     let interactive = !plan_only && !options.no_wizard;
     ensure!(
         !interactive || !options.quiet,
@@ -1354,6 +1353,32 @@ mod tests {
                 .options
                 .no_wizard
         );
+    }
+
+    #[test]
+    fn skipping_the_wizard_preserves_explicit_collection_features() {
+        let cli = parse_args([
+            "kumade",
+            "collect",
+            "-w",
+            "--memory",
+            "--paging",
+            "--hibernation",
+            "--vss",
+            "--vss-existing",
+            "newest",
+            "--scan-processes",
+            "--high-entropy",
+        ])
+        .unwrap();
+        let Some(Command::Collect(options)) = cli.command else {
+            panic!("expected collect")
+        };
+        assert!(options.no_wizard);
+        assert!(options.memory && options.paging && options.hibernation);
+        assert!(options.vss && options.vss_existing.is_some());
+        assert!(options.scan_processes && options.entropy.high_entropy);
+        assert!(!options.no_live_info);
     }
 
     #[test]

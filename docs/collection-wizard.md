@@ -11,8 +11,8 @@ before snapshots, entropy analysis, process scanning or evidence output.
 .\kumade.exe collect -o E:\Evidence
 
 # Scripted collection: the defaults and explicit command-line options, without the wizard:
-.\kumade.exe collect --no-wizard -o E:\Evidence
-.\kumade.exe collect --no-wizard --paging --vss --vhdx E:\Evidence
+.\kumade.exe collect -w -o E:\Evidence
+.\kumade.exe collect -w --paging --vhdx E:\Evidence
 
 # Optional process scan. The standard binary defaults to Core, bundled binaries to their embedded pack:
 .\kumade.exe collect --no-wizard --scan-processes -o E:\Evidence
@@ -20,8 +20,8 @@ before snapshots, entropy analysis, process scanning or evidence output.
 .\kumade.exe collect --no-wizard --scan-processes --yara-rules .\local.yar -o E:\Evidence
 ```
 
-`--no-wizard` does not mean yes to every optional feature. It skips the questions
-and uses the defaults plus explicit flags. The wizard also runs when stdin is
+`-w` (`--no-wizard`) skips the questions. Unspecified features keep their defaults,
+and explicit collection flags take effect. The wizard also runs when stdin is
 redirected, reading the answers from it. EOF, `q`, or a declined final
 confirmation exits without starting collection. Invalid yes/no and numeric
 answers are reprompted. `--quiet` and `--sftp-password-stdin` need `--no-wizard`.
@@ -36,9 +36,10 @@ answers are reprompted. `--quiet` and `--sftp-password-stdin` need `--no-wizard`
 | Live inventory | On for live collection, with at most two query workers |
 | Native/raw locked-file reads | Enabled where supported; not an optional integrity shortcut |
 | SHA-256 and destination readback | Local copies are checked by the collector. Remote readback uses the SFTP receiver or `verify-s3` on the analyst workstation. |
-| Full-drive PE entropy discovery | Off |
-| Live process-memory YARA | Off; two workers by default, using Core on the standard binary or the embedded pack on bundled binaries |
-| VSS | Off |
+| Full-drive PE entropy discovery | Off. Enable with `--high-entropy`. |
+| Live process-memory YARA | Off. Enable with `--scan-processes`. Defaults to two workers and the bundled ruleset, or Core for the standard binary. |
+| New VSS snapshot | Off. Enable with `--vss`. |
+| Existing VSS snapshots | Off. Use `--vss-existing newest` for the newest snapshot per selected volume, or `--vss-existing all` for all of them. |
 | Destination | Defaults to directory output. Windows also offers VHDX/E01. Select SFTP or S3 with explicit connection options. |
 | Acquisition workers | Available logical CPUs, capped at four; `-T` accepts 1–128 |
 | Full partition imaging | Off; a separate guided mode using `forensic-copy` |

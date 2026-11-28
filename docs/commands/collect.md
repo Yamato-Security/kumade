@@ -10,11 +10,13 @@ The wizard also offers memory acquisition and partition imaging on supported sys
 ```powershell
 .\kumade.exe collect -o E:\Evidence
 .\kumade.exe collect --no-wizard --volume C: --vss --vhdx E:\Evidence
-.\kumade.exe collect --no-wizard --volume C: --hibernation -o E:\Evidence
+.\kumade.exe collect -w --volume C: --hibernation -o E:\Evidence
 ```
 
-`--no-wizard` selects feature defaults plus explicit flags. It does not enable RAM,
-paging, hibernation, VSS or scans automatically. Directory (`-o`), VHDX, E01, SFTP and S3 are
+`-w` (`--no-wizard`) skips the questions and uses your explicit flags alongside the defaults.
+Enable RAM with `--memory`, paging with `--paging` or hibernation alone with `--hibernation`.
+Use `--vss` for a new snapshot, `--vss-existing` for historical snapshots,
+`--scan-processes` for YARA, and `--high-entropy` for PE entropy scanning. Directory (`-o`), VHDX, E01, SFTP and S3 are
 alternative outputs, and one of them is required. With an output, `collect` runs the wizard
 unless `--no-wizard` is given. Read [the wizard](../collection-wizard.md),
 [collection guide](../collection/index.md), [RAM](../memory-acquisition.md),
@@ -47,7 +49,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade collect [OPTIONS]
 
     Options:
-          --no-wizard          Collect the default selection without the wizard (for scripts)
+      -w, --no-wizard          Skip the wizard and use collection defaults plus any options you specify
       -T, --threads <THREADS>  Maximum acquisition workers (default: available logical CPUs, at most 4) [default: 4]
       -q, --quiet              Suppress progress and routine console messages
       -v, --verbose            List each file being copied instead of displaying a progress bar

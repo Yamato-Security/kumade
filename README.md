@@ -69,7 +69,7 @@ for Kumade's measurements.
 
 - [Volatility-aware acquisition](docs/acquisition-order.md): preserve fast live state and hot disk artifacts before bulk data, entropy analysis and compression.
 
-- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. `--no-wizard` accepts defaults without prompts for automation; `--paging` opts into large paging/hibernation/existing dump files.
+- Interactive [collection wizard](docs/collection-wizard.md) with estimated logical transfer sizes, artifact selection and conservative defaults. Use `-w` (`--no-wizard`) to skip the prompts and apply your explicit flags. For example, `-w --paging` adds paging, hibernation and existing memory dumps to the default collection.
 
 - Optional [hibernation-file acquisition](docs/hibernation-acquisition.md): `--hibernation` adds `hiberfil.sys` without enabling other paging/dump files. The dedicated wizard choice shows its estimated size; existing broad `--paging` selections keep their scope. Uses verified copying and raw NTFS fallback without changing Windows power settings.
 

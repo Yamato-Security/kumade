@@ -37,7 +37,7 @@ Snapshot from `kumade 0.1.0`. Check your binary's `--help` when using a differen
     Usage: kumade collect-test [OPTIONS]
 
     Options:
-          --no-wizard          Collect the default selection without the wizard (for scripts)
+      -w, --no-wizard          Skip the wizard and use collection defaults plus any options you specify
       -T, --threads <THREADS>  Maximum acquisition workers (default: available logical CPUs, at most 4) [default: 4]
       -q, --quiet              Suppress progress and routine console messages
       -v, --verbose            List each file being copied instead of displaying a progress bar
